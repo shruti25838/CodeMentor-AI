@@ -1,0 +1,11 @@
+services:
+  codeatlas:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      CODEATLAS_AUTH_ENABLED: "false"
+      CODEATLAS_EMBEDDING_PROVIDER: "sentence"
+      CODEATLAS_LLM_PROVIDER: "openai"
+    volumes:
+      - ./.codeatlas:/app/.codeatlas

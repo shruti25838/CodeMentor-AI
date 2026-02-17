@@ -1,0 +1,25 @@
+services:
+  codeatlas:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      CODEATLAS_AUTH_ENABLED: "false"
+      CODEATLAS_EMBEDDING_PROVIDER: "sentence"
+      CODEATLAS_LLM_PROVIDER: "openai"
+    volumes:
+      - ./.codeatlas:/app/.codeatlas
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
