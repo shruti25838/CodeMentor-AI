@@ -4,24 +4,26 @@ on:
   push:
     branches: [main]
     paths:
-      - "codeatlas/**"
-      - "tests/**"
-      - "requirements.txt"
-      - "Dockerfile"
-      - ".github/workflows/backend-ci.yml"
+      - 'codeatlas/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - '.github/workflows/backend-ci.yml'
   pull_request:
     branches: [main]
     paths:
-      - "codeatlas/**"
-      - "tests/**"
-      - "requirements.txt"
-      - "Dockerfile"
-      - ".github/workflows/backend-ci.yml"
+      - 'codeatlas/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - '.github/workflows/backend-ci.yml'
 
 jobs:
   lint-and-test:
     name: Lint & Test
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: .
 
     steps:
       - name: Checkout code
@@ -30,8 +32,8 @@ jobs:
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: "pip"
+          python-version: '3.11'
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
@@ -48,7 +50,7 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v --tb=short
         env:
-          TESTING: "true"
+          TESTING: 'true'
 
   docker-build:
     name: Docker Build Check
