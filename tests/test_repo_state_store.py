@@ -25,7 +25,7 @@ def test_repo_state_persist_and_load(tmp_path: Path) -> None:
     graph.add_node("a.py")
     graph.add_edge("a.py", "os", relation="imports")
     store = RepoStateStore(base_dir=str(tmp_path))
-    store.save(repo_id, RepoState(parsed_repo=parsed, import_graph=graph))
+    store.save(repo_id, RepoState(parsed_repo=parsed, import_graph=graph, root_path=str(tmp_path)))
 
     reloaded = RepoStateStore(base_dir=str(tmp_path))
     state = reloaded.get(repo_id)
