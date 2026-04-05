@@ -9,9 +9,7 @@ class CodeRetriever(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def search(
-        self, repo_id: str, query_vector: list[float], top_k: int
-    ) -> list[EmbeddingRecord]:
+    def search(self, repo_id: str, query_vector: list[float], top_k: int) -> list[EmbeddingRecord]:
         raise NotImplementedError
 
 

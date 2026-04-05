@@ -84,6 +84,4 @@ class ImportGraphBuilder(DependencyGraphBuilder):
         return value
 
     def _node_text(self, node: Node, source: bytes) -> str:
-        return source[node.start_byte : node.end_byte].decode(
-            "utf-8", errors="replace"
-        )
+        return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")

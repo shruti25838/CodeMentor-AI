@@ -1,7 +1,8 @@
 from datetime import datetime
+
+from codeatlas.models.agent_memory import AgentMemory
 from codeatlas.services.agents.interfaces import Agent
 from codeatlas.services.memory.interfaces import MemoryStore
-from codeatlas.models.agent_memory import AgentMemory
 
 
 class MemoryAgent(Agent):
@@ -21,7 +22,7 @@ class MemoryAgent(Agent):
             )
             self._memory_store.save(memory)
             return "Memory saved."
-        
+
         if prompt == "list":
             scope = f"repo:{repo_id}" if repo_id else "global"
             memories = self._memory_store.list(scope)

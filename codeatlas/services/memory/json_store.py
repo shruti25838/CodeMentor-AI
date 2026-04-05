@@ -1,22 +1,21 @@
 import json
 import os
 from datetime import datetime
-from typing import List, Any
-from pathlib import Path
 
 from codeatlas.models.agent_memory import AgentMemory
 from codeatlas.services.memory.interfaces import MemoryStore
 
+
 class JsonMemoryStore(MemoryStore):
     def __init__(self, file_path: str = "memory.json") -> None:
         self._file_path = file_path
-        self._memories: List[AgentMemory] = self._load()
+        self._memories: list[AgentMemory] = self._load()
 
-    def _load(self) -> List[AgentMemory]:
+    def _load(self) -> list[AgentMemory]:
         if not os.path.exists(self._file_path):
             return []
         try:
-            with open(self._file_path, "r", encoding="utf-8") as f:
+            with open(self._file_path, encoding="utf-8") as f:
                 data = json.load(f)
                 return [self._deserialize(item) for item in data]
         except Exception:
@@ -32,7 +31,7 @@ class JsonMemoryStore(MemoryStore):
             "memory_id": memory.memory_id,
             "scope": memory.scope,
             "content": memory.content,
-            "created_at": memory.created_at.isoformat()
+            "created_at": memory.created_at.isoformat(),
         }
 
     def _deserialize(self, data: dict) -> AgentMemory:
@@ -40,12 +39,12 @@ class JsonMemoryStore(MemoryStore):
             memory_id=data["memory_id"],
             scope=data["scope"],
             content=data["content"],
-            created_at=datetime.fromisoformat(data["created_at"])
+            created_at=datetime.fromisoformat(data["created_at"]),
         )
 
     def save(self, memory: AgentMemory) -> None:
         self._memories.append(memory)
         self._save_to_disk()
 
-    def list(self, scope: str) -> List[AgentMemory]:
+    def list(self, scope: str) -> list[AgentMemory]:
         return [memory for memory in self._memories if memory.scope == scope]

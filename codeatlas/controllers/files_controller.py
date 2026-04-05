@@ -1,5 +1,5 @@
-import os
 from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from codeatlas.app.di import get_repo_state_store
@@ -26,13 +26,13 @@ def list_files(
 
     files = []
     root_path = Path(state.root_path) if state.root_path else None
-    
+
     # Common ignore list
     IGNORE_PATTERNS = {"__pycache__", ".git", ".pytest_cache", ".venv", "node_modules"}
 
     for source in state.parsed_repo.files:
         path_obj = Path(source.path)
-        
+
         # Skip ignored patterns
         if any(part in IGNORE_PATTERNS for part in path_obj.parts):
             continue
@@ -48,10 +48,10 @@ def list_files(
                 if "repos" in parts:
                     repos_idx = parts.index("repos")
                     # The folder after 'repos' is the UUID
-                    rel_path = "/".join(parts[repos_idx + 2:])
+                    rel_path = "/".join(parts[repos_idx + 2 :])
                 else:
                     rel_path = path_obj.name
-                    
+
             if rel_path:
                 files.append(FileEntry(path=rel_path, language=source.language))
         except (ValueError, IndexError):

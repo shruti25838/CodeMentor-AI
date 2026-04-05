@@ -3,9 +3,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from codeatlas.app.di import (
     get_ast_parser,
     get_dependency_graph_builder,
-    get_repository_loader,
     get_index_service,
     get_repo_state_store,
+    get_repository_loader,
 )
 from codeatlas.schemas.analyze import AnalyzeRepoRequest, AnalyzeRepoResponse
 from codeatlas.services.dependency.interfaces import DependencyGraphBuilder

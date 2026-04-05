@@ -1,7 +1,7 @@
 import re
 import subprocess
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from codeatlas.models.repository import Repository
@@ -33,7 +33,7 @@ class GitRepositoryLoader(RepositoryLoader):
             name=name,
             url=repo_url_str,
             root_path=str(repo_dir),
-            ingested_at=datetime.now(timezone.utc),
+            ingested_at=datetime.now(UTC),
         )
 
     def _clone(self, repo_url: str, repo_dir: Path) -> None:

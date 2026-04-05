@@ -34,6 +34,7 @@ def _name_from_git_remote(root_path: str, repo_id: str = "") -> str:
             continue
     return ""
 
+
 router = APIRouter(prefix="/repos", tags=["repository"])
 
 

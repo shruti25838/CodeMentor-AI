@@ -1,7 +1,7 @@
 """In-memory session tracker for eval dashboard analytics."""
 
-import time
 import threading
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -75,15 +75,12 @@ class SessionTracker:
             "total_queries": len(records),
             "avg_latency_ms": round(sum(latencies) / len(latencies), 1),
             "p95_latency_ms": round(latencies[p95_idx], 1),
-            "avg_citations": round(
-                sum(r.citation_count for r in records) / len(records), 1
-            ),
+            "avg_citations": round(sum(r.citation_count for r in records) / len(records), 1),
             "agent_usage": {
                 agent: {
                     "invocations": agent_usage.get(agent, 0),
                     "avg_time_ms": round(
-                        agent_ms.get(agent, 0)
-                        / max(agent_usage.get(agent, 1), 1),
+                        agent_ms.get(agent, 0) / max(agent_usage.get(agent, 1), 1),
                         1,
                     ),
                 }

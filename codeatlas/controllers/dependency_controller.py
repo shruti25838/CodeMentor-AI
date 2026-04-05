@@ -56,8 +56,5 @@ def get_full_graph(
         raise HTTPException(status_code=404, detail="Repository not found")
     graph = state.import_graph
     nodes = sorted({_clean_path(n) for n in graph.nodes})
-    edges = [
-        GraphEdge(source=_clean_path(s), target=_clean_path(t))
-        for s, t in graph.edges
-    ]
+    edges = [GraphEdge(source=_clean_path(s), target=_clean_path(t)) for s, t in graph.edges]
     return GraphResponse(nodes=nodes, edges=edges)

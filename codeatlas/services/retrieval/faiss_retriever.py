@@ -30,9 +30,7 @@ class FaissCodeRetriever(CodeRetriever):
         self._persist(repo_id)
         self._logger.info("FAISS index stored for repo %s", repo_id)
 
-    def search(
-        self, repo_id: str, query_vector: list[float], top_k: int
-    ) -> list[EmbeddingRecord]:
+    def search(self, repo_id: str, query_vector: list[float], top_k: int) -> list[EmbeddingRecord]:
         repo_index = self._indexes.get(repo_id)
         if repo_index is None:
             return []
