@@ -109,16 +109,12 @@ async def ask_stream(
                 )
             else:
                 # ---- Repo mode: fast path (retrieval → mentor, no planner/validator) ----
-                yield _sse(
-                    {"type": "status", "content": "Retrieving context..."}
-                )
+                yield _sse({"type": "status", "content": "Retrieving context..."})
 
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
                     None,
-                    lambda: orchestrator.handle_question_fast(
-                        request.question, request.repo_id
-                    ),
+                    lambda: orchestrator.handle_question_fast(request.question, request.repo_id),
                 )
 
                 yield _sse({"type": "status", "content": "Streaming answer..."})
@@ -170,11 +166,7 @@ def _sse(data: dict) -> str:
 
 def _track(request: AskRequest, resp: AskResponse, start: float) -> None:
     latency = (time.perf_counter() - start) * 1000
-    agents = (
-        ["mentor"]
-        if not request.repo_id
-        else ["planner", "retrieval", "mentor", "validator"]
-    )
+    agents = ["mentor"] if not request.repo_id else ["planner", "retrieval", "mentor", "validator"]
     tracker.record_query(
         question=request.question,
         repo_id=request.repo_id,

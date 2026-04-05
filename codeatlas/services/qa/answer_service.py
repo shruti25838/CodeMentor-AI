@@ -1,7 +1,7 @@
-from dataclasses import dataclass
 import logging
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from pathlib import Path
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
@@ -17,7 +17,7 @@ def _clean_display_path(raw_path: str) -> str:
     idx = raw_path.find(marker)
     if idx == -1:
         return raw_path
-    after_marker = raw_path[idx + len(marker):]
+    after_marker = raw_path[idx + len(marker) :]
     # Skip the UUID segment (next path component)
     sep = "\\" if "\\" in after_marker else "/"
     parts = after_marker.split(sep, 1)

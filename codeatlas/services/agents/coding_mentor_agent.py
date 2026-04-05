@@ -32,15 +32,15 @@ class CodingMentorAgent(Agent):
         # 1. Retrieve relevant context
         # We assume the prompt is the question/goal
         retrieval = self._answer_service.answer(repo_id=repo_id, question=prompt, top_k=3)
-        
+
         context_str = ""
         if retrieval.citations:
-             context_str = f"Found relevant code:\n{retrieval.answer}\n\nCitations:\n" + "\n".join(retrieval.citations)
+            context_str = f"Found relevant code:\n{retrieval.answer}\n\nCitations:\n" + "\n".join(retrieval.citations)
         else:
-             context_str = "No relevant code found in the repository index."
+            context_str = "No relevant code found in the repository index."
 
         # 2. Generate advice
         chain = self._prompt | self._llm
         response = chain.invoke({"goal": prompt, "context": context_str})
-        
+
         return response.content

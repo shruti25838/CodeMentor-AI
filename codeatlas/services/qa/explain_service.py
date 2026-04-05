@@ -1,7 +1,7 @@
-from dataclasses import dataclass
 import logging
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from pathlib import Path
 
 from codeatlas.services.state.repo_state_store import RepoStateStore
 
@@ -15,6 +15,7 @@ class ExplainResult:
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
+
 
 class CodeExplainService:
     def __init__(self, state_store: RepoStateStore, llm: BaseChatModel) -> None:
@@ -33,19 +34,21 @@ class CodeExplainService:
             return ExplainResult(node_id=node_id, summary="Invalid node_id.", snippet="")
 
         snippet = _read_snippet(Path(path), start, end)
-        
+
         # Use LLM to summarize
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a senior developer. Summarize the following code snippet concisely."),
-            ("human", f"Code from {path}:\n\n{snippet}")
-        ])
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", "You are a senior developer. Summarize the following code snippet concisely."),
+                ("human", f"Code from {path}:\n\n{snippet}"),
+            ]
+        )
         try:
             chain = prompt | self._llm
             response = chain.invoke({})
             summary = response.content
         except Exception as e:
             summary = f"Error generating summary: {e}"
-            
+
         return ExplainResult(node_id=node_id, summary=summary, snippet=snippet)
 
 

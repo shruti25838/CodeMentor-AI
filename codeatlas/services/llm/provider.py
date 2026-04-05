@@ -21,6 +21,7 @@ class LlmProvider:
             )
         elif self._config.llm_provider == "groq":
             import os
+
             return ChatOpenAI(
                 base_url="https://api.groq.com/openai/v1",
                 api_key=os.getenv("GROQ_API_KEY"),
@@ -36,10 +37,7 @@ class FallbackChatModel(BaseChatModel):
         return "fallback"
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        content = (
-            "LLM provider not configured. "
-            "Set CODEATLAS_LLM_PROVIDER and relevant API keys."
-        )
+        content = "LLM provider not configured. Set CODEATLAS_LLM_PROVIDER and relevant API keys."
         return self._create_chat_result(content)
 
     def _create_chat_result(self, content: str) -> ChatResult:

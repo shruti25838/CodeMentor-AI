@@ -14,9 +14,7 @@ class CodeIndexService:
         self._retriever = retriever
         self._logger = logging.getLogger(__name__)
 
-    def index_repository(
-        self, repository: Repository, parsed_repo: ParsedRepository
-    ) -> None:
+    def index_repository(self, repository: Repository, parsed_repo: ParsedRepository) -> None:
         self._logger.info("Indexing repository %s", repository.repo_id)
         documents: list[str] = []
         records: list[EmbeddingRecord] = []
@@ -34,9 +32,7 @@ class CodeIndexService:
             )
 
         for function in parsed_repo.functions:
-            snippet = _read_snippet(
-                Path(function.file_path), function.start_line, function.end_line
-            )
+            snippet = _read_snippet(Path(function.file_path), function.start_line, function.end_line)
             documents.append(snippet)
             records.append(
                 EmbeddingRecord(
@@ -66,9 +62,7 @@ class CodeIndexService:
             )
 
         self._retriever.index(repository.repo_id, indexed_records)
-        self._logger.info(
-            "Indexed %s records for repo %s", len(indexed_records), repository.repo_id
-        )
+        self._logger.info("Indexed %s records for repo %s", len(indexed_records), repository.repo_id)
 
 
 def _safe_read(path: Path) -> str:

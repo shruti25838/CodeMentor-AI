@@ -82,9 +82,7 @@ class TreeSitterAstParser(AstParser):
         tree = parser.parse(source_bytes)
         return self._collect_functions(path, source_bytes, tree.root_node, language)
 
-    def _collect_functions(
-        self, path: Path, source_bytes: bytes, root: Node, language: str
-    ) -> list[FunctionNode]:
+    def _collect_functions(self, path: Path, source_bytes: bytes, root: Node, language: str) -> list[FunctionNode]:
         function_nodes = self._function_node_types(language)
         results: list[FunctionNode] = []
         stack = [root]
@@ -165,6 +163,4 @@ class TreeSitterAstParser(AstParser):
         return first_line[:200]
 
     def _node_text(self, node: Node, source_bytes: bytes) -> str:
-        return source_bytes[node.start_byte : node.end_byte].decode(
-            "utf-8", errors="replace"
-        )
+        return source_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")

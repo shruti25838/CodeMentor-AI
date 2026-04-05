@@ -111,9 +111,7 @@ class RepoStateStore:
                 graph.add_node(source_file.path)
             for edge in payload.get("edges", []):
                 graph.add_edge(edge["source"], edge["target"], relation=edge.get("relation"))
-            parsed_repo = ParsedRepository(
-                repository_id=repo_id, files=files, functions=functions
-            )
+            parsed_repo = ParsedRepository(repository_id=repo_id, files=files, functions=functions)
             self._states[repo_id] = RepoState(
                 parsed_repo=parsed_repo,
                 import_graph=graph,

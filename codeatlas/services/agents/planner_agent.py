@@ -1,7 +1,10 @@
 import json
+
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
+
 from codeatlas.services.agents.interfaces import Agent
+
 
 class PlannerAgent(Agent):
     def __init__(self, llm: BaseChatModel | None = None) -> None:
@@ -29,7 +32,7 @@ class PlannerAgent(Agent):
         )
 
     def run(self, prompt: str, repo_id: str | None = None) -> str:
-        """Legacy run method returning a single intent label for backward compatibility if needed, 
+        """Legacy run method returning a single intent label for backward compatibility if needed,
         or a stringified JSON plan."""
         # For now, we return the JSON string so the orchestrator can parse it.
         # Fallback for "explain" vs "answer" if no LLM

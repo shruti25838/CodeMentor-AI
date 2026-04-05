@@ -1,25 +1,25 @@
 import json
 import logging
-from typing import TypedDict, Annotated, List, Dict, Any
-from datetime import datetime
+from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 
 from codeatlas.services.agents.interfaces import Agent
 from codeatlas.services.agents.types import AnswerResult, GenerateResult
-from codeatlas.models.agent_memory import AgentMemory
 from codeatlas.services.memory.interfaces import MemoryStore
+
 
 # Define the state for the graph
 class OrchestratorState(TypedDict):
     question: str
     repo_id: str
-    plan: Dict[str, Any]
+    plan: dict[str, Any]
     current_step_index: int
-    results: List[str]
+    results: list[str]
     final_answer: str
     validated: bool
-    citations: List[str]
+    citations: list[str]
+
 
 class AgentOrchestrator:
     def __init__(
@@ -38,7 +38,7 @@ class AgentOrchestrator:
         self._memory_agent = memory_agent
         self._memory_store = memory_store
         self._logger = logging.getLogger(__name__)
-        
+
         self._graph = self._build_graph()
 
     def handle_question(self, question: str, repo_id: str) -> AnswerResult:
@@ -53,11 +53,11 @@ class AgentOrchestrator:
             "citations": [],
         }
         final_state = self._graph.invoke(initial_state)
-        
+
         # Construct the final result from the state
         reasoning = [f"Plan: {json.dumps(final_state.get('plan', {}))}"]
         reasoning.extend(final_state.get("results", []))
-        
+
         return AnswerResult(
             answer=final_state.get("final_answer", "No answer generated."),
             citations=final_state.get("citations", []),
@@ -75,11 +75,7 @@ class AgentOrchestrator:
         citations = self._parse_citations_from_retrieval_output(retrieval_output)
 
         # 2. Mentor answers using context
-        mentor_prompt = (
-            f"{question}\n\nRetrieved context:\n{retrieval_output}"
-            if retrieval_output
-            else question
-        )
+        mentor_prompt = f"{question}\n\nRetrieved context:\n{retrieval_output}" if retrieval_output else question
         try:
             answer = self._mentor_agent.run(mentor_prompt, repo_id)
         except Exception as e:
@@ -121,9 +117,9 @@ class AgentOrchestrator:
         )
 
     @staticmethod
-    def _parse_citations_from_retrieval_output(text: str) -> List[str]:
+    def _parse_citations_from_retrieval_output(text: str) -> list[str]:
         """Extract citation lines from retrieval agent output (e.g. 'Citations:\\n- ...')."""
-        citations: List[str] = []
+        citations: list[str] = []
         if "Citations:" not in text:
             return citations
         after = text.split("Citations:", 1)[-1].strip()
@@ -132,10 +128,10 @@ class AgentOrchestrator:
             if line.startswith("- "):
                 citations.append(line[2:].strip())
         return citations
-        
+
     def _build_graph(self):
         graph = StateGraph(OrchestratorState)
-        
+
         graph.add_node("planner", self._plan_node)
         graph.add_node("dispatcher", self._dispatcher_node)
         graph.add_node("retrieval", self._retrieval_node)
@@ -143,11 +139,11 @@ class AgentOrchestrator:
         graph.add_node("mentor", self._mentor_node)
         graph.add_node("memory", self._memory_node)
         graph.add_node("validator", self._validator_node)
-        
+
         graph.set_entry_point("planner")
-        
+
         graph.add_edge("planner", "dispatcher")
-        
+
         # Dispatcher conditional edges
         graph.add_conditional_edges(
             "dispatcher",
@@ -158,17 +154,17 @@ class AgentOrchestrator:
                 "mentor": "mentor",
                 "memory": "memory",
                 "validator": "validator",
-                "end": END
-            }
+                "end": END,
+            },
         )
-        
+
         # Return to dispatcher after each agent
         graph.add_edge("retrieval", "dispatcher")
         graph.add_edge("analyst", "dispatcher")
         graph.add_edge("mentor", "dispatcher")
         graph.add_edge("memory", "dispatcher")
         graph.add_edge("validator", "dispatcher")
-        
+
         return graph.compile()
 
     # ... _plan_node, _dispatcher_node same ...
@@ -183,7 +179,7 @@ class AgentOrchestrator:
             self._logger.error(f"Planning failed: {e}")
             # Fallback plan
             plan = {"steps": [{"agent": "retrieval", "instruction": question}]}
-        
+
         return {**state, "plan": plan, "current_step_index": 0}
 
     def _dispatcher_node(self, state: OrchestratorState) -> OrchestratorState:
@@ -193,15 +189,15 @@ class AgentOrchestrator:
     def _route_step(self, state: OrchestratorState) -> str:
         steps = state["plan"].get("steps", [])
         idx = state["current_step_index"]
-        
+
         if idx >= len(steps):
-             if not state.get("validated"):
-                 return "validator"
-             return "end"
-            
+            if not state.get("validated"):
+                return "validator"
+            return "end"
+
         step = steps[idx]
         agent_name = step.get("agent", "retrieval").lower()
-        
+
         if agent_name in ["retrieval", "analyst", "mentor", "memory"]:
             return agent_name
         return "end"
@@ -214,9 +210,9 @@ class AgentOrchestrator:
         question = state["question"]
         current_answer = state["final_answer"]
         repo_id = state["repo_id"]
-        
+
         if not current_answer:
-             return {**state, "validated": True}
+            return {**state, "validated": True}
 
         prompt = (
             f"You are a quality reviewer. Your job is to refine an answer.\n"
@@ -229,45 +225,45 @@ class AgentOrchestrator:
             f"If it needs improvement, return the improved version. "
             f"Output ONLY the answer the user should see."
         )
-        
+
         try:
-             # The MentorAgent is styled as a senior engineer, good for review
-             refined_answer = self._mentor_agent.run(prompt, repo_id)
+            # The MentorAgent is styled as a senior engineer, good for review
+            refined_answer = self._mentor_agent.run(prompt, repo_id)
         except Exception:
-             refined_answer = current_answer
-             
+            refined_answer = current_answer
+
         return {
             **state,
             "final_answer": refined_answer,
             "validated": True,
-            "results": state["results"] + [f"Validation: Refined answer."],
+            "results": state["results"] + ["Validation: Refined answer."],
         }
 
     def _execute_agent(self, agent: Agent, state: OrchestratorState) -> OrchestratorState:
         steps = state["plan"].get("steps", [])
         idx = state["current_step_index"]
         step = steps[idx]
-        
+
         instruction = step.get("instruction", "")
         repo_id = state["repo_id"]
-        
+
         # Add context from previous results if available
         context = "\n".join(state["results"])
         if context:
             full_prompt = f"{instruction}\n\nContext from previous steps:\n{context}"
         else:
             full_prompt = instruction
-            
+
         try:
             output = agent.run(full_prompt, repo_id)
         except Exception as e:
             output = f"Error executing {step.get('agent')}: {e}"
-            
-        new_results = state["results"] + [f"Step {idx+1} ({step.get('agent')}): {output}"]
+
+        new_results = state["results"] + [f"Step {idx + 1} ({step.get('agent')}): {output}"]
         new_citations = list(state.get("citations", []))
         if agent is self._retrieval_agent:
             new_citations.extend(self._parse_citations_from_retrieval_output(output))
-        
+
         return {
             **state,
             "results": new_results,

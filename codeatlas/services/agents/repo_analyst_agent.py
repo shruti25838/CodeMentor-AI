@@ -36,19 +36,17 @@ class RepoAnalystAgent(Agent):
         file_count = len(state.parsed_repo.files)
         func_count = len(state.parsed_repo.functions)
         edge_count = len(state.import_graph.edges)
-        
+
         # Simple graph analysis
-        most_depended_on = sorted(
-            state.import_graph.in_degree, key=lambda x: x[1], reverse=True
-        )[:5]
-        
+        most_depended_on = sorted(state.import_graph.in_degree, key=lambda x: x[1], reverse=True)[:5]
+
         context = (
             f"Files: {file_count}\n"
             f"Functions: {func_count}\n"
             f"Dependency Edges: {edge_count}\n"
             f"Top 5 most used modules: {most_depended_on}\n"
         )
-        
+
         chain = self._prompt | self._llm
         response = chain.invoke({"context": context, "question": prompt})
         return response.content

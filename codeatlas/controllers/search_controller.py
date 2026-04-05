@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from codeatlas.app.di import get_code_retriever, get_embedder
-from codeatlas.schemas.search import SearchRequest, SearchResponse, SearchHit
+from codeatlas.schemas.search import SearchHit, SearchRequest, SearchResponse
 from codeatlas.services.retrieval.embedding import EmbeddingService
 from codeatlas.services.retrieval.interfaces import CodeRetriever
 
