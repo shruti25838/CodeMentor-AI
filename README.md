@@ -26,12 +26,15 @@ The principle driving the project going forward: **the impressive demo is the ea
 
 ## Architecture
 
-CodeMentor AI is an agentic pipeline, not a single retrieval call. A **LangGraph planner** looks at each incoming question and routes it down one of two paths (or both), depending on whether the question is about *meaning* or *structure*:
+CodeMentor AI is an agentic pipeline, not a single retrieval call. Five **LangGraph** agents handle a question end to end:
 
-- **Answer path (semantic/RAG):** the question is embedded, relevant chunks are retrieved via **FAISS** vector search, a reranking step reorders candidates by relevance, and the LLM generates a response grounded in the retrieved chunks — with citations back to the source files.
-- **Explain path (structural):** the question is resolved against an **AST/dependency-parsed** representation of the codebase (via Tree-sitter), which can answer questions embeddings can't — call sites, import relationships, definition locations — deterministically, from the actual code structure rather than from vector proximity.
+- **Planner** — reads the incoming question and routes it to the path (or combination of paths) that can actually answer it: semantic, structural, or both.
+- **Retriever** — embeds the question, pulls candidate chunks via **FAISS** vector search, and reranks them by relevance for the semantic/RAG path.
+- **Analyzer** — resolves structural questions (call sites, import relationships, definition locations) against an **AST/dependency-parsed** representation of the codebase (via Tree-sitter), deterministically, rather than from vector proximity.
+- **Mentor** — synthesizes the final response from whichever context the retriever and/or analyzer produced, grounding the answer with citations back to the source files.
+- **Memory** — carries conversation and session state across turns, so follow-up questions don't need to re-state context already established earlier in the conversation.
 
-Supporting the two reasoning paths:
+Supporting the five agents:
 
 - **Backend:** [FastAPI](https://fastapi.tiangolo.com/), serving the planner/agent pipeline over HTTP.
 - **Frontend:** a Next.js app (`codementor-ui/`) that talks to the FastAPI backend.
@@ -149,4 +152,4 @@ CodeMentor-AI/
 
 ---
 
-*Built by [Krish Nagaral](https://github.com/Blanq-one).*
+
