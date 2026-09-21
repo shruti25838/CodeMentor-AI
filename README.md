@@ -149,4 +149,4 @@ CodeMentor-AI/
 
 ---
 
-*Built by [Krish Nagaral](https://github.com/Blanq-one).*
+
