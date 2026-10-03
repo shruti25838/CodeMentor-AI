@@ -25,3 +25,11 @@ Every number or claim here comes from a command that can be re-run.
 - Date: 2026-10-03
 - Commit: c52e941
 - Notes: limits default to 60 s / 100 MB / 5000 files (CODEATLAS_CLONE_TIMEOUT_SECONDS, CODEATLAS_MAX_REPO_MB, CODEATLAS_MAX_REPO_FILES). Size is checked from git ls-tree before checkout; the download itself is bounded only by the time limit
+
+### Fix: only github.com, gitlab.com and bitbucket.org repository URLs are accepted
+- Value: other hosts, lookalike hosts (github.com.evil.example, evilgithub.com, gist.github.com), localhost, raw IPs and non-default ports get a 400 with a plain-English message before any clone starts
+- Command: `python -m pytest tests/test_git_loader.py`
+- Dataset/repo: URL strings only (no network)
+- Date: 2026-10-03
+- Commit: fc26951
+- Notes: hostnames must match exactly. GitLab `/-/tree/...` and Bitbucket `/src/...` web URLs are normalized to the clone URL
