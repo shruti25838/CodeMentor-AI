@@ -17,7 +17,7 @@ class AppConfig:
 
 def load_config() -> AppConfig:
     return AppConfig(
-        embedding_provider=os.getenv("CODEATLAS_EMBEDDING_PROVIDER", "sentence"),
+        embedding_provider=os.getenv("CODEATLAS_EMBEDDING_PROVIDER", "hash"),
         embedding_model=os.getenv("CODEATLAS_EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
         index_dir=os.getenv("CODEATLAS_INDEX_DIR", ".codeatlas/indexes"),
         state_dir=os.getenv("CODEATLAS_STATE_DIR", ".codeatlas/state"),
