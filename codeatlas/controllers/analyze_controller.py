@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from codeatlas.app.di import (
     get_ast_parser,
@@ -9,6 +9,7 @@ from codeatlas.app.di import (
 )
 from codeatlas.schemas.analyze import AnalyzeRepoRequest, AnalyzeRepoResponse
 from codeatlas.services.dependency.interfaces import DependencyGraphBuilder
+from codeatlas.services.ingestion.git_loader import RepoCloneError
 from codeatlas.services.ingestion.interfaces import RepositoryLoader
 from codeatlas.services.parsing.interfaces import AstParser
 from codeatlas.services.retrieval.indexing import CodeIndexService
@@ -27,7 +28,10 @@ def analyze_repo(
     index_service: CodeIndexService = Depends(get_index_service),
     state_store: RepoStateStore = Depends(get_repo_state_store),
 ) -> AnalyzeRepoResponse:
-    repo = loader.load(request.repo_url)
+    try:
+        repo = loader.load(request.repo_url)
+    except RepoCloneError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
     parsed = parser.parse_repository(repo)
     dependency_graph = graph_builder.build_import_graph(parsed)
     background_tasks.add_task(index_service.index_repository, repo, parsed)

@@ -1,8 +1,9 @@
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel
 
 
 class AnalyzeRepoRequest(BaseModel):
-    repo_url: HttpUrl
+    # Plain str so a bad URL gets the loader's friendly message, not pydantic's 422 error list.
+    repo_url: str
 
 
 class AnalyzeRepoResponse(BaseModel):

@@ -13,6 +13,9 @@ class AppConfig:
     llm_temperature: float
     api_key: str | None
     auth_enabled: bool
+    clone_timeout_seconds: int = 60
+    max_repo_mb: int = 100
+    max_repo_files: int = 5000
 
 
 def load_config() -> AppConfig:
@@ -26,4 +29,7 @@ def load_config() -> AppConfig:
         llm_temperature=float(os.getenv("CODEATLAS_LLM_TEMPERATURE", "0.2")),
         api_key=os.getenv("CODEATLAS_API_KEY"),
         auth_enabled=os.getenv("CODEATLAS_AUTH_ENABLED", "false").lower() == "true",
+        clone_timeout_seconds=int(os.getenv("CODEATLAS_CLONE_TIMEOUT_SECONDS", "60")),
+        max_repo_mb=int(os.getenv("CODEATLAS_MAX_REPO_MB", "100")),
+        max_repo_files=int(os.getenv("CODEATLAS_MAX_REPO_FILES", "5000")),
     )
