@@ -1,6 +1,5 @@
 import contextlib
 import os
-import re
 import shutil
 import stat
 import subprocess
@@ -43,28 +42,50 @@ _NOT_FOUND_MARKERS = (
 _BAD_HOST_MARKERS = ("could not resolve host", "unable to access", "failed to connect")
 
 
+ALLOWED_HOSTS = ("github.com", "gitlab.com", "bitbucket.org")
+UNSUPPORTED_HOST_MESSAGE = "Only repositories on github.com, gitlab.com or bitbucket.org are supported."
+
+# Web-UI path segments that follow owner/repo: GitHub /tree, /blob; GitLab /-/tree; Bitbucket /src.
+_WEB_PATH_MARKERS = {"tree", "blob", "src", "-"}
+
+
 def _normalize_repo_url(url: str) -> str:
-    """Convert GitHub web URLs to git-cloneable URLs (strip /tree/branch, /blob/..., etc)."""
+    """Convert web URLs to git-cloneable URLs (strip /tree/branch, /-/blob/..., /src/..., etc)."""
     s = url.strip().rstrip("/")
-    # Remove GitHub path suffixes: /tree/main, /tree/master, /blob/main/file, etc.
-    s = re.sub(r"/(tree|blob)/[^/]+(/.*)?$", "", s)
-    return s
+    head, sep, path = s.partition("://")
+    if not sep:
+        return s
+    host, _, path = path.partition("/")
+    parts = path.split("/")
+    # Only look past owner/repo, so an owner or repo literally named "src" or "tree" is kept.
+    for i in range(2, len(parts)):
+        if parts[i] in _WEB_PATH_MARKERS:
+            parts = parts[:i]
+            break
+    return f"{head}://{host}/{'/'.join(parts)}".rstrip("/")
 
 
 def validate_repo_url(url: str) -> str:
-    """Return a normalized http(s) clone URL, or raise RepoCloneError for anything else."""
+    """Return a normalized clone URL on an allowed host, or raise RepoCloneError."""
     s = _normalize_repo_url(str(url))
     parsed = urlparse(s)
     path_parts = [p for p in parsed.path.split("/") if p]
+    try:
+        port = parsed.port
+    except ValueError:
+        port = -1
     if (
         parsed.scheme not in ("http", "https")
         or not parsed.hostname
         or parsed.username
         or parsed.password
+        or port is not None
         or len(path_parts) < 2
         or any(c.isspace() for c in s)
     ):
         raise RepoCloneError(INVALID_URL_MESSAGE, status_code=400)
+    if parsed.hostname not in ALLOWED_HOSTS:
+        raise RepoCloneError(UNSUPPORTED_HOST_MESSAGE, status_code=400)
     return s
 
 

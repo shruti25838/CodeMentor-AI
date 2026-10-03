@@ -7,6 +7,7 @@ from codeatlas.app.di import get_repository_loader
 from codeatlas.app.main import create_app
 from codeatlas.services.ingestion.git_loader import (
     NOT_FOUND_MESSAGE,
+    UNSUPPORTED_HOST_MESSAGE,
     GitRepositoryLoader,
     RepoCloneError,
     _classify_git_error,
@@ -41,8 +42,43 @@ def test_credentials_in_url_rejected():
         validate_repo_url("https://user:token@github.com/a/b")
 
 
-def test_github_web_url_normalized():
-    assert validate_repo_url("https://github.com/a/b/tree/main/src") == "https://github.com/a/b"
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        ("https://github.com/a/b/tree/main/src", "https://github.com/a/b"),
+        ("https://github.com/a/b.git", "https://github.com/a/b.git"),
+        ("https://gitlab.com/group/sub/repo/-/tree/main", "https://gitlab.com/group/sub/repo"),
+        ("https://bitbucket.org/team/repo/src/main/README.md", "https://bitbucket.org/team/repo"),
+        # Owner/repo literally named like a web-path marker must survive.
+        ("https://github.com/src/tree", "https://github.com/src/tree"),
+    ],
+)
+def test_allowed_host_urls_normalized(url, expected):
+    assert validate_repo_url(url) == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/a/b",
+        "https://github.com.evil.example/a/b",
+        "https://evilgithub.com/a/b",
+        "https://gist.github.com/a/b",
+        "http://localhost/a/b",
+        "https://127.0.0.1/a/b",
+    ],
+)
+def test_other_hosts_rejected_with_friendly_message(url):
+    with pytest.raises(RepoCloneError) as exc:
+        validate_repo_url(url)
+    assert exc.value.status_code == 400
+    assert exc.value.message == UNSUPPORTED_HOST_MESSAGE
+
+
+def test_non_default_port_rejected():
+    with pytest.raises(RepoCloneError) as exc:
+        validate_repo_url("https://github.com:8443/a/b")
+    assert exc.value.status_code == 400
 
 
 @pytest.mark.parametrize(
@@ -106,3 +142,11 @@ def test_analyze_endpoint_returns_readable_detail(tmp_path):
     assert resp.status_code == 400
     assert isinstance(resp.json()["detail"], str)
     assert "valid repository URL" in resp.json()["detail"]
+
+
+def test_analyze_endpoint_rejects_other_host(tmp_path):
+    app = create_app()
+    app.dependency_overrides[get_repository_loader] = lambda: GitRepositoryLoader(base_dir=str(tmp_path))
+    resp = TestClient(app).post("/analyze-repo", json={"repo_url": "https://example.com/a/b"})
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == UNSUPPORTED_HOST_MESSAGE
