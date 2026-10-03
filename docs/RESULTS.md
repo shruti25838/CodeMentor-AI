@@ -17,3 +17,11 @@ Every number or claim here comes from a command that can be re-run.
 - Date: 2026-10-03
 - Commit: 219b062
 - Notes: symlink test skips on Windows (needs privileges) and runs on Linux CI; project needs Python 3.11+
+
+### Fix: repo cloning has time, size and file-count limits with friendly errors
+- Value: invalid URLs get 400, missing/private repos 404, repos over the size or file limit 413, and slow clones 504. Each returns a plain-English `detail` string, and any partial clone is deleted
+- Command: `python -m pytest tests/test_git_loader.py`
+- Dataset/repo: small local git repos created in pytest temp directories, plus a manual check against a nonexistent public GitHub URL and an unresolvable host
+- Date: 2026-10-03
+- Commit: c52e941
+- Notes: limits default to 60 s / 100 MB / 5000 files (CODEATLAS_CLONE_TIMEOUT_SECONDS, CODEATLAS_MAX_REPO_MB, CODEATLAS_MAX_REPO_FILES). Size is checked from git ls-tree before checkout; the download itself is bounded only by the time limit
