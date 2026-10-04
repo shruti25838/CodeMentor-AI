@@ -11,6 +11,7 @@ import {
     Quote
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { openFilePreview, parseCitation } from "@/lib/citations";
 
 interface MessageBubbleProps {
     role: "user" | "planner" | "analyst" | "mentor" | "memory";
@@ -150,14 +151,23 @@ export default function MessageBubble({ role, content, reasoningSteps, citations
                 {!isUser && uniqueCitations.length > 0 && (
                     <Collapsible title="Citations" icon={Quote}>
                         <div className="grid gap-2">
-                            {uniqueCitations.map((cite, i) => (
-                                <div key={i} className="group relative flex items-start gap-2 p-2 rounded hover:bg-white/5 transition-colors border border-transparent hover:border-border/40">
-                                    <div className="w-1 h-1 rounded-full bg-accent/40 mt-1.5" />
-                                    <div className="flex-1 mono text-[11px] text-muted group-hover:text-foreground/80 break-all leading-tight">
-                                        {cite}
-                                    </div>
-                                </div>
-                            ))}
+                            {uniqueCitations.map((cite, i) => {
+                                const { path, startLine, endLine } = parseCitation(cite);
+                                return (
+                                    <button
+                                        key={i}
+                                        type="button"
+                                        onClick={() => openFilePreview({ path, startLine, endLine })}
+                                        title={startLine ? `Open ${path} at line ${startLine}` : `Open ${path}`}
+                                        className="group relative flex items-start gap-2 p-2 rounded hover:bg-white/5 transition-colors border border-transparent hover:border-border/40 text-left w-full cursor-pointer"
+                                    >
+                                        <div className="w-1 h-1 rounded-full bg-accent/40 mt-1.5" />
+                                        <div className="flex-1 mono text-[11px] text-muted group-hover:text-foreground/80 break-all leading-tight">
+                                            {cite}
+                                        </div>
+                                    </button>
+                                );
+                            })}
                         </div>
                     </Collapsible>
                 )}

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { X, FileCode, Loader2, Copy, Check } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -8,6 +8,9 @@ import { fetchFileContent } from "@/lib/api";
 
 interface FilePreviewModalProps {
     filePath: string | null;
+    /** Cited lines to highlight and scroll to (1-based, inclusive). */
+    startLine?: number;
+    endLine?: number;
     onClose: () => void;
 }
 
@@ -34,13 +37,15 @@ const LANG_MAP: Record<string, string> = {
     swift: "swift",
 };
 
-export default function FilePreviewModal({ filePath, onClose }: FilePreviewModalProps) {
+export default function FilePreviewModal({ filePath, startLine, endLine, onClose }: FilePreviewModalProps) {
     const [content, setContent] = useState<string>("");
     const [language, setLanguage] = useState<string>("text");
     const [lineCount, setLineCount] = useState(0);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const highlightEnd = startLine ? Math.max(endLine ?? startLine, startLine) : undefined;
 
     useEffect(() => {
         if (!filePath) return;
@@ -63,6 +68,14 @@ export default function FilePreviewModal({ filePath, onClose }: FilePreviewModal
             .catch((err) => setError(err.message))
             .finally(() => setIsLoading(false));
     }, [filePath]);
+
+    // Scroll the cited lines into view once the file has rendered
+    useEffect(() => {
+        if (!startLine || isLoading || !content) return;
+        scrollRef.current
+            ?.querySelector(`[data-line="${startLine}"]`)
+            ?.scrollIntoView({ block: "center" });
+    }, [startLine, isLoading, content]);
 
     // Close on Escape
     useEffect(() => {
@@ -97,6 +110,11 @@ export default function FilePreviewModal({ filePath, onClose }: FilePreviewModal
                         <span className="text-[10px] text-muted bg-white/5 px-2 py-0.5 rounded-full flex-shrink-0">
                             {lineCount} lines
                         </span>
+                        {startLine && (
+                            <span className="text-[10px] text-accent bg-accent/10 px-2 py-0.5 rounded-full flex-shrink-0">
+                                cited: {startLine === highlightEnd ? `line ${startLine}` : `lines ${startLine}-${highlightEnd}`}
+                            </span>
+                        )}
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                         <button
@@ -123,7 +141,7 @@ export default function FilePreviewModal({ filePath, onClose }: FilePreviewModal
                 </div>
 
                 {/* Content */}
-                <div className="flex-1 overflow-auto">
+                <div ref={scrollRef} className="flex-1 overflow-auto">
                     {isLoading ? (
                         <div className="flex items-center justify-center py-20 gap-2 text-muted">
                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -140,6 +158,18 @@ export default function FilePreviewModal({ filePath, onClose }: FilePreviewModal
                             language={language}
                             style={vscDarkPlus}
                             showLineNumbers
+                            wrapLines
+                            lineProps={(lineNumber: number) => {
+                                const cited = startLine !== undefined && highlightEnd !== undefined && lineNumber >= startLine && lineNumber <= highlightEnd;
+                                return {
+                                    "data-line": lineNumber,
+                                    style: {
+                                        display: "block",
+                                        background: cited ? "rgba(255, 255, 255, 0.08)" : undefined,
+                                        boxShadow: cited ? "inset 2px 0 0 rgba(255, 255, 255, 0.5)" : undefined,
+                                    },
+                                } as React.HTMLProps<HTMLElement>;
+                            }}
                             customStyle={{
                                 margin: 0,
                                 background: "transparent",
