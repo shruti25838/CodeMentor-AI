@@ -32,6 +32,7 @@ def get_repository_loader() -> GitRepositoryLoader:
         timeout_seconds=config.clone_timeout_seconds,
         max_bytes=config.max_repo_mb * 1024 * 1024,
         max_files=config.max_repo_files,
+        max_download_bytes=config.max_download_mb * 1024 * 1024,
     )
 
 
