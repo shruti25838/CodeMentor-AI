@@ -166,3 +166,11 @@ Every number or claim here comes from a command that can be re-run.
 - Date: 2026-10-04
 - Commit: 574abcf
 - Notes: the page fetches the stats in the browser after loading. The 200 for /eval shows the page builds and is served; I did not look at the rendered table in a browser. Existing per-repository stats (name, file and function counts, edges, languages) are unchanged; they describe public repositories, not visitors
+
+### Check: generated folders are ignored by git and nothing generated is staged
+- Value: `.gitignore` line 12 (`.codeatlas/`) ignores the clone, index and state folders, including `agent_memory.json`. No file under `.codeatlas` is tracked (0), nothing is staged or untracked, and every file changed on batch-3 since 38662d5 is source, tests, docs or `.env.example`; no `.faiss`, `.pkl` or clone files are tracked. Also ignored: `.pytest_cache/`, `.ruff_cache/`, `__pycache__/`, `codementor-ui/.next/`, `node_modules/`, `next-env.d.ts`, `tsconfig.tsbuildinfo`. No change was needed
+- Command: `git check-ignore -v .codeatlas/repos/x .codeatlas/indexes/x.faiss .codeatlas/indexes/x.pkl .codeatlas/state/x.json .codeatlas/state/agent_memory.json`, `git ls-files .codeatlas`, `git status --porcelain`, `git status --short --ignored`, `git diff --name-only 38662d5..HEAD`
+- Dataset/repo: this repository's working tree
+- Date: 2026-10-04
+- Commit: 88855ef (state checked)
+- Notes: `scripts/time_stages.py` writes to a temporary folder outside the repo and deletes it afterwards
