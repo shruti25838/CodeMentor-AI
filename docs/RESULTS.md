@@ -105,3 +105,27 @@ Every number or claim here comes from a command that can be re-run.
 - Date: 2026-10-03
 - Commit: 6aa916f
 - Notes: no backend change and no new endpoint; the preview uses POST /files/content, which the website already called. Citation format parsed: "path (lines A-B) | snippet", "path | snippet" or "path". A cited path that is not relative to the repo root (only if the clone folder is outside `.codeatlas/repos`) gets the preview's existing "File not found" error
+
+### Feature: per-stage timing for indexing and chat
+- Value: medians in ms on this Windows machine; cold = first request in a fresh process (3 processes), warm = later requests in the same process (6 runs). The model was **not timed**: no GROQ_API_KEY or OPENAI_API_KEY is set here, so the built-in stand-in answered instantly and `llm` below is only LangChain overhead
+
+  | Indexing | clone | parse | graph | read_files | embed | index_write | save_state | total |
+  |---|---|---|---|---|---|---|---|---|
+  | itsdangerous cold | 1792 | 106 | 23 | 28 | 27 | 7 | 3 | 2013 |
+  | itsdangerous warm | 1691 | 97 | 22 | 24 | 25 | 11 | 3 | 1893 |
+  | flask cold | 2285 | 809 | 258 | 376 | 263 | 61 | 15 | 4034 |
+  | flask warm | 2147 | 820 | 225 | 376 | 260 | 61 | 19 | 3895 |
+
+  | Chat question (model excluded) | embed_query (2 calls) | search (2) | rerank (2) | llm stand-in (3 calls) | first token sent | total |
+  |---|---|---|---|---|---|---|
+  | itsdangerous cold | 0.4 | 3.5 | 5.7 | 11.0 | 27.0 | 37.0 |
+  | itsdangerous warm | 0.3 | 0.4 | 4.7 | 3.1 | 12.2 | 25.5 |
+  | flask cold | 0.3 | 4.1 | 7.1 | 7.9 | 24.9 | 34.4 |
+  | flask warm | 0.3 | 0.6 | 6.5 | 3.0 | 15.5 | 32.8 |
+
+  Clone is 89% of indexing time for itsdangerous and 55 to 57% for flask. Without the model, a chat question takes under 40 ms. App import and startup took 2.6 to 2.9 s per process
+- Command: `python scripts/time_stages.py https://github.com/pallets/itsdangerous --runs 3` and `python scripts/time_stages.py https://github.com/pallets/flask --runs 3`, each run 3 times; plus `python -m pytest` (137 passed; `tests/test_timing.py` covers summing repeated stages, call counts, the no-timer case, thread-pool handoff, every indexing stage in Server-Timing, chat stages in the done event and no question text in logs), `ruff check`, `ruff format --check`, and in `codementor-ui`: `npm test` (16 passed), `npm run lint` (0 errors, same 28 warnings as before), `npm run build`
+- Dataset/repo: https://github.com/pallets/itsdangerous (15 files, 63 edges) and https://github.com/pallets/flask (83 files, 432 edges), question "How does Signer create and check a signature?"
+- Date: 2026-10-04
+- Commit: 64c7ae6
+- Notes: /analyze-repo and /ask return a `Server-Timing` header; /ask/stream adds `timings_ms` to its done event; every request logs one `timing <endpoint> stage=ms ...` line with no question, answer or code. `embed` covers the indexing embeddings (hash embedder); `read_files` is reading file contents for them. The streamed chat path calls the model three times per question and none of those calls is streamed from the model: retrieval summarises the snippets, the mentor re-runs retrieval (which summarises again), then the mentor answers. So the time to the first token the user sees is the sum of three full model calls; `first_token_sent` measures that once a key is set, and `first_model_token` is recorded only in general (no-repo) mode, where the model really streams. The answer is then sent 4 words every 8 ms, which adds about 0.8 s for a 400-word answer. Numbers come from an in-process client, so they exclude network time between browser and server, and the clone time depends on this machine's connection to GitHub
