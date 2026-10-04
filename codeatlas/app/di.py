@@ -62,7 +62,11 @@ def get_embedder() -> SentenceTransformerEmbeddingService | HashEmbeddingService
 
 @lru_cache
 def get_index_service() -> CodeIndexService:
-    return CodeIndexService(embedder=get_embedder(), retriever=get_code_retriever())
+    return CodeIndexService(
+        embedder=get_embedder(),
+        retriever=get_code_retriever(),
+        timeout_seconds=get_config().index_timeout_seconds,
+    )
 
 
 @lru_cache

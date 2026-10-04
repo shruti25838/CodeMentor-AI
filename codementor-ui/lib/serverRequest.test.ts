@@ -3,14 +3,15 @@ import { afterEach, beforeEach, mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import {
-    getServerStatus,
-    READ_DEADLINE_MS,
-    responseError,
-    serverFetch,
-    SLOW_AFTER_MS,
-    UNREACHABLE_MESSAGE,
-} from "./serverRequest.ts";
+import type * as ServerRequest from "./serverRequest.ts";
+import { READ_DEADLINE_MS, SLOW_AFTER_MS, UNREACHABLE_MESSAGE } from "./serverRequest.ts";
+
+// The module keeps page-session state (whether the server has answered yet), so each test loads a fresh copy.
+let mod: typeof ServerRequest;
+let loads = 0;
+const getServerStatus = () => mod.getServerStatus();
+const serverFetch = (...args: Parameters<typeof ServerRequest.serverFetch>) => mod.serverFetch(...args);
+const responseError = (...args: Parameters<typeof ServerRequest.responseError>) => mod.responseError(...args);
 
 const realFetch = globalThis.fetch;
 let calls = 0;
@@ -42,7 +43,10 @@ async function advance(ms: number) {
     }
 }
 
-beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));
+beforeEach(async () => {
+    mod = await import(`./serverRequest.ts?fresh=${loads++}`);
+    mock.timers.enable({ apis: ["setTimeout"] });
+});
 afterEach(() => {
     mock.timers.reset();
     globalThis.fetch = realFetch;
@@ -109,6 +113,29 @@ test("slow request sent once shows waking, then clears when it answers", async (
     assert.equal((await pending).status, 200);
     assert.equal(calls, 1);
     assert.equal(getServerStatus(), "ok");
+});
+
+test("once the server has answered, a slow request is real work, not waking", async () => {
+    fakeFetch(ok(), { after: 30_000, response: ok() });
+    await serverFetch("http://x/repos", undefined, { retry: true });
+    const pending = serverFetch("http://x/analyze-repo", { method: "POST" }, { retry: false });
+    await advance(SLOW_AFTER_MS + 5000);
+    assert.equal(getServerStatus(), "ok");
+    await advance(30_000);
+    assert.equal((await pending).status, 200);
+});
+
+test("a slow request stops showing waking as soon as another request gets an answer", async () => {
+    fakeFetch({ after: 60_000, response: ok() }, { after: 6000, response: ok() });
+    const slow = serverFetch("http://x/analyze-repo", { method: "POST" }, { retry: false });
+    const read = serverFetch("http://x/repos", undefined, { retry: true });
+    await advance(SLOW_AFTER_MS + 500);
+    assert.equal(getServerStatus(), "waking");
+    await advance(2000);
+    assert.equal((await read).status, 200);
+    assert.equal(getServerStatus(), "ok");
+    await advance(60_000);
+    await slow;
 });
 
 test("responseError prefers the backend detail, then explains gateway errors", async () => {

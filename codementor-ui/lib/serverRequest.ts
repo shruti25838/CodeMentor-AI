@@ -1,7 +1,9 @@
 /**
  * Fetch wrapper for a backend that may be asleep (free tier, up to a minute to wake).
  *
- * - After SLOW_AFTER_MS without a response, the shared status becomes "waking" so the UI can say so.
+ * - After SLOW_AFTER_MS without a response, the shared status becomes "waking" so the UI can say so, but only
+ *   until the server has answered any request in this page session. After that, a slow request is real work
+ *   (indexing, an LLM answer) and the caller shows its own progress text.
  * - Only requests marked `retry: true` (safe reads) are retried, on network errors or 502/503/504.
  *   Requests that start work, such as indexing a repository, are never retried.
  * - When the server cannot be reached, the status becomes "unreachable" and the call throws a plain-English error.
@@ -20,10 +22,11 @@ export type ServerStatus = "ok" | "waking" | "unreachable";
 
 let slowRequests = 0;
 let unreachable = false;
+let serverHasAnswered = false;
 const listeners = new Set<() => void>();
 
 export function getServerStatus(): ServerStatus {
-    if (slowRequests > 0) return "waking";
+    if (slowRequests > 0 && !serverHasAnswered) return "waking";
     return unreachable ? "unreachable" : "ok";
 }
 
@@ -60,6 +63,7 @@ export async function serverFetch(url: string, init: RequestInit | undefined, op
         clearTimeout(slowTimer);
         if (markedSlow) slowRequests--;
         unreachable = !reachable;
+        if (reachable) serverHasAnswered = true;
         notify();
     };
 

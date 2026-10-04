@@ -103,6 +103,11 @@ def _classify_git_error(stderr: str) -> RepoCloneError:
     return RepoCloneError("Cloning the repository failed. Please try again later.", status_code=502)
 
 
+def remove_clone(repository: Repository) -> None:
+    """Delete a cloned repository folder (used when a later analysis step fails)."""
+    _remove_dir(Path(repository.root_path))
+
+
 def _remove_dir(path: Path) -> None:
     """Best-effort delete; git marks object files read-only, which blocks rmtree on Windows."""
     for _ in range(5):

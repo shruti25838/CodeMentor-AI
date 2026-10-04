@@ -12,6 +12,11 @@ class CodeRetriever(ABC):
     def search(self, repo_id: str, query_vector: list[float], top_k: int) -> list[EmbeddingRecord]:
         raise NotImplementedError
 
+    @abstractmethod
+    def remove(self, repo_id: str) -> None:
+        """Drop a repo's index, in memory and on disk."""
+        raise NotImplementedError
+
 
 class GraphRetriever(ABC):
     @abstractmethod
