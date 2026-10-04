@@ -8,6 +8,9 @@ from codeatlas.services.agents.interfaces import Agent
 from codeatlas.services.agents.types import AnswerResult, GenerateResult
 from codeatlas.services.memory.interfaces import MemoryStore
 
+# Start of the answer when the mentor fails; such answers are not kept as conversation history.
+ANSWER_ERROR_PREFIX = "Error generating answer"
+
 
 # Define the state for the graph
 class OrchestratorState(TypedDict):
@@ -64,11 +67,17 @@ class AgentOrchestrator:
             reasoning_steps=reasoning,
         )
 
-    def handle_question_fast(self, question: str, repo_id: str) -> AnswerResult:
-        """Faster path: skip planner & validator, go straight retrieval → mentor."""
+    def handle_question_fast(
+        self, question: str, repo_id: str, history: str = "", search_question: str | None = None
+    ) -> AnswerResult:
+        """Faster path: skip planner & validator, go straight retrieval → mentor.
+
+        history: earlier turns of this conversation, shown to the mentor. search_question: a
+        standalone version of a follow-up, used for retrieval instead of the question as asked.
+        """
         # 1. Retrieve
         try:
-            retrieval_output = self._retrieval_agent.run(question, repo_id)
+            retrieval_output = self._retrieval_agent.run(search_question or question, repo_id)
         except Exception as e:
             self._logger.warning("Retrieval failed: %s", e)
             retrieval_output = ""
@@ -77,10 +86,13 @@ class AgentOrchestrator:
         # 2. Mentor answers using context
         mentor_prompt = f"{question}\n\nRetrieved context:\n{retrieval_output}" if retrieval_output else question
         try:
-            answer = self._mentor_agent.run(mentor_prompt, repo_id)
+            if history:
+                answer = self._mentor_agent.run(mentor_prompt, repo_id, history=history)
+            else:
+                answer = self._mentor_agent.run(mentor_prompt, repo_id)
         except Exception as e:
             self._logger.warning("Mentor failed: %s", e)
-            answer = f"Error generating answer: {e}"
+            answer = f"{ANSWER_ERROR_PREFIX}: {e}"
 
         return AnswerResult(
             answer=answer,

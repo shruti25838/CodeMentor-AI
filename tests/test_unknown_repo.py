@@ -48,7 +48,7 @@ class ModelSpy:
         self.calls.append("handle_question")
         return AnswerResult(answer="ok", citations=[], reasoning_steps=[])
 
-    def handle_question_fast(self, question, repo_id):
+    def handle_question_fast(self, question, repo_id, **kwargs):
         self.calls.append("handle_question_fast")
         return AnswerResult(answer="ok", citations=[], reasoning_steps=[])
 

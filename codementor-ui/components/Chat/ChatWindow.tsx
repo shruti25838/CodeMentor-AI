@@ -13,6 +13,7 @@ interface Message {
 }
 
 import { askQuestionStream } from "@/lib/api";
+import { newChatSessionId } from "@/lib/chatSession";
 import { pushRetrievedContext } from "@/components/Panels/ContextPanel";
 import { readSuggestedQuestions, SUGGESTIONS_STORAGE_KEY } from "@/lib/example";
 import { getServerStatus, subscribeServerStatus, WAKING_MESSAGE } from "@/lib/serverRequest";
@@ -36,6 +37,8 @@ export default function ChatWindow() {
     ]);
     const [input, setInput] = useState("");
     const [isThinking, setIsThinking] = useState(false);
+    // One id per conversation on screen; the server keeps its last few turns (lib/chatSession.ts).
+    const [sessionId] = useState(() => newChatSessionId());
     const [streamStatus, setStreamStatus] = useState<string | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -109,7 +112,7 @@ export default function ChatWindow() {
                 { role: "mentor", content: "", reasoningSteps: [], citations: [] },
             ]);
 
-            await askQuestionStream(userMsg, repoId, {
+            await askQuestionStream(userMsg, repoId, sessionId, {
                 onToken: (token: string) => {
                     streamedContent += token;
                     setMessages((prev) => {
@@ -187,7 +190,7 @@ export default function ChatWindow() {
             setIsThinking(false);
             setStreamStatus(null);
         }
-    }, [input, isThinking, messages.length]);
+    }, [input, isThinking, messages.length, sessionId]);
 
     return (
         <div className="flex flex-col h-full bg-background">

@@ -19,6 +19,7 @@ import shutil
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -29,6 +30,10 @@ def main() -> None:
     parser.add_argument("repo_url")
     parser.add_argument("--question", default="How does Signer create and check a signature?")
     parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument(
+        "--follow-up",
+        help="also ask this in the same chat session after the question (shows the cost of history and rewriting)",
+    )
     args = parser.parse_args()
 
     workdir = Path(tempfile.mkdtemp(prefix="codeatlas-timing-"))
@@ -64,12 +69,16 @@ def main() -> None:
                 f"run {run} ({label}) index: {resp.headers['Server-Timing']}"
                 f" | files={body['file_count']} edges={body['dependency_edges']}"
             )
-            resp = client.post("/ask/stream", json={"question": args.question, "repo_id": body["repository_id"]})
-            events = [json.loads(line[6:]) for line in resp.text.splitlines() if line.startswith("data: ")]
-            done = events[-1]
-            if done.get("type") != "done":
-                raise SystemExit(f"chat failed: {done}")
-            print(f"run {run} ({label}) chat:  {json.dumps(done['timings_ms'])}")
+            session_id = uuid.uuid4().hex
+            questions = [("chat", args.question)] + ([("follow-up", args.follow_up)] if args.follow_up else [])
+            for name, question in questions:
+                payload = {"question": question, "repo_id": body["repository_id"], "session_id": session_id}
+                resp = client.post("/ask/stream", json=payload)
+                events = [json.loads(line[6:]) for line in resp.text.splitlines() if line.startswith("data: ")]
+                done = events[-1]
+                if done.get("type") != "done":
+                    raise SystemExit(f"chat failed: {done}")
+                print(f"run {run} ({label}) {name}:  {json.dumps(done['timings_ms'])}")
     finally:
         os.chdir(ROOT)
         shutil.rmtree(workdir, ignore_errors=True)

@@ -5,13 +5,20 @@ import time
 from fastapi import APIRouter, Depends, Response
 from fastapi.responses import StreamingResponse
 
-from codeatlas.app.di import get_agent_orchestrator, get_llm_provider, get_repo_state_store
+from codeatlas.app.di import (
+    get_agent_orchestrator,
+    get_conversation_store,
+    get_llm_provider,
+    get_repo_state_store,
+)
 from codeatlas.controllers.repo_guard import require_known_repo
-from codeatlas.observability.timing import StageTimer, run_timed, timed_request
+from codeatlas.observability.timing import StageTimer, run_timed, stage, timed_request
 from codeatlas.observability.tracker import tracker
 from codeatlas.schemas.ask import AskRequest, AskResponse
-from codeatlas.services.agents.orchestration import AgentOrchestrator
+from codeatlas.services.agents.orchestration import ANSWER_ERROR_PREFIX, AgentOrchestrator
 from codeatlas.services.llm.provider import LlmProvider
+from codeatlas.services.memory.conversation import ConversationStore, Turn, format_history
+from codeatlas.services.qa.followup import needs_rewrite, rewrite_question
 from codeatlas.services.state.repo_state_store import RepoStateStore
 
 router = APIRouter(prefix="/ask", tags=["qa"])
@@ -80,6 +87,7 @@ async def ask_stream(
     orchestrator: AgentOrchestrator = Depends(get_agent_orchestrator),
     llm_provider: LlmProvider = Depends(get_llm_provider),
     state_store: RepoStateStore = Depends(get_repo_state_store),
+    conversations: ConversationStore = Depends(get_conversation_store),
 ):
     # Checked before the stream opens so the client gets a real 404, not a 200 with an error event.
     if request.repo_id:
@@ -89,12 +97,14 @@ async def ask_stream(
         start = time.perf_counter()
         # Not a contextvar here: the repo-mode work runs in a thread pool, which gets it via run_timed.
         timer = StageTimer()
+        session_id = request.session_id
+        history = conversations.history(session_id, request.repo_id) if session_id else []
         try:
             if not request.repo_id:
                 # ---- General mode: true LLM token streaming ----
                 yield _sse({"type": "status", "content": "Thinking..."})
                 llm = llm_provider.get_chat_model()
-                from langchain_core.prompts import ChatPromptTemplate
+                from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
                 prompt = ChatPromptTemplate.from_messages(
                     [
@@ -103,12 +113,13 @@ async def ask_stream(
                             "You are a senior software engineer and coding mentor. "
                             "Answer the user's coding question clearly with examples where helpful.",
                         ),
+                        MessagesPlaceholder("history"),
                         ("human", "{question}"),
                     ]
                 )
                 chain = prompt | llm
                 full_answer = ""
-                for chunk in chain.stream({"question": request.question}):
+                for chunk in chain.stream({"question": request.question, "history": _as_messages(history)}):
                     token = chunk.content if hasattr(chunk, "content") else str(chunk)
                     if token:
                         timer.mark("first_model_token")
@@ -116,6 +127,8 @@ async def ask_stream(
                         timer.mark("first_token_sent")
                         yield _sse({"type": "token", "content": token})
 
+                if session_id and full_answer:
+                    conversations.add(session_id, None, request.question, full_answer)
                 latency = (time.perf_counter() - start) * 1000
                 tracker.record_query(
                     question=request.question,
@@ -142,7 +155,7 @@ async def ask_stream(
                     None,
                     run_timed,
                     timer,
-                    lambda: orchestrator.handle_question_fast(request.question, request.repo_id),
+                    lambda: _answer_with_history(orchestrator, llm_provider, request, history),
                 )
 
                 yield _sse({"type": "status", "content": "Streaming answer..."})
@@ -159,6 +172,8 @@ async def ask_stream(
                     yield _sse({"type": "token", "content": chunk})
                     await asyncio.sleep(0.008)
 
+                if session_id and not answer.startswith(ANSWER_ERROR_PREFIX):
+                    conversations.add(session_id, request.repo_id, request.question, answer)
                 latency = (time.perf_counter() - start) * 1000
                 tracker.record_query(
                     question=request.question,
@@ -191,6 +206,37 @@ async def ask_stream(
 
 
 # ---------- helpers ----------
+
+
+def _answer_with_history(orchestrator, llm_provider, request: AskRequest, history: list[Turn]):
+    """Repo-mode answer that sees earlier turns; a follow-up is rewritten for search first."""
+    search_question = None
+    if needs_rewrite(request.question, history):
+        with stage("rewrite"):
+            search_question = rewrite_question(llm_provider.get_chat_model(), request.question, history)
+    result = orchestrator.handle_question_fast(
+        request.question,
+        request.repo_id,
+        history=format_history(history),
+        search_question=search_question,
+    )
+    steps = list(result.reasoning_steps)
+    if history:
+        steps.append(f"Used {len(history)} earlier turn(s) of this conversation.")
+    if search_question is not None:
+        steps.append(f"Searched with the follow-up rewritten as: {search_question}")
+    return type(result)(answer=result.answer, citations=result.citations, reasoning_steps=steps)
+
+
+def _as_messages(history: list[Turn]) -> list:
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    messages: list = []
+    for turn in history:
+        messages += [HumanMessage(turn.question), AIMessage(turn.answer)]
+    return messages
+
+
 def _sse(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 

@@ -10,6 +10,7 @@ from codeatlas.services.agents.retrieval_agent import RetrievalAgent
 from codeatlas.services.dependency.import_graph_builder import ImportGraphBuilder
 from codeatlas.services.ingestion.git_loader import GitRepositoryLoader
 from codeatlas.services.llm.provider import LlmProvider
+from codeatlas.services.memory.conversation import ConversationStore
 from codeatlas.services.memory.interfaces import MemoryStore
 from codeatlas.services.memory.json_store import JsonMemoryStore
 from codeatlas.services.parsing.tree_sitter_parser import TreeSitterAstParser
@@ -112,6 +113,17 @@ def get_agent_orchestrator() -> AgentOrchestrator:
         mentor_agent=mentor_agent,
         memory_agent=memory_agent,
         memory_store=memory_store,
+    )
+
+
+@lru_cache
+def get_conversation_store() -> ConversationStore:
+    config = get_config()
+    return ConversationStore(
+        max_turns=config.chat_history_turns,
+        max_tokens=config.chat_history_tokens,
+        ttl_seconds=config.chat_session_ttl_seconds,
+        max_sessions=config.chat_max_sessions,
     )
 
 

@@ -26,6 +26,10 @@ class AppConfig:
     llm_global_per_minute: int = 300
     rate_limit_max_clients: int = 10_000
     index_cache_enabled: bool = True
+    chat_history_turns: int = 4
+    chat_history_tokens: int = 1500
+    chat_session_ttl_seconds: int = 1800
+    chat_max_sessions: int = 1000
 
 
 def load_config() -> AppConfig:
@@ -53,4 +57,8 @@ def load_config() -> AppConfig:
         llm_global_per_minute=int(os.getenv("CODEATLAS_LLM_GLOBAL_PER_MINUTE", "300")),
         rate_limit_max_clients=int(os.getenv("CODEATLAS_RATE_LIMIT_MAX_CLIENTS", "10000")),
         index_cache_enabled=os.getenv("CODEATLAS_INDEX_CACHE", "true").lower() == "true",
+        chat_history_turns=int(os.getenv("CODEATLAS_CHAT_HISTORY_TURNS", "4")),
+        chat_history_tokens=int(os.getenv("CODEATLAS_CHAT_HISTORY_TOKENS", "1500")),
+        chat_session_ttl_seconds=int(os.getenv("CODEATLAS_CHAT_SESSION_TTL_SECONDS", "1800")),
+        chat_max_sessions=int(os.getenv("CODEATLAS_CHAT_MAX_SESSIONS", "1000")),
     )
