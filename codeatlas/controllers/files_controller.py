@@ -91,6 +91,26 @@ _EXT_TO_LANG = {
 }
 
 
+def _safe_join(root: Path, relative: str) -> Path | None:
+    """Resolve `relative` under `root`, or None if it escapes `root`.
+
+    Rejects absolute paths (which would otherwise replace `root` entirely
+    when joined via `/`), `..` traversal, and symlinks that resolve outside
+    `root` — `.resolve()` follows symlinks, so the containment check below
+    catches those too.
+    """
+    if not relative or Path(relative).is_absolute():
+        return None
+    try:
+        root_resolved = root.resolve()
+        candidate = (root / relative).resolve()
+    except (OSError, ValueError):
+        return None
+    if not candidate.is_relative_to(root_resolved):
+        return None
+    return candidate
+
+
 @router.post("/content", response_model=FileContentResponse)
 def get_file_content(
     request: FileContentRequest,
@@ -101,19 +121,22 @@ def get_file_content(
         raise HTTPException(status_code=404, detail="Repository not found")
 
     # Search in .codeatlas/repos/<id>/ first, then root_path
-    candidates: list[Path] = []
+    roots: list[Path] = []
     local_dir = Path(".codeatlas/repos") / request.repo_id
     if local_dir.exists():
-        candidates.append(local_dir / request.file_path)
+        roots.append(local_dir)
     if state.root_path:
-        candidates.append(Path(state.root_path) / request.file_path)
+        roots.append(Path(state.root_path))
 
-    for candidate in candidates:
+    for root in roots:
+        candidate = _safe_join(root, request.file_path)
+        if candidate is None:
+            continue
         if candidate.is_file():
             try:
                 content = candidate.read_text(encoding="utf-8", errors="replace")
-            except OSError as exc:
-                raise HTTPException(status_code=500, detail=str(exc))
+            except OSError:
+                raise HTTPException(status_code=500, detail="Could not read file")
             ext = candidate.suffix.lstrip(".")
             return FileContentResponse(
                 path=request.file_path,

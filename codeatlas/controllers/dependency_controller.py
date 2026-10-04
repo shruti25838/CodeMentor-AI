@@ -3,6 +3,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException
 
 from codeatlas.app.di import get_repo_state_store
+from codeatlas.app.security import require_admin_key
 from codeatlas.schemas.dependencies import (
     DependenciesRequest,
     DependenciesResponse,
@@ -21,7 +22,8 @@ def _clean_path(raw: str) -> str:
     return m.group(1).replace("\\", "/") if m else raw.replace("\\", "/")
 
 
-@router.post("", response_model=DependenciesResponse)
+# Admin/debug: the website only uses /dependencies/graph.
+@router.post("", response_model=DependenciesResponse, dependencies=[Depends(require_admin_key)])
 def get_dependencies(
     request: DependenciesRequest,
     state_store: RepoStateStore = Depends(get_repo_state_store),
