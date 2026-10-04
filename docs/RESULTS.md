@@ -65,3 +65,11 @@ Every number or claim here comes from a command that can be re-run.
 - Date: 2026-10-03
 - Commit: 5ea7c51
 - Notes: the copy claims only what the live chat does today. The website streams answers through /ask/stream, which runs retrieval then the mentor agent, not the full planner/validator pipeline. Citations come from retrieval, so an answer with no matching code has no citations. The workspace welcome modal still describes a planner and "multi-agent AI"; that is outside this change
+
+### Fix: unknown repository ids get a 404 before any language model call
+- Value: /ask, /ask/stream, /explain and /generate-code return 404 with "This repository is not indexed on the server. It may have been removed when the server restarted. Go back to the home page and index it again." The model is never called. /ask/stream returns this as a JSON 404 before the stream opens, not as a 200 with an error event. Requests without a repo id (general chat on /ask and /ask/stream) are unchanged
+- Command: `python -m pytest tests/test_unknown_repo.py` (fails 5 of 9 without the fix), full `python -m pytest`, `ruff check`, `ruff format --check`, and in `codementor-ui`: `npm run lint` (0 errors, same 28 warnings as before) and `npm run build`. Manual: local `uvicorn` with an empty state folder and fake LLM keys returned 404 for all four endpoints with an unknown id, so no model call was attempted
+- Dataset/repo: none (in-process TestClient with stand-ins that record model calls, and a local server)
+- Date: 2026-10-03
+- Commit: 990ef78
+- Notes: "exists" means the repo is in the repo state store, which /analyze-repo fills right after cloning. The LLM client object is still built during dependency setup before the check; building it makes no model call, but on a server with no LLM key configured that setup fails first with a 500, as before this change. The frontend needed no change: the chat already shows a non-200 response's `detail` as "Error: …"
