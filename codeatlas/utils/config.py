@@ -37,7 +37,7 @@ def load_config() -> AppConfig:
         llm_model=os.getenv("CODEATLAS_LLM_MODEL", "llama-3.1-8b-instant"),
         llm_temperature=float(os.getenv("CODEATLAS_LLM_TEMPERATURE", "0.2")),
         api_key=os.getenv("CODEATLAS_API_KEY"),
-        auth_enabled=os.getenv("CODEATLAS_AUTH_ENABLED", "false").lower() == "true",
+        auth_enabled=os.getenv("CODEATLAS_AUTH_ENABLED", "true").lower() == "true",
         clone_timeout_seconds=int(os.getenv("CODEATLAS_CLONE_TIMEOUT_SECONDS", "60")),
         max_repo_mb=max_repo_mb,
         max_repo_files=int(os.getenv("CODEATLAS_MAX_REPO_FILES", "5000")),

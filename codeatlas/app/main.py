@@ -1,11 +1,14 @@
 import os
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html, get_swagger_ui_oauth2_redirect_html
+from fastapi.responses import JSONResponse
 
 from codeatlas.app.di import get_config
 from codeatlas.app.rate_limit import RateLimits, limit_clone, limit_llm
+from codeatlas.app.security import require_admin_key
 from codeatlas.controllers.analyze_controller import router as analyze_router
 from codeatlas.controllers.ask_controller import router as ask_router
 from codeatlas.controllers.dependency_controller import router as dependency_router
@@ -31,8 +34,11 @@ def _allowed_origins() -> list[str]:
 
 def create_app(config: AppConfig | None = None) -> FastAPI:
     configure_logging()
-    app = FastAPI(title="CodeAtlas", version="0.1.0")
-    app.state.rate_limits = RateLimits(config or get_config())
+    config = config or get_config()
+    # Docs and schema are re-added below behind the admin key.
+    app = FastAPI(title="CodeAtlas", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.config = config
+    app.state.rate_limits = RateLimits(config)
     app.state.rate_limits.log_mode()
 
     # Configure CORS
@@ -46,28 +52,45 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         expose_headers=["Retry-After"],
     )
 
-    # Simplified dependency to bypass API key check for local frontend
-    def auth_dep(x_api_key: str | None = Header(default=None)) -> None:
-        # verify_api_key(get_config(), x_api_key)
-        pass
-
-    auth_dependency = Depends(auth_dep)
+    # The website only calls the user-facing endpoints, so they stay open for the
+    # public demo. Admin/debug endpoints need X-API-Key (see codeatlas/app/security.py).
+    admin_key = Depends(require_admin_key)
 
     # Limits only on endpoints that clone repositories or call the LLM; browsing stays unlimited.
     clone_limit = Depends(limit_clone)
     llm_limit = Depends(limit_llm)
 
-    app.include_router(analyze_router, dependencies=[auth_dependency, clone_limit])
-    app.include_router(ask_router, dependencies=[auth_dependency, llm_limit])
-    app.include_router(explain_router, dependencies=[auth_dependency, llm_limit])
-    app.include_router(dependency_router, dependencies=[auth_dependency])
-    app.include_router(files_router, dependencies=[auth_dependency])
-    app.include_router(repos_router, dependencies=[auth_dependency])
-    app.include_router(overview_router, dependencies=[auth_dependency])
-    app.include_router(search_router, dependencies=[auth_dependency])
-    app.include_router(generate_router, dependencies=[auth_dependency, llm_limit])
-    app.include_router(eval_router, dependencies=[auth_dependency])
-    app.include_router(metrics_router)
+    # User-facing (called by codementor-ui/lib/api.ts).
+    app.include_router(analyze_router, dependencies=[clone_limit])
+    app.include_router(ask_router, dependencies=[llm_limit])
+    app.include_router(files_router)
+    app.include_router(repos_router)
+    app.include_router(overview_router)
+    app.include_router(eval_router)
+    # /dependencies/graph is user-facing; plain /dependencies is admin-only (set in the controller).
+    app.include_router(dependency_router)
+
+    # Admin/debug.
+    app.include_router(explain_router, dependencies=[admin_key, llm_limit])
+    app.include_router(search_router, dependencies=[admin_key])
+    app.include_router(generate_router, dependencies=[admin_key, llm_limit])
+    app.include_router(metrics_router, dependencies=[admin_key])
+
+    @app.get("/openapi.json", include_in_schema=False, dependencies=[admin_key])
+    def openapi_schema() -> JSONResponse:
+        return JSONResponse(app.openapi())
+
+    @app.get("/docs", include_in_schema=False, dependencies=[admin_key])
+    def swagger_docs():
+        return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{app.title} - Docs")
+
+    @app.get("/docs/oauth2-redirect", include_in_schema=False, dependencies=[admin_key])
+    def swagger_oauth2_redirect():
+        return get_swagger_ui_oauth2_redirect_html()
+
+    @app.get("/redoc", include_in_schema=False, dependencies=[admin_key])
+    def redoc_docs():
+        return get_redoc_html(openapi_url="/openapi.json", title=f"{app.title} - ReDoc")
 
     @app.middleware("http")
     async def record_metrics(request, call_next):
