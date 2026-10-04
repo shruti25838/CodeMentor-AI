@@ -97,3 +97,11 @@ Every number or claim here comes from a command that can be re-run.
 - Date: 2026-10-03
 - Commit: e249883
 - Notes: the response keeps the same four fields (`repository_id`, `file_count`, `dependency_edges`, `indexing_status`); only the status value changed from "queued" to "ready". The time limit covers the indexing step; cloning has its own limits, and parsing and graph building have none but are bounded by the file-count and size limits. The request holds a clone slot until indexing finishes (measured locally: about 0.1 s of indexing for itsdangerous, 2.5 s for flask, with the default hash embedder). `CodeRetriever` gains an abstract `remove`. "Previously indexed", "Open Coding Workspace" and the welcome popup are unchanged
+
+### Feature: citations open the file preview at the cited lines
+- Value: each citation in a chat answer (still inside the "Citations" section) is a button that opens the existing file preview. For a function citation such as `src/itsdangerous/url_safe.py (lines 72-76)`, the preview highlights lines 72-76, scrolls them into view and shows "cited: lines 72-76" in the header. A file citation opens the whole file. Clicking a file in the context panel's retrieved list now also opens at its cited lines (before, the line range was dropped)
+- Command: in `codementor-ui`: `npm test` (16 passed, including 6 for the citation parser), `npx tsc --noEmit`, `npm run lint` (0 errors, same 28 warnings as before), `npm run build`; plus `python -m pytest`, `ruff check`, `ruff format --check`. Manual: retrieved the citations for two of the example's suggested questions from a local index of pallets/itsdangerous, parsed them with the same rules as `lib/citations.ts`, and posted each path to /files/content on a local `uvicorn`: 10 of 10 returned 200, with every cited range inside the file's line count
+- Dataset/repo: https://github.com/pallets/itsdangerous
+- Date: 2026-10-03
+- Commit: 6aa916f
+- Notes: no backend change and no new endpoint; the preview uses POST /files/content, which the website already called. Citation format parsed: "path (lines A-B) | snippet", "path | snippet" or "path". A cited path that is not relative to the repo root (only if the clone folder is outside `.codeatlas/repos`) gets the preview's existing "File not found" error
