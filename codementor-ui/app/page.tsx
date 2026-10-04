@@ -1,11 +1,12 @@
 "use client";
 
-import { Github, ArrowRight, Loader2, Search, Database, Code2, FolderOpen } from "lucide-react";
+import { Github, ArrowRight, Loader2, Search, Database, Code2, FolderOpen, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 import { indexRepository, listRepos, RepoInfo } from "@/lib/api";
+import { EXAMPLE_REPO, saveSuggestedQuestions } from "@/lib/example";
 
 export default function Home() {
   const [isIndexing, setIsIndexing] = useState(false);
@@ -26,8 +27,8 @@ export default function Home() {
     router.push("/workspace");
   };
 
-  const handleIndex = async () => {
-    if (!repoUrl.trim()) return;
+  const handleIndex = async (url: string = repoUrl, suggestedQuestions: string[] = []) => {
+    if (!url.trim()) return;
     setError(null);
     setIsIndexing(true);
     setStep(0);
@@ -43,7 +44,7 @@ export default function Home() {
 
     try {
       // Start the real indexing process
-      const result = await indexRepository(repoUrl);
+      const result = await indexRepository(url);
 
       // Simulate visual progress steps (backend returns immediately since indexing is backgrounded)
       let current = 0;
@@ -56,8 +57,9 @@ export default function Home() {
           if (result && result.repository_id) {
             localStorage.setItem("current_repo_id", result.repository_id);
             // Store the repo name extracted from URL
-            const repoName = repoUrl.trim().replace(/\/$/, "").split("/").pop() || result.repository_id;
+            const repoName = url.trim().replace(/\/$/, "").split("/").pop() || result.repository_id;
             localStorage.setItem("current_repo_name", repoName);
+            saveSuggestedQuestions(result.repository_id, suggestedQuestions);
           }
           router.push("/workspace");
         }
@@ -132,13 +134,33 @@ export default function Home() {
             )}
 
             <button
-              onClick={handleIndex}
+              onClick={() => handleIndex()}
               disabled={!repoUrl.trim()}
               className="w-full bg-accent text-background rounded-md py-2.5 text-sm font-medium flex items-center justify-center gap-2 hover:opacity-90 transition-opacity mt-4 shadow-lg shadow-white/5 disabled:opacity-50"
             >
               Index Repository
               <ArrowRight className="w-4 h-4" />
             </button>
+
+            <button
+              onClick={() => handleIndex(EXAMPLE_REPO.url, EXAMPLE_REPO.questions)}
+              className="w-full border border-border text-foreground/80 rounded-md py-2.5 text-sm font-medium flex items-center justify-center gap-2 hover:bg-white/5 transition-colors"
+            >
+              <Sparkles className="w-4 h-4" />
+              Try an example
+            </button>
+            <p className="text-[11px] text-muted text-center">
+              Indexes the small public{" "}
+              <a
+                href={EXAMPLE_REPO.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-accent"
+              >
+                pallets/{EXAMPLE_REPO.name}
+              </a>{" "}
+              repository and suggests a few questions to ask.
+            </p>
 
             {existingRepos.length > 0 && (
               <>

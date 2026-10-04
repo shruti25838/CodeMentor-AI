@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Terminal, Loader2 } from "lucide-react";
+import React, { useState, useRef, useEffect, useCallback, useSyncExternalStore } from "react";
+import { Send, Terminal, Loader2, Lightbulb } from "lucide-react";
 import { cn } from "@/lib/utils";
 import MessageBubble from "./MessageBubble";
 
@@ -14,6 +14,20 @@ interface Message {
 
 import { askQuestionStream } from "@/lib/api";
 import { pushRetrievedContext } from "@/components/Panels/ContextPanel";
+import { readSuggestedQuestions, SUGGESTIONS_STORAGE_KEY } from "@/lib/example";
+
+const subscribeToStorage = (onChange: () => void) => {
+    window.addEventListener("storage", onChange);
+    return () => window.removeEventListener("storage", onChange);
+};
+// Returns a JSON string so React can compare snapshots by value.
+const readSuggestionsSnapshot = () =>
+    JSON.stringify(
+        readSuggestedQuestions(
+            localStorage.getItem(SUGGESTIONS_STORAGE_KEY),
+            localStorage.getItem("current_repo_id"),
+        ),
+    );
 
 export default function ChatWindow() {
     const [messages, setMessages] = useState<Message[]>([
@@ -24,6 +38,11 @@ export default function ChatWindow() {
     const [streamStatus, setStreamStatus] = useState<string | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
+
+    // Suggested questions saved by the landing page's "Try an example" button, for the current repo only.
+    const suggestedQuestions: string[] = JSON.parse(
+        useSyncExternalStore(subscribeToStorage, readSuggestionsSnapshot, () => "[]"),
+    );
 
     useEffect(() => {
         if (scrollRef.current) {
@@ -201,6 +220,29 @@ export default function ChatWindow() {
                         citations={msg.citations}
                     />
                 ))}
+
+                {messages.length === 1 && suggestedQuestions.length > 0 && (
+                    <div className="max-w-3xl mx-auto space-y-2">
+                        <div className="text-[10px] font-bold text-muted uppercase tracking-widest flex items-center gap-1.5">
+                            <Lightbulb className="w-3 h-3" />
+                            Try asking
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            {suggestedQuestions.map((q) => (
+                                <button
+                                    key={q}
+                                    onClick={() => {
+                                        setInput(q);
+                                        inputRef.current?.focus();
+                                    }}
+                                    className="text-left text-[12px] px-3 py-1.5 rounded-md border border-border bg-white/[0.03] hover:bg-white/[0.06] hover:text-accent text-foreground/80 transition-colors"
+                                >
+                                    {q}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {isThinking && messages[messages.length - 1]?.content === "" && (
                     <div className="max-w-3xl mx-auto flex items-center gap-2 text-muted animate-pulse">
