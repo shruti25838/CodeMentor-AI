@@ -85,7 +85,10 @@ export default function Home() {
             <Code2 className="w-6 h-6" />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight">CodeMentor AI</h1>
-          <p className="text-sm text-muted">Intelligent codebase indexing and assistance.</p>
+          <p className="text-sm text-muted">
+            Paste a public GitHub repository and ask questions about its code, with answers that cite the
+            files they came from.
+          </p>
         </div>
 
         {isIndexing ? (
@@ -180,12 +183,6 @@ export default function Home() {
             </button>
           </div>
         )}
-
-        <div className="pt-8 border-t border-border text-center">
-          <p className="text-[10px] uppercase tracking-widest text-muted/50">
-            Professional AI Developer Environment
-          </p>
-        </div>
       </div>
     </div>
   );

@@ -13,8 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CodeMentor | AI Codebase Intelligence",
-  description: "Agentic codebase intelligence for master developers.",
+  title: "CodeMentor AI | Ask questions about a GitHub repository",
+  description:
+    "Paste a public GitHub repository and ask questions about its code, with answers that cite the files they came from.",
 };
 
 export default function RootLayout({
