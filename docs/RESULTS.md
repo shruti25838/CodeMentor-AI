@@ -73,3 +73,11 @@ Every number or claim here comes from a command that can be re-run.
 - Date: 2026-10-03
 - Commit: 990ef78
 - Notes: "exists" means the repo is in the repo state store, which /analyze-repo fills right after cloning. The LLM client object is still built during dependency setup before the check; building it makes no model call, but on a server with no LLM key configured that setup fails first with a 500, as before this change. The frontend needed no change: the chat already shows a non-200 response's `detail` as "Error: …"
+
+### Feature: "Try an example" button on the landing page
+- Value: one click indexes https://github.com/pallets/itsdangerous through the existing POST /analyze-repo flow, then opens the workspace with three suggested questions ("How does Signer create and check a signature?", "What is the difference between Serializer and URLSafeTimedSerializer?", "How does the code detect that a signed value has expired?"). Clicking a suggestion fills the chat input. On a local server the repo indexed in about 3 s: 15 parsed files, 63 dependency edges
+- Command: `python -m pytest`, `ruff check codeatlas tests`, `ruff format --check codeatlas tests`, and in `codementor-ui`: `npm run lint` (0 errors, same 28 warnings as before) and `npm run build`. Manual: `curl -X POST localhost:8765/analyze-repo -d '{"repo_url":"https://github.com/pallets/itsdangerous"}'` against a local `uvicorn`, then GET /repos
+- Dataset/repo: https://github.com/pallets/itsdangerous (public, BSD-3-Clause, maintained by Pallets)
+- Date: 2026-10-03
+- Commit: b6b0702
+- Notes: no new endpoint. Each click is a normal clone, so it counts against the clone rate limit; /repos returns no URL and repo ids are random, so an earlier copy cannot be reused reliably. Suggestions are saved in localStorage together with the repo id, and the chat shows them only while that repo is the current one and before the first message. The button still uses the current landing flow, which opens the workspace after a fixed animation rather than when indexing finishes (item 4), and the first click after the server sleeps can hit a cold start (item 3). Answer quality for the suggested questions was not checked here because no LLM key is configured locally
