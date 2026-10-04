@@ -1,17 +1,23 @@
+import { responseError, serverFetch } from "./serverRequest";
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// Read-only requests are safe to repeat while the server wakes up. Requests that start work
+// (indexing, chat) are sent once; see lib/serverRequest.ts.
+const READ = { retry: true };
+const ONCE = { retry: false };
+
 export async function askQuestion(question: string, repoId?: string) {
-    const response = await fetch(`${BASE_URL}/ask`, {
+    const response = await serverFetch(`${BASE_URL}/ask`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
         },
         body: JSON.stringify({ question, repo_id: repoId }),
-    });
+    }, ONCE);
 
     if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error.detail || "Failed to fetch answer from backend");
+        throw await responseError(response, "Failed to fetch answer from backend");
     }
 
     return response.json();
@@ -28,15 +34,14 @@ export async function askQuestionStream(
         onError: (error: string) => void;
     },
 ) {
-    const response = await fetch(`${BASE_URL}/ask/stream`, {
+    const response = await serverFetch(`${BASE_URL}/ask/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question, repo_id: repoId }),
-    });
+    }, ONCE);
 
     if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || "Streaming failed");
+        throw await responseError(response, "Streaming failed");
     }
 
     const reader = response.body!.getReader();
@@ -78,33 +83,32 @@ export async function askQuestionStream(
 }
 
 export async function indexRepository(repoUrl: string) {
-    const response = await fetch(`${BASE_URL}/analyze-repo`, {
+    const response = await serverFetch(`${BASE_URL}/analyze-repo`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
         },
         body: JSON.stringify({ repo_url: repoUrl }),
-    });
+    }, ONCE);
 
     if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error.detail || "Failed to start analysis");
+        throw await responseError(response, "Failed to start analysis");
     }
 
     return response.json();
 }
 
 export async function fetchFiles(repoId: string) {
-    const response = await fetch(`${BASE_URL}/files`, {
+    const response = await serverFetch(`${BASE_URL}/files`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
         },
         body: JSON.stringify({ repo_id: repoId }),
-    });
+    }, READ);
 
     if (!response.ok) {
-        throw new Error("Failed to fetch file list");
+        throw await responseError(response, "Failed to fetch file list");
     }
 
     return response.json();
@@ -114,26 +118,26 @@ export async function fetchFileContent(
     repoId: string,
     filePath: string,
 ): Promise<{ path: string; content: string; language: string; line_count: number }> {
-    const response = await fetch(`${BASE_URL}/files/content`, {
+    const response = await serverFetch(`${BASE_URL}/files/content`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo_id: repoId, file_path: filePath }),
-    });
-    if (!response.ok) throw new Error("Failed to fetch file content");
+    }, READ);
+    if (!response.ok) throw await responseError(response, "Failed to fetch file content");
     return response.json();
 }
 
 export async function fetchRepoOverview(repoId: string) {
-    const response = await fetch(`${BASE_URL}/repo-overview`, {
+    const response = await serverFetch(`${BASE_URL}/repo-overview`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
         },
         body: JSON.stringify({ repo_id: repoId }),
-    });
+    }, READ);
 
     if (!response.ok) {
-        throw new Error("Failed to fetch repository overview");
+        throw await responseError(response, "Failed to fetch repository overview");
     }
 
     return response.json();
@@ -145,23 +149,23 @@ export interface RepoInfo {
 }
 
 export async function listRepos(): Promise<{ repo_ids: string[]; repos: RepoInfo[] }> {
-    const response = await fetch(`${BASE_URL}/repos`);
-    if (!response.ok) throw new Error("Failed to list repositories");
+    const response = await serverFetch(`${BASE_URL}/repos`, undefined, READ);
+    if (!response.ok) throw await responseError(response, "Failed to list repositories");
     return response.json();
 }
 
 export async function fetchDependencyGraph(repoId: string) {
-    const response = await fetch(`${BASE_URL}/dependencies/graph`, {
+    const response = await serverFetch(`${BASE_URL}/dependencies/graph`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo_id: repoId }),
-    });
-    if (!response.ok) throw new Error("Failed to fetch dependency graph");
+    }, READ);
+    if (!response.ok) throw await responseError(response, "Failed to fetch dependency graph");
     return response.json();
 }
 
 export async function fetchEvalStats() {
-    const response = await fetch(`${BASE_URL}/eval/stats`);
-    if (!response.ok) throw new Error("Failed to fetch eval stats");
+    const response = await serverFetch(`${BASE_URL}/eval/stats`, undefined, READ);
+    if (!response.ok) throw await responseError(response, "Failed to fetch eval stats");
     return response.json();
 }

@@ -15,6 +15,7 @@ interface Message {
 import { askQuestionStream } from "@/lib/api";
 import { pushRetrievedContext } from "@/components/Panels/ContextPanel";
 import { readSuggestedQuestions, SUGGESTIONS_STORAGE_KEY } from "@/lib/example";
+import { getServerStatus, subscribeServerStatus, WAKING_MESSAGE } from "@/lib/serverRequest";
 
 const subscribeToStorage = (onChange: () => void) => {
     window.addEventListener("storage", onChange);
@@ -40,6 +41,7 @@ export default function ChatWindow() {
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
     // Suggested questions saved by the landing page's "Try an example" button, for the current repo only.
+    const serverStatus = useSyncExternalStore(subscribeServerStatus, getServerStatus, () => "ok" as const);
     const suggestedQuestions: string[] = JSON.parse(
         useSyncExternalStore(subscribeToStorage, readSuggestionsSnapshot, () => "[]"),
     );
@@ -248,7 +250,7 @@ export default function ChatWindow() {
                     <div className="max-w-3xl mx-auto flex items-center gap-2 text-muted animate-pulse">
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         <span className="text-[10px] font-bold uppercase tracking-widest">
-                            {streamStatus || "Agent is thinking..."}
+                            {serverStatus === "waking" ? WAKING_MESSAGE : streamStatus || "Agent is thinking..."}
                         </span>
                     </div>
                 )}

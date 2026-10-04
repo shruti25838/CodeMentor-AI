@@ -2,11 +2,12 @@
 
 import { Github, ArrowRight, Loader2, Search, Database, Code2, FolderOpen, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 
 import { indexRepository, listRepos, RepoInfo } from "@/lib/api";
 import { EXAMPLE_REPO, saveSuggestedQuestions } from "@/lib/example";
+import { getServerStatus, subscribeServerStatus, WAKING_MESSAGE } from "@/lib/serverRequest";
 
 export default function Home() {
   const [isIndexing, setIsIndexing] = useState(false);
@@ -15,6 +16,7 @@ export default function Home() {
   const [step, setStep] = useState(0);
   const [existingRepos, setExistingRepos] = useState<RepoInfo[]>([]);
   const router = useRouter();
+  const serverStatus = useSyncExternalStore(subscribeServerStatus, getServerStatus, () => "ok" as const);
 
   useEffect(() => {
     listRepos()
@@ -97,7 +99,7 @@ export default function Home() {
           <div className="space-y-6 pt-4">
             <div className="flex items-center gap-3 text-sm font-medium animate-pulse">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>{steps[step]}</span>
+              <span>{serverStatus === "waking" ? `${WAKING_MESSAGE}...` : steps[step]}</span>
             </div>
             <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
               <div
