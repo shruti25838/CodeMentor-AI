@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header
 from fastapi.middleware.cors import CORSMiddleware
 
+from codeatlas.app.di import get_config
+from codeatlas.app.rate_limit import RateLimits, limit_clone, limit_llm
 from codeatlas.controllers.analyze_controller import router as analyze_router
 from codeatlas.controllers.ask_controller import router as ask_router
 from codeatlas.controllers.dependency_controller import router as dependency_router
@@ -15,6 +17,7 @@ from codeatlas.controllers.metrics_controller import router as metrics_router
 from codeatlas.controllers.overview_controller import router as overview_router
 from codeatlas.controllers.repos_controller import router as repos_router
 from codeatlas.controllers.search_controller import router as search_router
+from codeatlas.utils.config import AppConfig
 from codeatlas.utils.logging import configure_logging
 
 load_dotenv()
@@ -26,9 +29,11 @@ def _allowed_origins() -> list[str]:
     return [o.strip() for o in raw.split(",") if o.strip()]
 
 
-def create_app() -> FastAPI:
+def create_app(config: AppConfig | None = None) -> FastAPI:
     configure_logging()
     app = FastAPI(title="CodeAtlas", version="0.1.0")
+    app.state.rate_limits = RateLimits(config or get_config())
+    app.state.rate_limits.log_mode()
 
     # Configure CORS
     app.add_middleware(
@@ -37,6 +42,8 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Let browser code read how long to wait after a 429.
+        expose_headers=["Retry-After"],
     )
 
     # Simplified dependency to bypass API key check for local frontend
@@ -46,15 +53,19 @@ def create_app() -> FastAPI:
 
     auth_dependency = Depends(auth_dep)
 
-    app.include_router(analyze_router, dependencies=[auth_dependency])
-    app.include_router(ask_router, dependencies=[auth_dependency])
-    app.include_router(explain_router, dependencies=[auth_dependency])
+    # Limits only on endpoints that clone repositories or call the LLM; browsing stays unlimited.
+    clone_limit = Depends(limit_clone)
+    llm_limit = Depends(limit_llm)
+
+    app.include_router(analyze_router, dependencies=[auth_dependency, clone_limit])
+    app.include_router(ask_router, dependencies=[auth_dependency, llm_limit])
+    app.include_router(explain_router, dependencies=[auth_dependency, llm_limit])
     app.include_router(dependency_router, dependencies=[auth_dependency])
     app.include_router(files_router, dependencies=[auth_dependency])
     app.include_router(repos_router, dependencies=[auth_dependency])
     app.include_router(overview_router, dependencies=[auth_dependency])
     app.include_router(search_router, dependencies=[auth_dependency])
-    app.include_router(generate_router, dependencies=[auth_dependency])
+    app.include_router(generate_router, dependencies=[auth_dependency, llm_limit])
     app.include_router(eval_router, dependencies=[auth_dependency])
     app.include_router(metrics_router)
 
