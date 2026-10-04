@@ -5,11 +5,13 @@ import time
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
-from codeatlas.app.di import get_agent_orchestrator, get_llm_provider
+from codeatlas.app.di import get_agent_orchestrator, get_llm_provider, get_repo_state_store
+from codeatlas.controllers.repo_guard import require_known_repo
 from codeatlas.observability.tracker import tracker
 from codeatlas.schemas.ask import AskRequest, AskResponse
 from codeatlas.services.agents.orchestration import AgentOrchestrator
 from codeatlas.services.llm.provider import LlmProvider
+from codeatlas.services.state.repo_state_store import RepoStateStore
 
 router = APIRouter(prefix="/ask", tags=["qa"])
 
@@ -20,8 +22,11 @@ def ask(
     request: AskRequest,
     orchestrator: AgentOrchestrator = Depends(get_agent_orchestrator),
     llm_provider: LlmProvider = Depends(get_llm_provider),
+    state_store: RepoStateStore = Depends(get_repo_state_store),
 ) -> AskResponse:
     start = time.perf_counter()
+    if request.repo_id:
+        require_known_repo(state_store, request.repo_id)
 
     # General mode — no repo, just answer the coding question directly
     if not request.repo_id:
@@ -64,7 +69,12 @@ async def ask_stream(
     request: AskRequest,
     orchestrator: AgentOrchestrator = Depends(get_agent_orchestrator),
     llm_provider: LlmProvider = Depends(get_llm_provider),
+    state_store: RepoStateStore = Depends(get_repo_state_store),
 ):
+    # Checked before the stream opens so the client gets a real 404, not a 200 with an error event.
+    if request.repo_id:
+        require_known_repo(state_store, request.repo_id)
+
     async def generate():
         start = time.perf_counter()
         try:
