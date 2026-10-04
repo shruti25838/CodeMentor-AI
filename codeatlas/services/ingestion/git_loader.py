@@ -1,5 +1,6 @@
 import contextlib
 import os
+import re
 import shutil
 import signal
 import stat
@@ -43,6 +44,8 @@ _NOT_FOUND_MARKERS = (
 )
 _BAD_HOST_MARKERS = ("could not resolve host", "unable to access", "failed to connect")
 
+
+_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 ALLOWED_HOSTS = ("github.com", "gitlab.com", "bitbucket.org")
 UNSUPPORTED_HOST_MESSAGE = "Only repositories on github.com, gitlab.com or bitbucket.org are supported."
@@ -89,6 +92,11 @@ def validate_repo_url(url: str) -> str:
     if parsed.hostname not in ALLOWED_HOSTS:
         raise RepoCloneError(UNSUPPORTED_HOST_MESSAGE, status_code=400)
     return s
+
+
+def repo_cache_url(url: str) -> str:
+    """The same repository written in different ways (trailing .git, letter case) gives the same key."""
+    return validate_repo_url(url).removesuffix(".git").lower()
 
 
 def _classify_git_error(stderr: str) -> RepoCloneError:
@@ -149,6 +157,7 @@ def _kill_tree(proc: subprocess.Popen) -> None:
 
 class GitRepositoryLoader(RepositoryLoader):
     POLL_SECONDS = 0.2
+    REMOTE_HEAD_TIMEOUT_SECONDS = 15
 
     def __init__(
         self,
@@ -170,7 +179,7 @@ class GitRepositoryLoader(RepositoryLoader):
         clone_url = validate_repo_url(repo_url_str)
         repo_id = str(uuid.uuid4())
         repo_dir = self.base_dir / repo_id
-        self._clone(clone_url, repo_dir)
+        commit = self._clone(clone_url, repo_dir)
         name = clone_url.rstrip("/").removesuffix(".git").split("/")[-1]
         return Repository(
             repo_id=repo_id,
@@ -178,9 +187,24 @@ class GitRepositoryLoader(RepositoryLoader):
             url=repo_url_str,
             root_path=str(repo_dir),
             ingested_at=datetime.now(UTC),
+            commit=commit,
         )
 
-    def _clone(self, repo_url: str, repo_dir: Path) -> None:
+    def remote_head(self, repo_url: str) -> str | None:
+        """Ask the host which commit HEAD points at (git ls-remote, no download).
+
+        Any failure returns None; the clone that follows then reports the real error.
+        """
+        clone_url = validate_repo_url(repo_url)
+        deadline = time.monotonic() + min(self.timeout_seconds, self.REMOTE_HEAD_TIMEOUT_SECONDS)
+        try:
+            out = self._git(["-c", "credential.helper=", "ls-remote", "--", clone_url, "HEAD"], deadline)
+        except RepoCloneError:
+            return None
+        sha = out.split()[0] if out.split() else ""
+        return sha if _SHA.fullmatch(sha) else None
+
+    def _clone(self, repo_url: str, repo_dir: Path) -> str:
         """Clone in stages so oversized repos are rejected as early as possible.
 
         1. Partial clone (--filter=blob:none): commits and trees only, no file contents.
@@ -206,6 +230,7 @@ class GitRepositoryLoader(RepositoryLoader):
             listing = self._git(["-C", str(repo_dir), "ls-tree", "-r", "-l", "-z", "HEAD"], deadline)
             self._check_limits(listing)
             self._git(["-C", str(repo_dir), "checkout", "-q", "HEAD"], deadline)
+            return self._git(["-C", str(repo_dir), "rev-parse", "HEAD"], deadline).strip()
         except BaseException:
             _remove_dir(repo_dir)
             raise

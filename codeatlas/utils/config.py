@@ -25,6 +25,7 @@ class AppConfig:
     llm_per_client_per_minute: int = 60
     llm_global_per_minute: int = 300
     rate_limit_max_clients: int = 10_000
+    index_cache_enabled: bool = True
 
 
 def load_config() -> AppConfig:
@@ -51,4 +52,5 @@ def load_config() -> AppConfig:
         llm_per_client_per_minute=int(os.getenv("CODEATLAS_LLM_PER_CLIENT_PER_MINUTE", "60")),
         llm_global_per_minute=int(os.getenv("CODEATLAS_LLM_GLOBAL_PER_MINUTE", "300")),
         rate_limit_max_clients=int(os.getenv("CODEATLAS_RATE_LIMIT_MAX_CLIENTS", "10000")),
+        index_cache_enabled=os.getenv("CODEATLAS_INDEX_CACHE", "true").lower() == "true",
     )

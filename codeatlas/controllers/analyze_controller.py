@@ -1,6 +1,7 @@
 import logging
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from codeatlas.app.di import (
     get_ast_parser,
@@ -12,7 +13,7 @@ from codeatlas.app.di import (
 from codeatlas.observability.timing import timed_request
 from codeatlas.schemas.analyze import AnalyzeRepoRequest, AnalyzeRepoResponse
 from codeatlas.services.dependency.interfaces import DependencyGraphBuilder
-from codeatlas.services.ingestion.git_loader import RepoCloneError, remove_clone
+from codeatlas.services.ingestion.git_loader import RepoCloneError, remove_clone, repo_cache_url
 from codeatlas.services.ingestion.interfaces import RepositoryLoader
 from codeatlas.services.parsing.interfaces import AstParser
 from codeatlas.services.retrieval.indexing import CodeIndexService, IndexingTimeoutError
@@ -30,6 +31,7 @@ INDEX_FAILED_DETAIL = "Indexing this repository failed, so nothing was saved. Pl
 @router.post("", response_model=AnalyzeRepoResponse)
 def analyze_repo(
     request: AnalyzeRepoRequest,
+    http_request: Request,
     response: Response,
     loader: RepositoryLoader = Depends(get_repository_loader),
     parser: AstParser = Depends(get_ast_parser),
@@ -38,10 +40,57 @@ def analyze_repo(
     state_store: RepoStateStore = Depends(get_repo_state_store),
 ) -> AnalyzeRepoResponse:
     with timed_request() as timer:
-        result = _analyze(request, loader, parser, graph_builder, index_service, state_store, timer)
+        result = None
+        if http_request.app.state.config.index_cache_enabled:
+            result = _from_cache(request.repo_url, loader, index_service, state_store, timer)
+        if result is None:
+            result = _analyze(request, loader, parser, graph_builder, index_service, state_store, timer)
         response.headers["Server-Timing"] = timer.server_timing()
         timer.log("analyze")
     return result
+
+
+def _from_cache(repo_url, loader, index_service, state_store, timer) -> AnalyzeRepoResponse | None:
+    """Reuse an earlier index of the same repository at the same commit, if one is complete on disk.
+
+    The commit comes from the host (git ls-remote), so a push to the repository gives a miss
+    and a fresh index. Any doubt returns None and the caller indexes as usual.
+    """
+    try:
+        key = repo_cache_url(repo_url)
+    except RepoCloneError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+    with timer.stage("cache_lookup"):
+        candidates = [
+            (repo_id, state)
+            for repo_id, state in state_store.items()
+            if state.commit
+            and _cache_key(state.url) == key
+            and index_service.has_index(repo_id)
+            and Path(state.root_path).is_dir()
+        ]
+    # ls-remote costs a round trip to the host, so only ask when there is something to reuse.
+    if not candidates:
+        return None
+    with timer.stage("remote_head"):
+        commit = loader.remote_head(repo_url)
+    for repo_id, state in candidates:
+        if commit and state.commit == commit:
+            logger.info("Index cache hit for %s", repo_id)
+            return AnalyzeRepoResponse(
+                repository_id=repo_id,
+                file_count=len(state.parsed_repo.files),
+                dependency_edges=len(state.import_graph.edges),
+                indexing_status="ready",
+            )
+    return None
+
+
+def _cache_key(url: str) -> str | None:
+    try:
+        return repo_cache_url(url)
+    except RepoCloneError:
+        return None
 
 
 def _analyze(request, loader, parser, graph_builder, index_service, state_store, timer) -> AnalyzeRepoResponse:
@@ -78,6 +127,7 @@ def _analyze(request, loader, parser, graph_builder, index_service, state_store,
                 root_path=repo.root_path,
                 name=repo.name,
                 url=repo.url,
+                commit=repo.commit,
             ),
         )
     return AnalyzeRepoResponse(

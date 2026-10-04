@@ -31,6 +31,9 @@ class CodeIndexService:
         self._clock = clock
         self._logger = logging.getLogger(__name__)
 
+    def has_index(self, repo_id: str) -> bool:
+        return self._retriever.has_index(repo_id)
+
     def discard(self, repo_id: str) -> None:
         """Remove any stored index for a repo (used to clean up after a failed analysis)."""
         self._retriever.remove(repo_id)

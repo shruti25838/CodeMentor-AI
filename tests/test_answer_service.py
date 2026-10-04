@@ -16,6 +16,9 @@ class StubRetriever(CodeRetriever):
     def search(self, repo_id: str, query_vector: list[float], top_k: int) -> list[EmbeddingRecord]:
         return self._records[:top_k]
 
+    def has_index(self, repo_id: str) -> bool:
+        return True
+
     def remove(self, repo_id: str) -> None:
         return None
 

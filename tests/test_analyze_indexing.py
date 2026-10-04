@@ -9,6 +9,7 @@ from codeatlas.app.di import get_index_service, get_repo_state_store, get_reposi
 from codeatlas.app.main import create_app
 from codeatlas.controllers.analyze_controller import INDEX_FAILED_DETAIL, INDEX_TIMEOUT_DETAIL
 from codeatlas.models.repository import Repository
+from codeatlas.services.ingestion.interfaces import RepositoryLoader
 from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService
 from codeatlas.services.retrieval.indexing import CodeIndexService
@@ -34,7 +35,7 @@ FILES = {
 }
 
 
-class FakeLoader:
+class FakeLoader(RepositoryLoader):
     """Stands in for a git clone: writes a small Python project into a fresh folder."""
 
     def __init__(self, base: Path) -> None:
@@ -61,8 +62,8 @@ class FakeClock:
 
 
 class Env:
-    def __init__(self, tmp_path: Path, embedder=None, **index_kwargs) -> None:
-        self.loader = FakeLoader(tmp_path / "repos")
+    def __init__(self, tmp_path: Path, embedder=None, loader=None, config=CONFIG, **index_kwargs) -> None:
+        self.loader = loader or FakeLoader(tmp_path / "repos")
         self.index_dir = tmp_path / "indexes"
         self.state = RepoStateStore(base_dir=str(tmp_path / "state"))
         self.index = CodeIndexService(
@@ -70,7 +71,7 @@ class Env:
             retriever=FaissCodeRetriever(base_dir=str(self.index_dir)),
             **index_kwargs,
         )
-        app = create_app(CONFIG)
+        app = create_app(config)
         app.dependency_overrides[get_repository_loader] = lambda: self.loader
         app.dependency_overrides[get_index_service] = lambda: self.index
         app.dependency_overrides[get_repo_state_store] = lambda: self.state

@@ -76,8 +76,18 @@ def test_analyze_reports_every_indexing_stage(tmp_path, caplog):
         resp = env.analyze()
     assert resp.status_code == 200
     names = {part.split(";")[0] for part in resp.headers["Server-Timing"].split(", ")}
-    assert names == {"clone", "parse", "graph", "read_files", "embed", "index_write", "save_state", "total"}
-    assert any(r.message.startswith("timing analyze clone=") for r in caplog.records)
+    assert names == {
+        "cache_lookup",
+        "clone",
+        "parse",
+        "graph",
+        "read_files",
+        "embed",
+        "index_write",
+        "save_state",
+        "total",
+    }
+    assert any(r.message.startswith("timing analyze ") and " clone=" in r.message for r in caplog.records)
 
 
 def _chat_env(tmp_path, answers):

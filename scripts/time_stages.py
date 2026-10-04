@@ -5,7 +5,8 @@
 Run 1 is cold (first request in a new process: lazy imports, first parser load, empty caches);
 later runs are warm. Each run indexes the repo again and asks the question against it, through
 the real endpoints (/analyze-repo and /ask/stream) with an in-process client. Everything is
-written to a temporary folder that is deleted afterwards.
+written to a temporary folder that is deleted afterwards. With the index cache on (the default),
+runs after the first reuse the first index; set CODEATLAS_INDEX_CACHE=false to index every run.
 
 With no GROQ_API_KEY or OPENAI_API_KEY set, the model is replaced by the built-in stand-in that
 answers instantly, so the `llm` stage and first-token times exclude the model.
