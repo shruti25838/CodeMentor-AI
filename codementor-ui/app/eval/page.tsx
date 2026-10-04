@@ -298,7 +298,7 @@ export default function EvalDashboard() {
                                         <thead>
                                             <tr className="bg-white/[0.03] border-b border-white/5">
                                                 <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest text-muted/60 font-bold">
-                                                    Question
+                                                    Time
                                                 </th>
                                                 <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest text-muted/60 font-bold">
                                                     Latency
@@ -317,8 +317,9 @@ export default function EvalDashboard() {
                                                         key={i}
                                                         className="border-b border-white/5 last:border-0 hover:bg-white/[0.02] transition-colors"
                                                     >
-                                                        <td className="px-4 py-2.5 text-foreground/80 truncate max-w-[400px]">
-                                                            {q.question}
+                                                        {/* The server sends no question text: other visitors' questions are private. */}
+                                                        <td className="px-4 py-2.5 text-foreground/80 mono">
+                                                            {new Date(q.timestamp * 1000).toLocaleTimeString()}
                                                         </td>
                                                         <td className="px-4 py-2.5 text-right mono text-muted">
                                                             <span

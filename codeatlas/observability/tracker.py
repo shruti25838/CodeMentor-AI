@@ -1,4 +1,8 @@
-"""In-memory session tracker for eval dashboard analytics."""
+"""In-memory session tracker for eval dashboard analytics.
+
+Only counts and timings are kept. Question text is never accepted, because /eval/stats is
+public and would otherwise show one visitor's questions to everyone.
+"""
 
 import threading
 import time
@@ -8,7 +12,6 @@ from dataclasses import dataclass, field
 
 @dataclass
 class QueryRecord:
-    question: str
     repo_id: str | None
     latency_ms: float
     citation_count: int
@@ -33,14 +36,12 @@ class SessionTracker:
 
     def record_query(
         self,
-        question: str,
         repo_id: str | None,
         latency_ms: float,
         citation_count: int,
         agents_used: list[str],
     ) -> None:
         record = QueryRecord(
-            question=question,
             repo_id=repo_id,
             latency_ms=latency_ms,
             citation_count=citation_count,
@@ -88,7 +89,6 @@ class SessionTracker:
             },
             "recent_queries": [
                 {
-                    "question": r.question[:120],
                     "latency_ms": round(r.latency_ms, 1),
                     "citations": r.citation_count,
                     "timestamp": r.timestamp,

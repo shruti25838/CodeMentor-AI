@@ -131,7 +131,6 @@ async def ask_stream(
                     conversations.add(session_id, None, request.question, full_answer)
                 latency = (time.perf_counter() - start) * 1000
                 tracker.record_query(
-                    question=request.question,
                     repo_id=None,
                     latency_ms=latency,
                     citation_count=0,
@@ -176,7 +175,6 @@ async def ask_stream(
                     conversations.add(session_id, request.repo_id, request.question, answer)
                 latency = (time.perf_counter() - start) * 1000
                 tracker.record_query(
-                    question=request.question,
                     repo_id=request.repo_id,
                     latency_ms=latency,
                     citation_count=len(result.citations),
@@ -245,7 +243,6 @@ def _track(request: AskRequest, resp: AskResponse, start: float) -> None:
     latency = (time.perf_counter() - start) * 1000
     agents = ["mentor"] if not request.repo_id else ["planner", "retrieval", "mentor", "validator"]
     tracker.record_query(
-        question=request.question,
         repo_id=request.repo_id,
         latency_ms=latency,
         citation_count=len(resp.citations),
