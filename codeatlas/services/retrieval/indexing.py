@@ -6,6 +6,7 @@ from pathlib import Path
 from codeatlas.models.embedding_record import EmbeddingRecord
 from codeatlas.models.parsed_repository import ParsedRepository
 from codeatlas.models.repository import Repository
+from codeatlas.observability.timing import stage
 from codeatlas.services.retrieval.embedding import EmbeddingService
 from codeatlas.services.retrieval.interfaces import CodeRetriever
 
@@ -42,6 +43,35 @@ class CodeIndexService:
             if deadline is not None and self._clock() > deadline:
                 raise IndexingTimeoutError(f"Indexing took longer than {self._timeout_seconds:g} seconds.")
 
+        with stage("read_files"):
+            documents, records = self._collect(parsed_repo, check_deadline)
+
+        # Embed in batches so the time limit is checked while embedding, not only before and after.
+        embeddings: list[list[float]] = []
+        with stage("embed"):
+            for start in range(0, len(documents), self._batch_size):
+                check_deadline()
+                embeddings.extend(self._embedder.embed_texts(documents[start : start + self._batch_size]))
+        check_deadline()
+        indexed_records: list[EmbeddingRecord] = []
+        for record, vector in zip(records, embeddings):
+            indexed_records.append(
+                EmbeddingRecord(
+                    record_id=record.record_id,
+                    scope=record.scope,
+                    vector=vector,
+                    metadata=record.metadata,
+                )
+            )
+
+        with stage("index_write"):
+            self._retriever.index(repository.repo_id, indexed_records)
+        self._logger.info("Indexed %s records for repo %s", len(indexed_records), repository.repo_id)
+
+    @staticmethod
+    def _collect(
+        parsed_repo: ParsedRepository, check_deadline: Callable[[], None]
+    ) -> tuple[list[str], list[EmbeddingRecord]]:
         documents: list[str] = []
         records: list[EmbeddingRecord] = []
 
@@ -77,25 +107,7 @@ class CodeIndexService:
                 )
             )
 
-        # Embed in batches so the time limit is checked while embedding, not only before and after.
-        embeddings: list[list[float]] = []
-        for start in range(0, len(documents), self._batch_size):
-            check_deadline()
-            embeddings.extend(self._embedder.embed_texts(documents[start : start + self._batch_size]))
-        check_deadline()
-        indexed_records: list[EmbeddingRecord] = []
-        for record, vector in zip(records, embeddings):
-            indexed_records.append(
-                EmbeddingRecord(
-                    record_id=record.record_id,
-                    scope=record.scope,
-                    vector=vector,
-                    metadata=record.metadata,
-                )
-            )
-
-        self._retriever.index(repository.repo_id, indexed_records)
-        self._logger.info("Indexed %s records for repo %s", len(indexed_records), repository.repo_id)
+        return documents, records
 
 
 def _safe_read(path: Path) -> str:

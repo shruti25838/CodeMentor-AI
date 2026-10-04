@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from codeatlas.app.di import (
     get_ast_parser,
@@ -9,6 +9,7 @@ from codeatlas.app.di import (
     get_repo_state_store,
     get_repository_loader,
 )
+from codeatlas.observability.timing import timed_request
 from codeatlas.schemas.analyze import AnalyzeRepoRequest, AnalyzeRepoResponse
 from codeatlas.services.dependency.interfaces import DependencyGraphBuilder
 from codeatlas.services.ingestion.git_loader import RepoCloneError, remove_clone
@@ -29,22 +30,35 @@ INDEX_FAILED_DETAIL = "Indexing this repository failed, so nothing was saved. Pl
 @router.post("", response_model=AnalyzeRepoResponse)
 def analyze_repo(
     request: AnalyzeRepoRequest,
+    response: Response,
     loader: RepositoryLoader = Depends(get_repository_loader),
     parser: AstParser = Depends(get_ast_parser),
     graph_builder: DependencyGraphBuilder = Depends(get_dependency_graph_builder),
     index_service: CodeIndexService = Depends(get_index_service),
     state_store: RepoStateStore = Depends(get_repo_state_store),
 ) -> AnalyzeRepoResponse:
+    with timed_request() as timer:
+        result = _analyze(request, loader, parser, graph_builder, index_service, state_store, timer)
+        response.headers["Server-Timing"] = timer.server_timing()
+        timer.log("analyze")
+    return result
+
+
+def _analyze(request, loader, parser, graph_builder, index_service, state_store, timer) -> AnalyzeRepoResponse:
     try:
-        repo = loader.load(request.repo_url)
+        with timer.stage("clone"):
+            repo = loader.load(request.repo_url)
     except RepoCloneError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
     # Parse, graph and index before answering. The repo is saved only when all of it succeeds,
     # so a client never sees a half-ready repo; on any failure the clone and index are removed.
     try:
-        parsed = parser.parse_repository(repo)
-        dependency_graph = graph_builder.build_import_graph(parsed)
+        with timer.stage("parse"):
+            parsed = parser.parse_repository(repo)
+        with timer.stage("graph"):
+            dependency_graph = graph_builder.build_import_graph(parsed)
+        # Adds read_files, embed and index_write.
         index_service.index_repository(repo, parsed)
     except Exception as exc:
         index_service.discard(repo.repo_id)
@@ -55,16 +69,17 @@ def analyze_repo(
         logger.exception("Analysis failed for %s", repo.repo_id)
         raise HTTPException(status_code=500, detail=INDEX_FAILED_DETAIL)
 
-    state_store.save(
-        repo.repo_id,
-        RepoState(
-            parsed_repo=parsed,
-            import_graph=dependency_graph,
-            root_path=repo.root_path,
-            name=repo.name,
-            url=repo.url,
-        ),
-    )
+    with timer.stage("save_state"):
+        state_store.save(
+            repo.repo_id,
+            RepoState(
+                parsed_repo=parsed,
+                import_graph=dependency_graph,
+                root_path=repo.root_path,
+                name=repo.name,
+                url=repo.url,
+            ),
+        )
     return AnalyzeRepoResponse(
         repository_id=repo.repo_id,
         file_count=len(parsed.files),

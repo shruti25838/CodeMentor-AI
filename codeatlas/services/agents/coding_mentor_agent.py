@@ -1,6 +1,7 @@
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
+from codeatlas.observability.timing import stage
 from codeatlas.services.agents.interfaces import Agent
 from codeatlas.services.qa.answer_service import AnswerService
 
@@ -41,6 +42,7 @@ class CodingMentorAgent(Agent):
 
         # 2. Generate advice
         chain = self._prompt | self._llm
-        response = chain.invoke({"goal": prompt, "context": context_str})
+        with stage("llm"):
+            response = chain.invoke({"goal": prompt, "context": context_str})
 
         return response.content

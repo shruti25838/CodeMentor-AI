@@ -2,11 +2,12 @@ import asyncio
 import json
 import time
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import StreamingResponse
 
 from codeatlas.app.di import get_agent_orchestrator, get_llm_provider, get_repo_state_store
 from codeatlas.controllers.repo_guard import require_known_repo
+from codeatlas.observability.timing import StageTimer, run_timed, timed_request
 from codeatlas.observability.tracker import tracker
 from codeatlas.schemas.ask import AskRequest, AskResponse
 from codeatlas.services.agents.orchestration import AgentOrchestrator
@@ -20,14 +21,22 @@ router = APIRouter(prefix="/ask", tags=["qa"])
 @router.post("", response_model=AskResponse)
 def ask(
     request: AskRequest,
+    response: Response,
     orchestrator: AgentOrchestrator = Depends(get_agent_orchestrator),
     llm_provider: LlmProvider = Depends(get_llm_provider),
     state_store: RepoStateStore = Depends(get_repo_state_store),
 ) -> AskResponse:
-    start = time.perf_counter()
     if request.repo_id:
         require_known_repo(state_store, request.repo_id)
+    with timed_request() as timer:
+        resp = _ask(request, orchestrator, llm_provider, timer)
+        response.headers["Server-Timing"] = timer.server_timing()
+        timer.log("ask")
+    return resp
 
+
+def _ask(request, orchestrator, llm_provider, timer: StageTimer) -> AskResponse:
+    start = time.perf_counter()
     # General mode — no repo, just answer the coding question directly
     if not request.repo_id:
         llm = llm_provider.get_chat_model()
@@ -44,7 +53,8 @@ def ask(
             ]
         )
         chain = prompt | llm
-        response = chain.invoke({"question": request.question})
+        with timer.stage("llm"):
+            response = chain.invoke({"question": request.question})
         resp = AskResponse(
             answer=response.content,
             citations=[],
@@ -77,6 +87,8 @@ async def ask_stream(
 
     async def generate():
         start = time.perf_counter()
+        # Not a contextvar here: the repo-mode work runs in a thread pool, which gets it via run_timed.
+        timer = StageTimer()
         try:
             if not request.repo_id:
                 # ---- General mode: true LLM token streaming ----
@@ -99,7 +111,9 @@ async def ask_stream(
                 for chunk in chain.stream({"question": request.question}):
                     token = chunk.content if hasattr(chunk, "content") else str(chunk)
                     if token:
+                        timer.mark("first_model_token")
                         full_answer += token
+                        timer.mark("first_token_sent")
                         yield _sse({"type": "token", "content": token})
 
                 latency = (time.perf_counter() - start) * 1000
@@ -110,11 +124,13 @@ async def ask_stream(
                     citation_count=0,
                     agents_used=["mentor"],
                 )
+                timer.log("ask_stream")
                 yield _sse(
                     {
                         "type": "done",
                         "citations": [],
                         "reasoning_steps": ["General mode: streamed response."],
+                        "timings_ms": timer.as_dict(),
                     }
                 )
             else:
@@ -124,6 +140,8 @@ async def ask_stream(
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
                     None,
+                    run_timed,
+                    timer,
                     lambda: orchestrator.handle_question_fast(request.question, request.repo_id),
                 )
 
@@ -137,6 +155,7 @@ async def ask_stream(
                     chunk = " ".join(words[i : i + chunk_size])
                     if i + chunk_size < len(words):
                         chunk += " "
+                    timer.mark("first_token_sent")
                     yield _sse({"type": "token", "content": chunk})
                     await asyncio.sleep(0.008)
 
@@ -148,11 +167,13 @@ async def ask_stream(
                     citation_count=len(result.citations),
                     agents_used=["retrieval", "mentor"],
                 )
+                timer.log("ask_stream")
                 yield _sse(
                     {
                         "type": "done",
                         "citations": result.citations,
                         "reasoning_steps": result.reasoning_steps,
+                        "timings_ms": timer.as_dict(),
                     }
                 )
         except Exception as e:
