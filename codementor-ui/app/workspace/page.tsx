@@ -8,16 +8,17 @@ import ContextPanel from "@/components/Panels/ContextPanel";
 import WelcomeModal from "@/components/WelcomeModal";
 import FilePreviewModal from "@/components/FilePreviewModal";
 import KeyboardShortcutsHelp from "@/components/KeyboardShortcutsHelp";
+import type { FilePreviewRequest } from "@/lib/citations";
 
 export default function WorkspacePage() {
-    const [previewFile, setPreviewFile] = useState<string | null>(null);
+    const [preview, setPreview] = useState<FilePreviewRequest | null>(null);
     const [sidebarVisible, setSidebarVisible] = useState(true);
 
-    // Listen for file preview events from RepoTree and ContextPanel
+    // Listen for file preview events from RepoTree, ContextPanel and chat citations
     useEffect(() => {
         const handler = (e: Event) => {
-            const path = (e as CustomEvent).detail?.path;
-            if (path) setPreviewFile(path);
+            const detail = (e as CustomEvent<FilePreviewRequest>).detail;
+            if (detail?.path) setPreview(detail);
         };
         window.addEventListener("codeatlas:preview-file", handler);
         return () => window.removeEventListener("codeatlas:preview-file", handler);
@@ -40,8 +41,10 @@ export default function WorkspacePage() {
             <WelcomeModal />
             <KeyboardShortcutsHelp />
             <FilePreviewModal
-                filePath={previewFile}
-                onClose={() => setPreviewFile(null)}
+                filePath={preview?.path ?? null}
+                startLine={preview?.startLine}
+                endLine={preview?.endLine}
+                onClose={() => setPreview(null)}
             />
             <AppLayout
                 sidebar={sidebarVisible ? <Sidebar /> : null}

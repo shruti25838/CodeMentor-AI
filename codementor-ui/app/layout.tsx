@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import ServerStatusBanner from "@/components/ServerStatusBanner";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -13,8 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CodeMentor | AI Codebase Intelligence",
-  description: "Agentic codebase intelligence for master developers.",
+  title: "CodeMentor AI | Ask questions about a GitHub repository",
+  description:
+    "Paste a public GitHub repository and ask questions about its code, with answers that cite the files they came from.",
 };
 
 export default function RootLayout({
@@ -28,6 +30,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         suppressHydrationWarning
       >
+        <ServerStatusBanner />
         {children}
       </body>
     </html>

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Info, Layers, GitFork, Clock, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fetchRepoOverview, fetchDependencyGraph } from "@/lib/api";
+import { openFilePreview, parseCitation } from "@/lib/citations";
 import VisualGraph from "./VisualGraph";
 
 /* ------------------------------------------------------------------ */
@@ -200,18 +201,8 @@ export default function ContextPanel() {
                                             key={i}
                                             className="flex items-center justify-between px-2 py-1.5 bg-white/5 rounded border border-white/5 hover:bg-white/10 transition-colors cursor-pointer"
                                             onClick={() => {
-                                                window.dispatchEvent(
-                                                    new CustomEvent(
-                                                        "codeatlas:preview-file",
-                                                        {
-                                                            detail: {
-                                                                path: item.file
-                                                                    .split(" (")[0]
-                                                                    .trim(),
-                                                            },
-                                                        },
-                                                    ),
-                                                );
+                                                const { path, startLine, endLine } = parseCitation(item.file);
+                                                openFilePreview({ path, startLine, endLine });
                                             }}
                                         >
                                             <span

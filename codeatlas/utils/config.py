@@ -14,6 +14,7 @@ class AppConfig:
     api_key: str | None
     auth_enabled: bool
     clone_timeout_seconds: int = 60
+    index_timeout_seconds: int = 120
     max_repo_mb: int = 100
     max_repo_files: int = 5000
     max_download_mb: int = 200
@@ -39,6 +40,7 @@ def load_config() -> AppConfig:
         api_key=os.getenv("CODEATLAS_API_KEY"),
         auth_enabled=os.getenv("CODEATLAS_AUTH_ENABLED", "true").lower() == "true",
         clone_timeout_seconds=int(os.getenv("CODEATLAS_CLONE_TIMEOUT_SECONDS", "60")),
+        index_timeout_seconds=int(os.getenv("CODEATLAS_INDEX_TIMEOUT_SECONDS", "120")),
         max_repo_mb=max_repo_mb,
         max_repo_files=int(os.getenv("CODEATLAS_MAX_REPO_FILES", "5000")),
         max_download_mb=int(os.getenv("CODEATLAS_MAX_DOWNLOAD_MB") or 2 * max_repo_mb),

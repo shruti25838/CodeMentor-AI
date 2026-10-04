@@ -46,6 +46,12 @@ class FaissCodeRetriever(CodeRetriever):
                 results.append(repo_index.records[idx])
         return results
 
+    def remove(self, repo_id: str) -> None:
+        self._indexes.pop(repo_id, None)
+        if self._base_dir:
+            for suffix in (".faiss", ".pkl"):
+                (self._base_dir / f"{repo_id}{suffix}").unlink(missing_ok=True)
+
     def _persist(self, repo_id: str) -> None:
         if not self._base_dir:
             return

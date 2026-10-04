@@ -1,19 +1,22 @@
 "use client";
 
-import { Github, ArrowRight, Loader2, Search, Database, Code2, FolderOpen } from "lucide-react";
+import { Github, ArrowRight, Loader2, Code2, FolderOpen, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 
 import { indexRepository, listRepos, RepoInfo } from "@/lib/api";
+import { EXAMPLE_REPO, saveSuggestedQuestions } from "@/lib/example";
+import { getServerStatus, subscribeServerStatus, WAKING_MESSAGE } from "@/lib/serverRequest";
 
 export default function Home() {
   const [isIndexing, setIsIndexing] = useState(false);
   const [repoUrl, setRepoUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [step, setStep] = useState(0);
+  const [indexingName, setIndexingName] = useState("");
   const [existingRepos, setExistingRepos] = useState<RepoInfo[]>([]);
   const router = useRouter();
+  const serverStatus = useSyncExternalStore(subscribeServerStatus, getServerStatus, () => "ok" as const);
 
   useEffect(() => {
     listRepos()
@@ -26,56 +29,26 @@ export default function Home() {
     router.push("/workspace");
   };
 
-  const handleIndex = async () => {
-    if (!repoUrl.trim()) return;
+  const handleIndex = async (url: string = repoUrl, suggestedQuestions: string[] = []) => {
+    if (!url.trim()) return;
+    const repoName = url.trim().replace(/\/$/, "").split("/").pop() || url.trim();
     setError(null);
+    setIndexingName(repoName);
     setIsIndexing(true);
-    setStep(0);
-
-    const steps = [
-      "Connecting to backend...",
-      "Cloning repository...",
-      "Parsing AST nodes...",
-      "Building import graph...",
-      "Generating vector embeddings...",
-      "Finalizing index..."
-    ];
 
     try {
-      // Start the real indexing process
-      const result = await indexRepository(repoUrl);
-
-      // Simulate visual progress steps (backend returns immediately since indexing is backgrounded)
-      let current = 0;
-      const interval = setInterval(() => {
-        if (current < steps.length - 1) {
-          current++;
-          setStep(current);
-        } else {
-          clearInterval(interval);
-          if (result && result.repository_id) {
-            localStorage.setItem("current_repo_id", result.repository_id);
-            // Store the repo name extracted from URL
-            const repoName = repoUrl.trim().replace(/\/$/, "").split("/").pop() || result.repository_id;
-            localStorage.setItem("current_repo_name", repoName);
-          }
-          router.push("/workspace");
-        }
-      }, 800);
-
+      // The backend answers only after cloning, parsing and indexing have all finished.
+      const result = await indexRepository(url);
+      if (!result?.repository_id) throw new Error("The server did not return a repository id. Please try again.");
+      localStorage.setItem("current_repo_id", result.repository_id);
+      localStorage.setItem("current_repo_name", repoName);
+      saveSuggestedQuestions(result.repository_id, suggestedQuestions);
+      router.push("/workspace");
     } catch (err: any) {
       setError(err.message || "Failed to index repository. Make sure the backend is running.");
       setIsIndexing(false);
     }
   };
-
-  const steps = [
-    "Cloning repository...",
-    "Parsing AST nodes...",
-    "Building import graph...",
-    "Generating vector embeddings...",
-    "Finalizing index..."
-  ];
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -85,29 +58,25 @@ export default function Home() {
             <Code2 className="w-6 h-6" />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight">CodeMentor AI</h1>
-          <p className="text-sm text-muted">Intelligent codebase indexing and assistance.</p>
+          <p className="text-sm text-muted">
+            Paste a public GitHub repository and ask questions about its code, with answers that cite the
+            files they came from.
+          </p>
         </div>
 
         {isIndexing ? (
-          <div className="space-y-6 pt-4">
-            <div className="flex items-center gap-3 text-sm font-medium animate-pulse">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span>{steps[step]}</span>
+          <div className="space-y-2 pt-4" role="status" aria-live="polite">
+            <div className="flex items-center gap-3 text-sm font-medium">
+              <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
+              <span>
+                {serverStatus === "waking" ? WAKING_MESSAGE : `Cloning, parsing and indexing ${indexingName}`}
+              </span>
             </div>
-            <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-accent transition-all duration-1000 ease-out"
-                style={{ width: `${((step + 1) / steps.length) * 100}%` }}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-[10px] uppercase tracking-widest text-muted">
-              <div className="flex items-center gap-1.5">
-                <Search className="w-3 h-3" /> Search Index
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Database className="w-3 h-3" /> Vector Store
-              </div>
-            </div>
+            <p className="text-[11px] text-muted pl-7">
+              {serverStatus === "waking"
+                ? "Indexing starts as soon as the server is up."
+                : "This usually takes under a minute. The workspace opens when it is done."}
+            </p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -129,13 +98,33 @@ export default function Home() {
             )}
 
             <button
-              onClick={handleIndex}
+              onClick={() => handleIndex()}
               disabled={!repoUrl.trim()}
               className="w-full bg-accent text-background rounded-md py-2.5 text-sm font-medium flex items-center justify-center gap-2 hover:opacity-90 transition-opacity mt-4 shadow-lg shadow-white/5 disabled:opacity-50"
             >
               Index Repository
               <ArrowRight className="w-4 h-4" />
             </button>
+
+            <button
+              onClick={() => handleIndex(EXAMPLE_REPO.url, EXAMPLE_REPO.questions)}
+              className="w-full border border-border text-foreground/80 rounded-md py-2.5 text-sm font-medium flex items-center justify-center gap-2 hover:bg-white/5 transition-colors"
+            >
+              <Sparkles className="w-4 h-4" />
+              Try an example
+            </button>
+            <p className="text-[11px] text-muted text-center">
+              Indexes the small public{" "}
+              <a
+                href={EXAMPLE_REPO.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-accent"
+              >
+                pallets/{EXAMPLE_REPO.name}
+              </a>{" "}
+              repository and suggests a few questions to ask.
+            </p>
 
             {existingRepos.length > 0 && (
               <>
@@ -180,12 +169,6 @@ export default function Home() {
             </button>
           </div>
         )}
-
-        <div className="pt-8 border-t border-border text-center">
-          <p className="text-[10px] uppercase tracking-widest text-muted/50">
-            Professional AI Developer Environment
-          </p>
-        </div>
       </div>
     </div>
   );

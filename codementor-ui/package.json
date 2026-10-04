@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node --test lib/*.test.ts"
   },
   "dependencies": {
     "@types/react-syntax-highlighter": "^15.5.13",

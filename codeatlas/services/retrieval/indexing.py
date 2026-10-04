@@ -1,4 +1,6 @@
 import logging
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 from codeatlas.models.embedding_record import EmbeddingRecord
@@ -8,18 +10,43 @@ from codeatlas.services.retrieval.embedding import EmbeddingService
 from codeatlas.services.retrieval.interfaces import CodeRetriever
 
 
+class IndexingTimeoutError(Exception):
+    """Indexing ran past its time limit; nothing was stored."""
+
+
 class CodeIndexService:
-    def __init__(self, embedder: EmbeddingService, retriever: CodeRetriever) -> None:
+    def __init__(
+        self,
+        embedder: EmbeddingService,
+        retriever: CodeRetriever,
+        timeout_seconds: float | None = None,
+        batch_size: int = 64,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._embedder = embedder
         self._retriever = retriever
+        self._timeout_seconds = timeout_seconds
+        self._batch_size = batch_size
+        self._clock = clock
         self._logger = logging.getLogger(__name__)
+
+    def discard(self, repo_id: str) -> None:
+        """Remove any stored index for a repo (used to clean up after a failed analysis)."""
+        self._retriever.remove(repo_id)
 
     def index_repository(self, repository: Repository, parsed_repo: ParsedRepository) -> None:
         self._logger.info("Indexing repository %s", repository.repo_id)
+        deadline = None if self._timeout_seconds is None else self._clock() + self._timeout_seconds
+
+        def check_deadline() -> None:
+            if deadline is not None and self._clock() > deadline:
+                raise IndexingTimeoutError(f"Indexing took longer than {self._timeout_seconds:g} seconds.")
+
         documents: list[str] = []
         records: list[EmbeddingRecord] = []
 
         for source_file in parsed_repo.files:
+            check_deadline()
             content = _safe_read(Path(source_file.path))
             documents.append(content)
             records.append(
@@ -32,6 +59,7 @@ class CodeIndexService:
             )
 
         for function in parsed_repo.functions:
+            check_deadline()
             snippet = _read_snippet(Path(function.file_path), function.start_line, function.end_line)
             documents.append(snippet)
             records.append(
@@ -49,7 +77,12 @@ class CodeIndexService:
                 )
             )
 
-        embeddings = self._embedder.embed_texts(documents)
+        # Embed in batches so the time limit is checked while embedding, not only before and after.
+        embeddings: list[list[float]] = []
+        for start in range(0, len(documents), self._batch_size):
+            check_deadline()
+            embeddings.extend(self._embedder.embed_texts(documents[start : start + self._batch_size]))
+        check_deadline()
         indexed_records: list[EmbeddingRecord] = []
         for record, vector in zip(records, embeddings):
             indexed_records.append(
