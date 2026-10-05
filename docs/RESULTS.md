@@ -190,3 +190,41 @@ Every number or claim here comes from a command that can be re-run.
 - Date: 2026-10-05
 - Commit: 739a30e (eval added in 7a7a513; 739a30e sorts the parser's file walk and gives the same numbers on Windows)
 - Notes: what is scored is `AnswerService.retrieve`, the retrieval step of the chat: embed the question, take the 10 nearest records from FAISS, rerank them by keyword overlap, keep the best. Records are whole files or single functions; each is mapped to its file, and it is relevant if that file is in the question's `expected_files`. hit@k = share of questions with a relevant record in the first k; P@k = relevant records in the first k ÷ k, averaged (two functions from the same right file both count, since both go into the prompt); MRR@10 = mean of 1/rank of the first relevant record in the top 10, 0 if none. "overall" weighs every question the same. I wrote the questions from the source at the pinned commits and fixed the split (alternating, in writing order) before running anything; neither the questions nor the split were changed after seeing results. Expected files are source files only, except one tutorial question in flask. No model key is used. The embedder is whatever the server would use (`CODEATLAS_EMBEDDING_PROVIDER`, default hash); `sentence` was not measured because sentence-transformers is not installed and is not a project dependency. Before 739a30e, reversing the file walk order changed overall P@5 from 0.350 to 0.345 (hit rates and MRR unchanged); the walk is now sorted, so the index no longer depends on the OS. Repos are fetched once into `.codeatlas/eval-repos` (ignored by git)
+
+### Measurement: retrieval tuning experiments (dev set), confirmed on the held-out test set
+- Value: of 14 experiments, 6 met the keep rule on dev (E1, E7, E9, E11, E12, E14). Two of those were removals or noise: E7 was later reversed by E14, and E12 is smaller than one question moving one rank. One more (E13) met the rule but was **not adopted** (see Notes). The clear wins are E9 (identifier parts in the hash embedder, dev MRR@10 +0.060) and E11 (stopwords left out of the search question, +0.042), with E1 (search depth 20) adding 3 more dev hits at 5. Final settings on the **held-out test set**: hit@1 0.400 → 0.600, hit@3 0.550 → 0.650, hit@5 0.700 → 0.750, P@3 0.400 → 0.533, MRR@10 0.496 → 0.645. Embedder: hash (HashEmbeddingService, 384 dims), before and after
+
+  Keep rule, fixed before the first run: keep a change only if overall dev MRR@10 goes up and dev hit@5 does not go down. Each experiment changes one setting on top of the best so far. All runs are on commit 07689b1, which added the settings with defaults equal to the old behaviour; flags are added to `python scripts/eval_retrieval.py --split dev`
+
+  | # | change (flag) | on top of | dev hit@1 | hit@5 | MRR@10 | result |
+  |---|---|---|---|---|---|---|
+  | – | baseline (no flags) | – | 0.450 | 0.600 | 0.524 | |
+  | E1 | `--candidates 20` (search depth 10 → 20 before rerank) | baseline | 0.400 | 0.750 | 0.530 | kept |
+  | E2 | `--candidates 30` | E1 | 0.400 | 0.700 | 0.521 | rejected |
+  | E3 | `--rerank-weight 0.0` (vector order only, no keyword rerank) | E1 | 0.300 | 0.500 | 0.404 | rejected |
+  | E4 | `--rerank-weight 0.5` (half keyword overlap, half vector similarity) | E1 | 0.400 | 0.700 | 0.524 | rejected |
+  | E5 | `--rerank-weight 0.8` | E1 | 0.400 | 0.750 | 0.530 | rejected (tie) |
+  | E6 | `--embed-max-chars 2000` (embed only the first 2,000 chars) | E1 | 0.450 | 0.700 | 0.554 | rejected (hit@5 fell) |
+  | E7 | `--embed-max-chars 8000` | E1 | 0.400 | 0.750 | 0.534 | kept, reversed by E14 |
+  | E8 | `--hash-lowercase on` | E1+E7 | 0.450 | 0.700 | 0.537 | rejected (hit@5 fell) |
+  | E9 | `--hash-subtokens on` (verify_signature also counts verify, signature) | E1+E7 | 0.450 | 0.750 | 0.594 | kept |
+  | E10 | `--rerank-subtokens on` (same, in the keyword rerank) | E1+E7+E9 | 0.400 | 0.800 | 0.560 | rejected |
+  | E11 | `--drop-stopwords on` | E1+E7+E9 | 0.550 | 0.750 | 0.636 | kept |
+  | E12 | `--prefix-metadata on` (file path and function name before the embedded text) | E1+E7+E9+E11 | 0.550 | 0.750 | 0.6375 (vs 0.6363) | kept, noise-sized |
+  | E13 | `--skip-tests on` (drop records from test files) | E1+E7+E9+E11+E12 | 0.600 | 0.850 | 0.685 | met the rule, not adopted |
+  | E14 | remove E7 again (no text limit) | E1+E9+E11+E12 | 0.600 | 0.750 | 0.6625 | kept |
+
+  Ablations on dev of the final settings, for information: without E12 MRR@10 0.6613 (vs 0.6625); without E1 0.6167 with hit@5 0.700. Final settings, no flags, at 513641c:
+
+  | split | n | hit@1 | hit@3 | hit@5 | P@1 | P@3 | P@5 | MRR@10 |
+  |---|---|---|---|---|---|---|---|---|
+  | dev | 20 | 0.600 | 0.700 | 0.750 | 0.600 | 0.483 | 0.380 | 0.662 |
+  | test (held out) | 20 | 0.600 | 0.650 | 0.750 | 0.600 | 0.533 | 0.420 | 0.645 |
+  | all | 40 | 0.600 | 0.675 | 0.750 | 0.600 | 0.508 | 0.400 | 0.654 |
+
+  Per repo on the test set: itsdangerous hit@5 0.800 → 0.900, MRR@10 0.608 → 0.820; flask hit@5 0.600 → 0.600, MRR@10 0.383 → 0.470
+- Command: experiments: `python scripts/eval_retrieval.py --split dev <flags in the table>` at 07689b1; held-out check before the defaults changed: `python scripts/eval_retrieval.py --split test --candidates 20 --hash-subtokens on --drop-stopwords on --prefix-metadata on` at 07689b1 (same numbers as the no-flag run at 513641c); final: `python scripts/eval_retrieval.py --split dev`, `--split test`, `--split all` at 513641c; chat timing: `python scripts/time_stages.py https://github.com/pallets/itsdangerous --runs 3`, 3 times; plus `python -m pytest` (206 passed; `tests/test_retrieval_settings.py` covers each setting and the server defaults, `tests/test_index_cache.py` adds two cache-miss tests), `ruff check`, `ruff format --check`, and in `codementor-ui`: `npm test` (19 passed), `npm run lint` (0 errors, same 28 warnings as before), `npm run build`
+- Dataset/repo: `eval/questions/itsdangerous.json` and `eval/questions/flask.json` (pinned at 672971d66a2e and d73fa1cdcbd8)
+- Date: 2026-10-05
+- Commit: 07689b1 (settings, experiments), 513641c (tuned defaults)
+- Notes: the test split was run twice: once to confirm the final settings and once with E13 added, for information; nothing was changed after seeing test results. **E13 not adopted:** it raised dev MRR@10 to 0.685 and test MRR@10 to 0.725 (hit@5 0.800), but my labels list source files as the right answer (one tutorial file aside), so part of that gain comes from how I labelled the questions, which the held-out set shares. It would also stop the chat from ever citing a test file, even for "how is X tested?". It is off by default (`skip_tests` in `AppConfig`) for you to decide. **Small samples:** each split has 20 questions, so one question is 0.05 of hit rate; E1's MRR gain (+0.006), E7 (+0.004) and E12 (+0.0012) are within one question moving a rank or two. The greedy order matters: E7 helped when added and hurt in the final combination (E14). **Cost:** with search depth 20 the rerank reads twice as many snippets: a model-free itsdangerous chat question now takes a median 45 ms warm (rerank 19 ms) vs 25.5 ms (rerank 4.7 ms) in the per-stage timing entry above; the model is still not timed. **Index cache:** the embedder change alters vectors, so each repo state now records an index format (`hash:384:lowercase=0:subtokens=1|max_chars=None|prefix=1`) and the cache reuses only an index with the same format; state saved before this has none and is indexed again. An index that is already loaded (not via the cache) keeps its old vectors until the repo is indexed again; on Render without a disk every restart drops them anyway. The `sentence` embedder was not measured; stopword removal and the path prefix apply to it too
