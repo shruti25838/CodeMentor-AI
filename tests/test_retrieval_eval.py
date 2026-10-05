@@ -133,3 +133,18 @@ def test_run_reports_embedder_split_and_overall(tmp_path):
 
 def test_describe_embedder_names_the_model():
     assert "384 dims" in describe_embedder(HashEmbeddingService())
+
+
+def test_parser_walks_files_in_sorted_order(tmp_path, monkeypatch):
+    from datetime import UTC, datetime
+
+    from codeatlas.models.repository import Repository
+    from codeatlas.services.parsing.tree_sitter_parser import TreeSitterAstParser
+
+    for name in ("b.py", "a.py", "c.py"):
+        (tmp_path / name).write_text("x = 1\n")
+    original = Path.rglob
+    monkeypatch.setattr(Path, "rglob", lambda self, pattern: reversed(list(original(self, pattern))))
+    repo = Repository(repo_id="r", name="r", url="u", root_path=str(tmp_path), ingested_at=datetime.now(UTC))
+    parsed = TreeSitterAstParser().parse_repository(repo)
+    assert [Path(f.path).name for f in parsed.files] == ["a.py", "b.py", "c.py"]
