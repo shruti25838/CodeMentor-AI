@@ -14,7 +14,7 @@ from codeatlas.services.memory.conversation import ConversationStore
 from codeatlas.services.memory.interfaces import MemoryStore
 from codeatlas.services.memory.json_store import JsonMemoryStore
 from codeatlas.services.parsing.tree_sitter_parser import TreeSitterAstParser
-from codeatlas.services.qa.answer_service import AnswerService
+from codeatlas.services.qa.answer_service import AnswerService, RetrievalSettings
 from codeatlas.services.qa.explain_service import CodeExplainService
 from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService
@@ -57,7 +57,7 @@ def get_code_retriever() -> FaissCodeRetriever:
 def get_embedder() -> SentenceTransformerEmbeddingService | HashEmbeddingService:
     config = get_config()
     if config.embedding_provider == "hash":
-        return HashEmbeddingService()
+        return HashEmbeddingService(lowercase=config.hash_lowercase, subtokens=config.hash_subtokens)
     return SentenceTransformerEmbeddingService(model_name=config.embedding_model)
 
 
@@ -67,6 +67,20 @@ def get_index_service() -> CodeIndexService:
         embedder=get_embedder(),
         retriever=get_code_retriever(),
         timeout_seconds=get_config().index_timeout_seconds,
+        max_chars=get_config().embed_max_chars,
+        prefix_metadata=get_config().embed_prefix_metadata,
+    )
+
+
+@lru_cache
+def get_retrieval_settings() -> RetrievalSettings:
+    config = get_config()
+    return RetrievalSettings(
+        candidates=config.retrieval_candidates,
+        rerank_weight=config.rerank_weight,
+        rerank_subtokens=config.rerank_subtokens,
+        drop_stopwords=config.drop_stopwords,
+        skip_tests=config.skip_tests,
     )
 
 
@@ -76,6 +90,7 @@ def get_answer_service() -> AnswerService:
         retriever=get_code_retriever(),
         embedder=get_embedder(),
         llm=get_llm_provider().get_chat_model(),
+        settings=get_retrieval_settings(),
     )
 
 

@@ -9,19 +9,25 @@ Each repository is fetched at the commit pinned in its question file into --cach
 (default .codeatlas/eval-repos, ignored by git) and reused on later runs.
 
 --min-hit-rate K=VALUE (repeatable) exits with status 1 if the overall hit rate at K is below VALUE.
+
+The tuning flags (--candidates and below) change one retrieval or indexing setting for this run
+only; without them the run uses the server's settings. They exist for the experiments in
+docs/RESULTS.md.
 """
 
 import argparse
 import json
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from codeatlas.app.di import get_embedder  # noqa: E402
-from codeatlas.services.eval.retrieval_eval import RANKED_DEPTH, SPLITS, run  # noqa: E402
+from codeatlas.app.di import get_config, get_embedder, get_retrieval_settings  # noqa: E402
+from codeatlas.services.eval.retrieval_eval import RANKED_DEPTH, SPLITS, EvalSettings, IndexSettings, run  # noqa: E402
+from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService  # noqa: E402
 
 DEFAULT_SETS = [ROOT / "eval" / "questions" / "itsdangerous.json", ROOT / "eval" / "questions" / "flask.json"]
 
@@ -33,13 +39,25 @@ def main() -> int:
     parser.add_argument("--cache-dir", type=Path, default=ROOT / ".codeatlas" / "eval-repos")
     parser.add_argument("--json", type=Path, help="also write the full results here")
     parser.add_argument("--min-hit-rate", action="append", default=[], metavar="K=VALUE")
+    tuning = parser.add_argument_group("tuning (one setting per experiment)")
+    tuning.add_argument("--candidates", type=int, help="records taken from vector search before reranking")
+    tuning.add_argument("--rerank-weight", type=float, help="1.0 keyword overlap only, 0.0 vector similarity only")
+    tuning.add_argument("--rerank-subtokens", choices=["on", "off"])
+    tuning.add_argument("--drop-stopwords", choices=["on", "off"])
+    tuning.add_argument("--skip-tests", choices=["on", "off"])
+    tuning.add_argument("--embed-max-chars", type=int, help="0 = no limit")
+    tuning.add_argument("--prefix-metadata", choices=["on", "off"])
+    tuning.add_argument("--hash-lowercase", choices=["on", "off"])
+    tuning.add_argument("--hash-subtokens", choices=["on", "off"])
     args = parser.parse_args()
 
-    result = run(args.sets or DEFAULT_SETS, get_embedder(), args.split, args.cache_dir)
+    settings, embedder = _settings(args)
+    result = run(args.sets or DEFAULT_SETS, embedder, args.split, args.cache_dir, settings=settings)
     result = {"codementor_commit": _commit(), **result}
 
     print(f"codementor commit: {result['codementor_commit']}")
     print(f"embedder: {result['embedder']}")
+    print(f"settings: {json.dumps(result['settings'], separators=(',', ':'))}")
     print(f"split: {result['split']}")
     header = f"{'repo':<14}{'n':>4}  {'hit@1':>6}{'hit@3':>7}{'hit@5':>7}  {'P@1':>6}{'P@3':>7}{'P@5':>7}  {'MRR@' + str(RANKED_DEPTH):>7}"
     print(header)
@@ -68,6 +86,31 @@ def main() -> int:
         else:
             print(f"ok: overall hit@{k} {actual:.4f} >= {float(value):.4f}")
     return 1 if failed else 0
+
+
+def _settings(args) -> tuple[EvalSettings, object]:
+    """The server's settings, with any tuning flags applied on top."""
+    config = get_config()
+    changes = {
+        "candidates": args.candidates,
+        "rerank_weight": args.rerank_weight,
+        "rerank_subtokens": _on(args.rerank_subtokens),
+        "drop_stopwords": _on(args.drop_stopwords),
+        "skip_tests": _on(args.skip_tests),
+    }
+    retrieval = replace(get_retrieval_settings(), **{k: v for k, v in changes.items() if v is not None})
+    max_chars = config.embed_max_chars if args.embed_max_chars is None else (args.embed_max_chars or None)
+    prefix = config.embed_prefix_metadata if args.prefix_metadata is None else _on(args.prefix_metadata)
+    embedder = get_embedder()
+    if isinstance(embedder, HashEmbeddingService) and (args.hash_lowercase or args.hash_subtokens):
+        lowercase = embedder._lowercase if args.hash_lowercase is None else _on(args.hash_lowercase)
+        subtokens = embedder._subtokens if args.hash_subtokens is None else _on(args.hash_subtokens)
+        embedder = HashEmbeddingService(lowercase=lowercase, subtokens=subtokens)
+    return EvalSettings(retrieval=retrieval, index=IndexSettings(max_chars=max_chars, prefix_metadata=prefix)), embedder
+
+
+def _on(value: str | None) -> bool | None:
+    return None if value is None else value == "on"
 
 
 def _commit() -> str:

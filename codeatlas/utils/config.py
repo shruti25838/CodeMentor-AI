@@ -30,6 +30,16 @@ class AppConfig:
     chat_history_tokens: int = 1500
     chat_session_ttl_seconds: int = 1800
     chat_max_sessions: int = 1000
+    # Retrieval and indexing settings, measured with scripts/eval_retrieval.py (see docs/RESULTS.md).
+    retrieval_candidates: int = 10
+    rerank_weight: float = 1.0
+    rerank_subtokens: bool = False
+    drop_stopwords: bool = False
+    skip_tests: bool = False
+    embed_max_chars: int | None = None
+    embed_prefix_metadata: bool = False
+    hash_lowercase: bool = False
+    hash_subtokens: bool = False
 
 
 def load_config() -> AppConfig:

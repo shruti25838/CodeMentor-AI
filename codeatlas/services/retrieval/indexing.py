@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import time
 from collections.abc import Callable
@@ -23,12 +24,18 @@ class CodeIndexService:
         timeout_seconds: float | None = None,
         batch_size: int = 64,
         clock: Callable[[], float] = time.monotonic,
+        max_chars: int | None = None,
+        prefix_metadata: bool = False,
     ) -> None:
         self._embedder = embedder
         self._retriever = retriever
         self._timeout_seconds = timeout_seconds
         self._batch_size = batch_size
         self._clock = clock
+        # Only the first max_chars characters of each file or function are embedded (None = all).
+        self._max_chars = max_chars
+        # Start each embedded text with the file path (and function name), so they can match too.
+        self._prefix_metadata = prefix_metadata
         self._logger = logging.getLogger(__name__)
 
     def has_index(self, repo_id: str) -> bool:
@@ -48,6 +55,8 @@ class CodeIndexService:
 
         with stage("read_files"):
             documents, records = self._collect(parsed_repo, check_deadline)
+            root = Path(repository.root_path)
+            documents = [self._prepare(doc, record, root) for doc, record in zip(documents, records)]
 
         # Embed in batches so the time limit is checked while embedding, not only before and after.
         embeddings: list[list[float]] = []
@@ -70,6 +79,17 @@ class CodeIndexService:
         with stage("index_write"):
             self._retriever.index(repository.repo_id, indexed_records)
         self._logger.info("Indexed %s records for repo %s", len(indexed_records), repository.repo_id)
+
+    def _prepare(self, document: str, record: EmbeddingRecord, root: Path) -> str:
+        if self._max_chars is not None:
+            document = document[: self._max_chars]
+        if self._prefix_metadata:
+            path = record.metadata.get("path", "")
+            with contextlib.suppress(ValueError):
+                path = Path(path).relative_to(root).as_posix()
+            label = " ".join(v for v in (path, record.metadata.get("name", "")) if v)
+            document = f"{label}\n{document}"
+        return document
 
     @staticmethod
     def _collect(

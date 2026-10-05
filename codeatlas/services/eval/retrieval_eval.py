@@ -10,14 +10,14 @@ import shutil
 import subprocess
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from codeatlas.models.repository import Repository
 from codeatlas.services.eval.basic_eval import RankingMetrics, hit_at_k, ranking_metrics, reciprocal_rank
 from codeatlas.services.parsing.tree_sitter_parser import TreeSitterAstParser
-from codeatlas.services.qa.answer_service import AnswerService
+from codeatlas.services.qa.answer_service import AnswerService, RetrievalSettings
 from codeatlas.services.retrieval.embedding import EmbeddingService
 from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService
@@ -82,9 +82,28 @@ def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
+@dataclass(frozen=True)
+class IndexSettings:
+    """Options for building the index (CodeIndexService); the defaults are what the server uses."""
+
+    max_chars: int | None = None
+    prefix_metadata: bool = False
+
+
+@dataclass(frozen=True)
+class EvalSettings:
+    retrieval: RetrievalSettings = field(default_factory=RetrievalSettings)
+    index: IndexSettings = field(default_factory=IndexSettings)
+
+    def as_dict(self) -> dict:
+        return {"retrieval": asdict(self.retrieval), "index": asdict(self.index)}
+
+
 def describe_embedder(embedder: EmbeddingService) -> str:
     if isinstance(embedder, HashEmbeddingService):
-        return f"hash (HashEmbeddingService, {embedder._dimension} dims, hashed bag of words, not semantic)"
+        options = [name for name in ("lowercase", "subtokens") if getattr(embedder, f"_{name}")]
+        extra = "".join(f", {name}" for name in options)
+        return f"hash (HashEmbeddingService, {embedder._dimension} dims{extra}, hashed bag of words, not semantic)"
     if isinstance(embedder, SentenceTransformerEmbeddingService):
         return f"sentence-transformers ({embedder._model_name})"
     return type(embedder).__name__
@@ -106,6 +125,7 @@ def evaluate_set(
     embedder: EmbeddingService,
     split: str,
     ks: Sequence[int] = (1, 3, 5),
+    settings: EvalSettings | None = None,
 ) -> RepoRun:
     """Index the checkout at root like /analyze-repo does, then score each question's retrieval."""
     repo_id = f"eval-{question_set.name}"
@@ -117,10 +137,16 @@ def evaluate_set(
         ingested_at=datetime.now(UTC),
         commit=question_set.commit,
     )
+    settings = settings or EvalSettings()
     parsed = TreeSitterAstParser().parse_repository(repository)
     retriever = FaissCodeRetriever()  # in memory only
-    CodeIndexService(embedder=embedder, retriever=retriever).index_repository(repository, parsed)
-    answers = AnswerService(retriever=retriever, embedder=embedder, llm=None)
+    CodeIndexService(
+        embedder=embedder,
+        retriever=retriever,
+        max_chars=settings.index.max_chars,
+        prefix_metadata=settings.index.prefix_metadata,
+    ).index_repository(repository, parsed)
+    answers = AnswerService(retriever=retriever, embedder=embedder, llm=None, settings=settings.retrieval)
 
     pairs: list[tuple[list[str], set[str]]] = []
     per_question: list[dict] = []
@@ -169,6 +195,7 @@ def run(
     split: str,
     cache_dir: Path,
     ks: Sequence[int] = (1, 3, 5),
+    settings: EvalSettings | None = None,
 ) -> dict:
     """Evaluate every question set; 'overall' averages over all questions (each question weighs the same)."""
     start = time.perf_counter()
@@ -176,7 +203,7 @@ def run(
     for path in question_files:
         question_set = load_question_set(path)
         root = checkout(question_set, cache_dir)
-        runs.append(evaluate_set(question_set, root, embedder, split, ks))
+        runs.append(evaluate_set(question_set, root, embedder, split, ks, settings))
 
     total = sum(r.metrics.questions for r in runs)
 
@@ -191,6 +218,7 @@ def run(
     )
     return {
         "embedder": describe_embedder(embedder),
+        "settings": (settings or EvalSettings()).as_dict(),
         "split": split,
         "repos": {
             r.name: {
