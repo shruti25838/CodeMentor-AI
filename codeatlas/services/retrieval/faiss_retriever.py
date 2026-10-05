@@ -46,6 +46,9 @@ class FaissCodeRetriever(CodeRetriever):
                 results.append(repo_index.records[idx])
         return results
 
+    def has_index(self, repo_id: str) -> bool:
+        return repo_id in self._indexes
+
     def remove(self, repo_id: str) -> None:
         self._indexes.pop(repo_id, None)
         if self._base_dir:

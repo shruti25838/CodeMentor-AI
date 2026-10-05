@@ -23,10 +23,11 @@ export async function askQuestion(question: string, repoId?: string) {
     return response.json();
 }
 
-/** Stream an answer via SSE — calls back on each event type. */
+/** Stream an answer via SSE — calls back on each event type. sessionId: see lib/chatSession.ts. */
 export async function askQuestionStream(
     question: string,
     repoId: string | undefined,
+    sessionId: string | undefined,
     callbacks: {
         onToken: (token: string) => void;
         onStatus: (status: string) => void;
@@ -37,7 +38,7 @@ export async function askQuestionStream(
     const response = await serverFetch(`${BASE_URL}/ask/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, repo_id: repoId }),
+        body: JSON.stringify({ question, repo_id: repoId, session_id: sessionId }),
     }, ONCE);
 
     if (!response.ok) {

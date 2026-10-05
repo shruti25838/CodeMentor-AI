@@ -7,6 +7,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
 from codeatlas.models.embedding_record import EmbeddingRecord
+from codeatlas.observability.timing import stage
 from codeatlas.services.retrieval.embedding import EmbeddingService
 from codeatlas.services.retrieval.interfaces import CodeRetriever
 
@@ -57,9 +58,13 @@ class AnswerService:
 
     def answer(self, repo_id: str, question: str, top_k: int = 5) -> GroundedAnswer:
         self._logger.info("Answering question for repo %s", repo_id)
-        query_vector = self._embedder.embed_query(question)
-        records = self._retriever.search(repo_id, query_vector, max(top_k, 10))
-        records = self._rerank(question, records)[:top_k]
+        with stage("embed_query"):
+            query_vector = self._embedder.embed_query(question)
+        with stage("search"):
+            records = self._retriever.search(repo_id, query_vector, max(top_k, 10))
+        # Reranking reads each candidate's snippet from disk.
+        with stage("rerank"):
+            records = self._rerank(question, records)[:top_k]
         self._logger.info("Retrieved %s records for repo %s", len(records), repo_id)
         citations = [self._citation_text(record) for record in records]
         answer_lines = self._format_answer(question, records)
@@ -89,7 +94,8 @@ class AnswerService:
         context = self._build_context(records)
         try:
             chain = self._prompt | self._llm
-            response = chain.invoke({"question": question, "context": context})
+            with stage("llm"):
+                response = chain.invoke({"question": question, "context": context})
             return [response.content]
         except Exception as exc:
             self._logger.warning("LLM answer failed, falling back: %s", exc)

@@ -13,6 +13,10 @@ class CodeRetriever(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def has_index(self, repo_id: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
     def remove(self, repo_id: str) -> None:
         """Drop a repo's index, in memory and on disk."""
         raise NotImplementedError

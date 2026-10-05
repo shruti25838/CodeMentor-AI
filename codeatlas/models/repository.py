@@ -9,3 +9,5 @@ class Repository:
     url: str
     root_path: str
     ingested_at: datetime
+    # Commit that was checked out; empty if unknown.
+    commit: str = ""

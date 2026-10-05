@@ -17,6 +17,7 @@ class RepoState:
     root_path: str
     name: str = ""
     url: str = ""
+    commit: str = ""
 
 
 class RepoStateStore:
@@ -38,6 +39,9 @@ class RepoStateStore:
     def list_repo_ids(self) -> list[str]:
         return sorted(self._states.keys())
 
+    def items(self) -> list[tuple[str, RepoState]]:
+        return list(self._states.items())
+
     def _persist(self, repo_id: str, state: RepoState) -> None:
         if not self._base_dir:
             return
@@ -46,6 +50,7 @@ class RepoStateStore:
             "root_path": state.root_path,
             "name": state.name,
             "url": state.url,
+            "commit": state.commit,
             "files": [
                 {
                     "path": source.path,
@@ -118,5 +123,6 @@ class RepoStateStore:
                 root_path=payload.get("root_path", ""),
                 name=payload.get("name", ""),
                 url=payload.get("url", ""),
+                commit=payload.get("commit", ""),
             )
             self._logger.info("Loaded repo state for %s", repo_id)
