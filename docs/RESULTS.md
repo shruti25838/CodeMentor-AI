@@ -174,3 +174,19 @@ Every number or claim here comes from a command that can be re-run.
 - Date: 2026-10-04
 - Commit: 88855ef (state checked)
 - Notes: `scripts/time_stages.py` writes to a temporary folder outside the repo and deletes it afterwards
+
+### Measurement: retrieval baseline on fixed question sets (itsdangerous and flask)
+- Value: embedder **hash** (HashEmbeddingService, 384 dims, a hashed bag of words, not a semantic embedding). 40 questions, 20 per repo, split 10 dev / 10 test per repo
+
+  | split | n | hit@1 | hit@3 | hit@5 | P@1 | P@3 | P@5 | MRR@10 |
+  |---|---|---|---|---|---|---|---|---|
+  | dev | 20 | 0.450 | 0.600 | 0.600 | 0.450 | 0.383 | 0.300 | 0.524 |
+  | test (held out) | 20 | 0.400 | 0.550 | 0.700 | 0.400 | 0.400 | 0.400 | 0.496 |
+  | all | 40 | 0.425 | 0.575 | 0.650 | 0.425 | 0.392 | 0.350 | 0.510 |
+
+  Per repo, all 20 questions: itsdangerous hit@5 0.700, MRR@10 0.579; flask hit@5 0.600, MRR@10 0.441. A full run of all 40 questions took 4.2–6.1 s on this machine once the two repos were fetched
+- Command: `python scripts/eval_retrieval.py --split dev`, the same with `--split test` and `--split all`; plus `python -m pytest` (193 passed; `tests/test_retrieval_eval.py` covers the metric formulas, the question files' pinning and split, rejecting a question with no expected files, fetching a pinned commit once, relative paths and a full run on a small local repo, no question text in the results, and the sorted file walk), `ruff check`, `ruff format --check`, and in `codementor-ui`: `npm test` (19 passed), `npm run lint` (0 errors, same 28 warnings as before), `npm run build`
+- Dataset/repo: `eval/questions/itsdangerous.json` (https://github.com/pallets/itsdangerous at 672971d66a2e, 15 files, 159 records indexed) and `eval/questions/flask.json` (https://github.com/pallets/flask at d73fa1cdcbd8, 83 files, 1,705 records indexed)
+- Date: 2026-10-05
+- Commit: 739a30e (eval added in 7a7a513; 739a30e sorts the parser's file walk and gives the same numbers on Windows)
+- Notes: what is scored is `AnswerService.retrieve`, the retrieval step of the chat: embed the question, take the 10 nearest records from FAISS, rerank them by keyword overlap, keep the best. Records are whole files or single functions; each is mapped to its file, and it is relevant if that file is in the question's `expected_files`. hit@k = share of questions with a relevant record in the first k; P@k = relevant records in the first k ÷ k, averaged (two functions from the same right file both count, since both go into the prompt); MRR@10 = mean of 1/rank of the first relevant record in the top 10, 0 if none. "overall" weighs every question the same. I wrote the questions from the source at the pinned commits and fixed the split (alternating, in writing order) before running anything; neither the questions nor the split were changed after seeing results. Expected files are source files only, except one tutorial question in flask. No model key is used. The embedder is whatever the server would use (`CODEATLAS_EMBEDDING_PROVIDER`, default hash); `sentence` was not measured because sentence-transformers is not installed and is not a project dependency. Before 739a30e, reversing the file walk order changed overall P@5 from 0.350 to 0.345 (hit rates and MRR unchanged); the walk is now sorted, so the index no longer depends on the OS. Repos are fetched once into `.codeatlas/eval-repos` (ignored by git)
