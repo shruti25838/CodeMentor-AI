@@ -30,16 +30,18 @@ class AppConfig:
     chat_history_tokens: int = 1500
     chat_session_ttl_seconds: int = 1800
     chat_max_sessions: int = 1000
-    # Retrieval and indexing settings, measured with scripts/eval_retrieval.py (see docs/RESULTS.md).
-    retrieval_candidates: int = 10
+    # Retrieval and indexing settings, chosen with scripts/eval_retrieval.py on the dev questions and
+    # checked on the held-out ones (see docs/RESULTS.md). Changing an index setting means earlier
+    # indexes are not reused by the index cache.
+    retrieval_candidates: int = 20
     rerank_weight: float = 1.0
     rerank_subtokens: bool = False
-    drop_stopwords: bool = False
+    drop_stopwords: bool = True
     skip_tests: bool = False
     embed_max_chars: int | None = None
-    embed_prefix_metadata: bool = False
+    embed_prefix_metadata: bool = True
     hash_lowercase: bool = False
-    hash_subtokens: bool = False
+    hash_subtokens: bool = True
 
 
 def load_config() -> AppConfig:

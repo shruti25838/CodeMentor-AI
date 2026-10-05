@@ -18,6 +18,8 @@ class RepoState:
     name: str = ""
     url: str = ""
     commit: str = ""
+    # CodeIndexService.index_format when the index was built; empty in state saved before it existed.
+    index_format: str = ""
 
 
 class RepoStateStore:
@@ -51,6 +53,7 @@ class RepoStateStore:
             "name": state.name,
             "url": state.url,
             "commit": state.commit,
+            "index_format": state.index_format,
             "files": [
                 {
                     "path": source.path,
@@ -124,5 +127,6 @@ class RepoStateStore:
                 name=payload.get("name", ""),
                 url=payload.get("url", ""),
                 commit=payload.get("commit", ""),
+                index_format=payload.get("index_format", ""),
             )
             self._logger.info("Loaded repo state for %s", repo_id)

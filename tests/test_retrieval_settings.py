@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from codeatlas.app.di import get_retrieval_settings
+from codeatlas.app.di import get_config, get_embedder, get_retrieval_settings
 from codeatlas.models.embedding_record import EmbeddingRecord
 from codeatlas.models.function_node import FunctionNode
 from codeatlas.models.parsed_repository import ParsedRepository
@@ -166,7 +166,10 @@ def test_index_max_chars_and_metadata_prefix(tmp_path):
     assert texts[1].startswith("pkg/mod.py run\ndef run")
 
 
-def test_server_settings_come_from_config():
+def test_server_uses_the_tuned_settings():
     assert get_retrieval_settings() == RetrievalSettings(
-        candidates=10, rerank_weight=1.0, rerank_subtokens=False, drop_stopwords=False, skip_tests=False
+        candidates=20, rerank_weight=1.0, rerank_subtokens=False, drop_stopwords=True, skip_tests=False
     )
+    assert get_embedder().signature() == "hash:384:lowercase=0:subtokens=1"
+    config = get_config()
+    assert (config.embed_max_chars, config.embed_prefix_metadata) == (None, True)

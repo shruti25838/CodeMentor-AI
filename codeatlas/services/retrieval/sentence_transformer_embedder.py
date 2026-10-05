@@ -22,6 +22,9 @@ class SentenceTransformerEmbeddingService(EmbeddingService):
         embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
         return embeddings.tolist()
 
+    def signature(self) -> str:
+        return f"sentence:{self._model_name}"
+
     def embed_query(self, text: str) -> list[float]:
         if SentenceTransformer is None:
             raise RuntimeError(

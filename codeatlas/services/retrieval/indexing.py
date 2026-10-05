@@ -38,6 +38,11 @@ class CodeIndexService:
         self._prefix_metadata = prefix_metadata
         self._logger = logging.getLogger(__name__)
 
+    @property
+    def index_format(self) -> str:
+        """Everything that decides an index's vectors. Saved with each repo; the index cache needs a match."""
+        return f"{self._embedder.signature()}|max_chars={self._max_chars}|prefix={int(self._prefix_metadata)}"
+
     def has_index(self, repo_id: str) -> bool:
         return self._retriever.has_index(repo_id)
 
