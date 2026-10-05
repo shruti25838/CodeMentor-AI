@@ -1,0 +1,28 @@
+{
+  "name": "itsdangerous",
+  "repo_url": "https://github.com/pallets/itsdangerous",
+  "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
+  "note": "Written from the source at this commit. expected_files are paths relative to the repo root; a retrieved record counts as relevant if its file is in the list. Split alternates dev/test in the order the questions were written, fixed before any results were seen.",
+  "questions": [
+    {"id": "itsd-01", "split": "dev", "question": "How does Signer create and check a signature?", "expected_files": ["src/itsdangerous/signer.py"]},
+    {"id": "itsd-02", "split": "test", "question": "What is the difference between Serializer and URLSafeTimedSerializer?", "expected_files": ["src/itsdangerous/url_safe.py", "src/itsdangerous/serializer.py", "src/itsdangerous/timed.py"]},
+    {"id": "itsd-03", "split": "dev", "question": "How does the code detect that a signed value has expired?", "expected_files": ["src/itsdangerous/timed.py"]},
+    {"id": "itsd-04", "split": "test", "question": "How is the signing key derived from the secret key and the salt?", "expected_files": ["src/itsdangerous/signer.py"]},
+    {"id": "itsd-05", "split": "dev", "question": "Which key derivation methods are supported and which one is the default?", "expected_files": ["src/itsdangerous/signer.py"]},
+    {"id": "itsd-06", "split": "test", "question": "How does key rotation work when a list of secret keys is passed in?", "expected_files": ["src/itsdangerous/signer.py", "src/itsdangerous/serializer.py"]},
+    {"id": "itsd-07", "split": "dev", "question": "Why are letters and digits not allowed as the separator?", "expected_files": ["src/itsdangerous/signer.py"]},
+    {"id": "itsd-08", "split": "test", "question": "When is the payload compressed before it is put into a URL?", "expected_files": ["src/itsdangerous/url_safe.py"]},
+    {"id": "itsd-09", "split": "dev", "question": "How does base64 decoding cope with the padding that was stripped off?", "expected_files": ["src/itsdangerous/encoding.py"]},
+    {"id": "itsd-10", "split": "test", "question": "How is the integer timestamp turned into bytes before it is signed?", "expected_files": ["src/itsdangerous/encoding.py", "src/itsdangerous/timed.py"]},
+    {"id": "itsd-11", "split": "dev", "question": "What exception is raised when the payload cannot be deserialized?", "expected_files": ["src/itsdangerous/exc.py", "src/itsdangerous/serializer.py"]},
+    {"id": "itsd-12", "split": "test", "question": "What does BadTimeSignature record about when the value was signed?", "expected_files": ["src/itsdangerous/exc.py"]},
+    {"id": "itsd-13", "split": "dev", "question": "How are fallback signers tried when unsigning with the main signer fails?", "expected_files": ["src/itsdangerous/serializer.py"]},
+    {"id": "itsd-14", "split": "test", "question": "What does loads_unsafe return when the signature is invalid?", "expected_files": ["src/itsdangerous/serializer.py"]},
+    {"id": "itsd-15", "split": "dev", "question": "How is the JSON output made compact without extra whitespace?", "expected_files": ["src/itsdangerous/_json.py"]},
+    {"id": "itsd-16", "split": "test", "question": "Which hash function does the HMAC use by default?", "expected_files": ["src/itsdangerous/signer.py"]},
+    {"id": "itsd-17", "split": "dev", "question": "What does the algorithm that produces an empty signature do?", "expected_files": ["src/itsdangerous/signer.py"]},
+    {"id": "itsd-18", "split": "test", "question": "How is a timestamp converted to a timezone-aware datetime in UTC?", "expected_files": ["src/itsdangerous/timed.py"]},
+    {"id": "itsd-19", "split": "dev", "question": "What happens if the signature's age is negative, meaning it was signed in the future?", "expected_files": ["src/itsdangerous/timed.py"]},
+    {"id": "itsd-20", "split": "test", "question": "How can I get back the time a token was signed when loading it?", "expected_files": ["src/itsdangerous/timed.py"]}
+  ]
+}

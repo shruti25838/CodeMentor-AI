@@ -56,15 +56,19 @@ class AnswerService:
             ]
         )
 
-    def answer(self, repo_id: str, question: str, top_k: int = 5) -> GroundedAnswer:
-        self._logger.info("Answering question for repo %s", repo_id)
+    def retrieve(self, repo_id: str, question: str, top_k: int = 5) -> list[EmbeddingRecord]:
+        """The records a question's answer is built from, best first. The retrieval eval calls this too."""
         with stage("embed_query"):
             query_vector = self._embedder.embed_query(question)
         with stage("search"):
             records = self._retriever.search(repo_id, query_vector, max(top_k, 10))
         # Reranking reads each candidate's snippet from disk.
         with stage("rerank"):
-            records = self._rerank(question, records)[:top_k]
+            return self._rerank(question, records)[:top_k]
+
+    def answer(self, repo_id: str, question: str, top_k: int = 5) -> GroundedAnswer:
+        self._logger.info("Answering question for repo %s", repo_id)
+        records = self.retrieve(repo_id, question, top_k)
         self._logger.info("Retrieved %s records for repo %s", len(records), repo_id)
         citations = [self._citation_text(record) for record in records]
         answer_lines = self._format_answer(question, records)
