@@ -29,6 +29,10 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT))
+
+from codeatlas.observability import token_ledger  # noqa: E402
+from scripts.token_budget import DEFAULT_MAX_DAILY_TOKENS  # noqa: E402
+
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 QUESTIONS = PROJECT / "eval" / "answer_smoke_questions.json"
@@ -257,16 +261,10 @@ def main() -> int:
         help="skip runs already present in --out, and keep appending to it",
     )
     parser.add_argument(
-        "--daily-start",
+        "--max-daily-tokens",
         type=int,
-        default=0,
-        help="daily tokens believed available at the start; 0 disables the daily floor",
-    )
-    parser.add_argument(
-        "--min-daily-tokens",
-        type=int,
-        default=40_000,
-        help="stop cleanly once this many daily tokens are left, keeping them for other use",
+        default=DEFAULT_MAX_DAILY_TOKENS,
+        help="stop cleanly once this machine has spent this many tokens today",
     )
     parser.add_argument(
         "--min-free-mb",
@@ -346,18 +344,20 @@ def main() -> int:
         print(f"{len(remaining)} run(s) to do of {len(planned)}\n")
 
         stopped_early = ""
-        spent_here = 0
         for mode, item in remaining:
             free = free_megabytes()
             if 0 <= free < args.min_free_mb:
                 stopped_early = f"only {free} MB of memory free, need {args.min_free_mb} MB"
                 print(f"\nSTOPPING CLEANLY: {stopped_early}")
                 break
-            # Leave the floor untouched for whoever needs the quota next.
-            left = args.daily_start - spent_here
-            if args.daily_start and left - ESTIMATE[mode] < args.min_daily_tokens:
+            # The running total on disk, not a guess from the provider's headers. It
+            # survives the process, so it counts what earlier runs spent today as well.
+            allowed, left = token_ledger.within_budget(args.max_daily_tokens)
+            if not allowed or left < ESTIMATE[mode]:
+                spent = token_ledger.spent_today().total
                 stopped_early = (
-                    f"about {left:,} daily tokens left, which would fall below the {args.min_daily_tokens:,} floor"
+                    f"this machine has spent {spent:,} tokens today, leaving {left:,} of the "
+                    f"{args.max_daily_tokens:,} limit, too little for another {mode} run"
                 )
                 print(f"\nSTOPPING CLEANLY: {stopped_early}")
                 break
@@ -380,11 +380,10 @@ def main() -> int:
             # Written after every run, so a run stopped from outside keeps what is finished.
             if out_path:
                 out_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
-            spent_here += used
             # The provider only ever states the daily figure while refusing a call; when it
-            # does, that exact number beats any estimate.
+            # does, that exact number beats the local count.
             reported = seen_daily_remaining()
-            if reported is not None and reported < args.min_daily_tokens:
+            if reported is not None and reported <= 0:
                 stopped_early = f"the provider reports {reported:,} daily tokens left"
                 print(f"\nSTOPPING CLEANLY: {stopped_early}")
                 break
@@ -412,6 +411,8 @@ def main() -> int:
             f"413 payload-too-large: {after_failures['payload_too_large'] - before_failures['payload_too_large']}"
             f" | 429 rate-limited: {after_failures['rate_limited'] - before_failures['rate_limited']}"
         )
+        spend = token_ledger.spent_today()
+        print(f"tokens spent today on this machine: {spend.total:,} over {spend.calls} call(s)")
         print(f"wall time: {elapsed:.0f}s")
         print("\nThis is a weak check: two string tests per answer, no judge model, no measure of quality.")
 

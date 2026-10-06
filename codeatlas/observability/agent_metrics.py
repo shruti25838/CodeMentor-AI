@@ -17,6 +17,8 @@ from contextlib import contextmanager
 
 from prometheus_client import Counter, Histogram
 
+from codeatlas.observability import token_ledger
+
 # The only agent names that may appear as a label.
 AGENTS = ("planner", "retrieval", "analyst", "mentor", "memory")
 UNATTRIBUTED = "none"
@@ -144,6 +146,9 @@ class AgentUsageCallback:
             AGENT_TOKENS.labels(agent=agent, direction="input").inc(prompt_tokens)
         if completion_tokens:
             AGENT_TOKENS.labels(agent=agent, direction="output").inc(completion_tokens)
+        # Prometheus counters live and die with the process; a long run needs a total that
+        # survives one, so the same usage is also added to the on-disk ledger.
+        token_ledger.record(_model_of(response), prompt_tokens, completion_tokens)
 
     def on_llm_error(self, error, **kwargs) -> None:
         record_failure(current_agent(), classify(error))
@@ -153,6 +158,20 @@ class AgentUsageCallback:
         if name.startswith("on_"):
             return lambda *args, **kwargs: None
         raise AttributeError(name)
+
+
+def _model_of(response) -> str:
+    """The model name the provider reported, for the per-model ledger."""
+    metadata = getattr(response, "llm_output", None) or {}
+    name = metadata.get("model_name") or metadata.get("model") or ""
+    if name:
+        return str(name)
+    for generations in getattr(response, "generations", []) or []:
+        for generation in generations:
+            info = getattr(getattr(generation, "message", None), "response_metadata", None) or {}
+            if info.get("model_name"):
+                return str(info["model_name"])
+    return "unknown"
 
 
 def _tokens_from(response) -> tuple[int, int]:
