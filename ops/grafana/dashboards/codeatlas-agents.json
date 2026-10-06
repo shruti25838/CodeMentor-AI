@@ -1,0 +1,133 @@
+{
+  "uid": "codeatlas-agents",
+  "title": "CodeAtlas — agents",
+  "tags": ["codeatlas"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Agent runs per minute",
+      "description": "Which agents actually ran, taken from the graph as it executed.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent) (rate(codeatlas_agent_runs_total[5m]))",
+          "legendFormat": "{{agent}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Agent duration, 95th percentile",
+      "description": "How long each agent's turn takes.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (agent, le) (rate(codeatlas_agent_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{agent}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Model calls per minute, by agent",
+      "description": "Model calls made while each agent was running.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent) (rate(codeatlas_agent_model_calls_total[5m]))",
+          "legendFormat": "{{agent}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Tokens per minute, by agent",
+      "description": "Input and output tokens. The provider's allowance is per minute, so this is the line to watch before a 413.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent, direction) (rate(codeatlas_agent_tokens_total[5m])) * 60",
+          "legendFormat": "{{agent}} {{direction}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Agent failures per minute, by reason",
+      "description": "rate_limited is the provider's 429, payload_too_large its 413, and fallback_to_location_list means the visitor got the degraded answer.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent, reason) (rate(codeatlas_agent_failures_total[5m]))",
+          "legendFormat": "{{agent}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Planner routes per minute",
+      "description": "Which agent the planner routed a step to.",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route) (rate(codeatlas_planner_routes_total[5m]))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Plans using the safe default",
+      "description": "Share of plans where the model's output could not be used. A rise means the planner prompt or the model has drifted.",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.1 },
+              { "color": "red", "value": 0.3 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(codeatlas_planner_plans_total{source=\"default\"}[30m])) / clamp_min(sum(rate(codeatlas_planner_plans_total[30m])), 0.0001)",
+          "legendFormat": "default plans"
+        }
+      ]
+    }
+  ]
+}

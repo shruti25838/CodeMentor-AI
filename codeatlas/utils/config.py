@@ -1,6 +1,14 @@
 import os
 from dataclasses import dataclass
 
+# A reasoning model spends part of its output budget on reasoning before it writes anything
+# the user sees. Measured against openai/gpt-oss-20b with a short question: a budget of 64
+# tokens produced an empty answer (the reasoning used all 64 and the reply was cut off),
+# 128 produced a truncated one, and 256 or more completed. A real answer about code needs
+# far more than that — one grounded answer used 878 tokens — so the default is generous.
+DEFAULT_LLM_MODEL = "openai/gpt-oss-20b"
+DEFAULT_LLM_MAX_TOKENS = 2048
+
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -13,6 +21,7 @@ class AppConfig:
     llm_temperature: float
     api_key: str | None
     auth_enabled: bool
+    llm_max_tokens: int = DEFAULT_LLM_MAX_TOKENS
     clone_timeout_seconds: int = 60
     index_timeout_seconds: int = 120
     max_repo_mb: int = 100
@@ -54,8 +63,9 @@ def load_config() -> AppConfig:
         index_dir=os.getenv("CODEATLAS_INDEX_DIR", ".codeatlas/indexes"),
         state_dir=os.getenv("CODEATLAS_STATE_DIR", ".codeatlas/state"),
         llm_provider=os.getenv("CODEATLAS_LLM_PROVIDER", "groq"),
-        llm_model=os.getenv("CODEATLAS_LLM_MODEL", "llama-3.1-8b-instant"),
+        llm_model=os.getenv("CODEATLAS_LLM_MODEL", DEFAULT_LLM_MODEL),
         llm_temperature=float(os.getenv("CODEATLAS_LLM_TEMPERATURE", "0.2")),
+        llm_max_tokens=int(os.getenv("CODEATLAS_LLM_MAX_TOKENS", str(DEFAULT_LLM_MAX_TOKENS))),
         api_key=os.getenv("CODEATLAS_API_KEY"),
         auth_enabled=os.getenv("CODEATLAS_AUTH_ENABLED", "true").lower() == "true",
         clone_timeout_seconds=int(os.getenv("CODEATLAS_CLONE_TIMEOUT_SECONDS", "60")),

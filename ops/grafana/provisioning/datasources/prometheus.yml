@@ -1,3 +1,6 @@
+# Points Grafana at the Prometheus container from docker-compose.monitoring.yml.
+# The uid is fixed because ops/grafana/dashboards/codementor.json refers to it by uid;
+# isDefault covers codeatlas-agents.json, whose panels carry no datasource of their own.
 apiVersion: 1
 
 datasources:

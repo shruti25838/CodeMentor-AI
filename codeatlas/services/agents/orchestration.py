@@ -1,12 +1,17 @@
-import json
 import logging
-from typing import Any, TypedDict
+from collections.abc import Iterator
+from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from codeatlas.observability.agent_metrics import AGENT_ERROR, agent_run, record_failure, record_plan
 from codeatlas.services.agents.interfaces import Agent
+from codeatlas.services.agents.plan import Plan, default_plan, parse_plan
+from codeatlas.services.agents.retrieval_agent import format_retrieval
 from codeatlas.services.agents.types import AnswerResult, GenerateResult
-from codeatlas.services.memory.interfaces import MemoryStore
+from codeatlas.services.llm.quota import classify_quota, quota_answer
+from codeatlas.services.qa.answer_service import GroundedAnswer
+from codeatlas.services.retrieval.snippets import Snippet, render_snippets
 
 # Start of the answer when the mentor fails; such answers are not kept as conversation history.
 ANSWER_ERROR_PREFIX = "Error generating answer"
@@ -15,13 +20,28 @@ ANSWER_ERROR_PREFIX = "Error generating answer"
 # Define the state for the graph
 class OrchestratorState(TypedDict):
     question: str
+    # What retrieval searches with: the visitor's question, or its standalone
+    # rewrite for a follow-up. Never the planner's wording for the step.
+    search_question: str
     repo_id: str
-    plan: dict[str, Any]
+    # The browser's random id for this chat, when there is one; the memory agent needs it.
+    session_id: str | None
+    plan: Plan
     current_step_index: int
     results: list[str]
     final_answer: str
-    validated: bool
+    # The mentor's own answer, kept apart from final_answer so a later step in the
+    # plan cannot overwrite it. A plan ending in the analyst used to replace the
+    # answer with structural facts and throw the mentor's work away.
+    mentor_answer: str
+    # Which agent produced final_answer, so a stand-in answer can be labelled for
+    # what it actually is rather than all being called structural.
+    final_agent: str
     citations: list[str]
+    # Appended by each node as it runs, so the record reflects the graph, not a guess.
+    agents_ran: list[str]
+    # The code retrieval actually read, carried so later steps need not search again.
+    snippets: list[Snippet]
 
 
 class AgentOrchestrator:
@@ -32,75 +52,127 @@ class AgentOrchestrator:
         analyst_agent: Agent,
         mentor_agent: Agent,
         memory_agent: Agent,
-        memory_store: MemoryStore | None = None,
     ) -> None:
         self._planner = planner
         self._retrieval_agent = retrieval_agent
         self._analyst_agent = analyst_agent
         self._mentor_agent = mentor_agent
         self._memory_agent = memory_agent
-        self._memory_store = memory_store
         self._logger = logging.getLogger(__name__)
 
         self._graph = self._build_graph()
 
-    def handle_question(self, question: str, repo_id: str) -> AnswerResult:
-        initial_state: OrchestratorState = {
+    def _initial_state(
+        self, question: str, repo_id: str, session_id: str | None, search_question: str | None = None
+    ) -> "OrchestratorState":
+        return {
             "question": question,
+            "search_question": search_question or question,
             "repo_id": repo_id,
-            "plan": {},
+            "session_id": session_id,
+            "plan": default_plan(question),
             "current_step_index": 0,
             "results": [],
             "final_answer": "",
-            "validated": False,
+            "mentor_answer": "",
+            "final_agent": "",
             "citations": [],
+            "snippets": [],
+            "agents_ran": [],
         }
-        final_state = self._graph.invoke(initial_state)
 
-        # Construct the final result from the state
-        reasoning = [f"Plan: {json.dumps(final_state.get('plan', {}))}"]
+    def handle_question(
+        self,
+        question: str,
+        repo_id: str,
+        session_id: str | None = None,
+        search_question: str | None = None,
+    ) -> AnswerResult:
+        final_state = self._graph.invoke(self._initial_state(question, repo_id, session_id, search_question))
+        return self._result_from(final_state, question)
+
+    def stream_question(
+        self,
+        question: str,
+        repo_id: str,
+        session_id: str | None = None,
+        search_question: str | None = None,
+    ) -> Iterator[dict]:
+        """Run the graph, yielding one event as each agent finishes, then the answer.
+
+        Events are {"type": "agent", ...} as the real graph executes, and finally
+        {"type": "result", "result": AnswerResult}. Nothing here is logged.
+        """
+        state: dict = dict(self._initial_state(question, repo_id, session_id, search_question))
+        for update in self._graph.stream(state, stream_mode="updates"):
+            for node, delta in update.items():
+                if delta:
+                    state.update(delta)
+                if node in _AGENT_NODES:
+                    yield {"type": "agent", "name": node, "detail": _detail(node, state)}
+        yield {"type": "result", "result": self._result_from(state, question)}
+
+    def _result_from(self, final_state: dict, question: str) -> AnswerResult:
+        plan = final_state.get("plan") or default_plan(question)
+        reasoning = [f"Plan: {' -> '.join(plan.agents)}"]
+        if plan.note:
+            reasoning.append(plan.note)
         reasoning.extend(final_state.get("results", []))
 
+        agents_ran = final_state.get("agents_ran", [])
+        reasoning.append(f"Agents that ran: {' -> '.join(agents_ran)}." if agents_ran else "No agent ran.")
+
+        answer, note = _final_answer(final_state)
+        if note:
+            reasoning.append(note)
+
         return AnswerResult(
-            answer=final_state.get("final_answer", "No answer generated."),
+            answer=answer,
             citations=final_state.get("citations", []),
             reasoning_steps=reasoning,
+            agents_used=agents_ran,
         )
 
     def handle_question_fast(
         self, question: str, repo_id: str, history: str = "", search_question: str | None = None
     ) -> AnswerResult:
-        """Faster path: skip planner & validator, go straight retrieval → mentor.
+        """Faster path: skip the planner, go straight retrieval → mentor.
 
         history: earlier turns of this conversation, shown to the mentor. search_question: a
         standalone version of a follow-up, used for retrieval instead of the question as asked.
         """
-        # 1. Retrieve
-        try:
-            retrieval_output = self._retrieval_agent.run(search_question or question, repo_id)
-        except Exception as e:
-            self._logger.warning("Retrieval failed: %s", e)
-            retrieval_output = ""
-        citations = self._parse_citations_from_retrieval_output(retrieval_output)
+        # Appended as each agent is actually invoked, so a path that stops early reports
+        # only what it reached.
+        agents_ran: list[str] = []
 
-        # 2. Mentor answers using context
-        mentor_prompt = f"{question}\n\nRetrieved context:\n{retrieval_output}" if retrieval_output else question
+        # 1. Retrieve — the only search this path makes.
+        agents_ran.append("retrieval")
+        retrieved = self._retrieve(search_question or question, repo_id)
+        citations = retrieved.citations
+
+        # 2. The mentor answers from exactly those snippets, so the answer and the citations
+        #    describe the same code.
+        agents_ran.append("mentor")
         try:
-            if history:
-                answer = self._mentor_agent.run(mentor_prompt, repo_id, history=history)
-            else:
-                answer = self._mentor_agent.run(mentor_prompt, repo_id)
+            with agent_run("mentor"):
+                answer = self._mentor_answer(question, retrieved.snippets, repo_id, history=history)
         except Exception as e:
-            self._logger.warning("Mentor failed: %s", e)
-            answer = f"{ANSWER_ERROR_PREFIX}: {e}"
+            self._logger.warning("Mentor failed: %s", type(e).__name__)
+            record_failure("mentor", AGENT_ERROR)
+            # A provider refusal is a quota problem, not a bug; the visitor is told so and
+            # still gets the files that matched, rather than the raw exception text.
+            kind = classify_quota(e)
+            answer = quota_answer(kind, retrieved.snippets) if kind else f"{ANSWER_ERROR_PREFIX}: {e}"
 
         return AnswerResult(
             answer=answer,
             citations=citations,
             reasoning_steps=[
-                "Fast mode: retrieval + mentor (skipped planner & validator).",
-                f"Retrieved {len(citations)} citations.",
+                "Fast mode: retrieval + mentor (skipped the planner).",
+                f"Retrieved {len(retrieved.snippets)} code snippet(s), cited as {len(citations)} citation(s).",
+                f"Agents that ran: {' -> '.join(agents_ran)}.",
             ],
+            agents_used=agents_ran,
         )
 
     def handle_generation(self, prompt: str, repo_id: str) -> GenerateResult:
@@ -150,7 +222,6 @@ class AgentOrchestrator:
         graph.add_node("analyst", self._analyst_node)
         graph.add_node("mentor", self._mentor_node)
         graph.add_node("memory", self._memory_node)
-        graph.add_node("validator", self._validator_node)
 
         graph.set_entry_point("planner")
 
@@ -165,7 +236,6 @@ class AgentOrchestrator:
                 "analyst": "analyst",
                 "mentor": "mentor",
                 "memory": "memory",
-                "validator": "validator",
                 "end": END,
             },
         )
@@ -175,7 +245,6 @@ class AgentOrchestrator:
         graph.add_edge("analyst", "dispatcher")
         graph.add_edge("mentor", "dispatcher")
         graph.add_edge("memory", "dispatcher")
-        graph.add_edge("validator", "dispatcher")
 
         return graph.compile()
 
@@ -185,78 +254,40 @@ class AgentOrchestrator:
         question = state["question"]
         repo_id = state["repo_id"]
         try:
-            plan_str = self._planner.run(question, repo_id)
-            plan = json.loads(plan_str)
-        except Exception as e:
-            self._logger.error(f"Planning failed: {e}")
-            # Fallback plan
-            plan = {"steps": [{"agent": "retrieval", "instruction": question}]}
+            with agent_run("planner"):
+                raw = self._planner.run(question, repo_id)
+        except Exception as exc:
+            # The planner is one model call; losing it should cost the default plan, not the answer.
+            self._logger.warning("Planner failed (%s), using the default plan", type(exc).__name__)
+            plan = default_plan(question, f"Planner failed ({type(exc).__name__}); used the default plan.")
+        else:
+            plan = parse_plan(raw, question)
+            if plan.note:
+                self._logger.info("Planner output adjusted: %s", plan.note)
 
-        return {**state, "plan": plan, "current_step_index": 0}
+        record_plan("default" if plan.note else "model", plan.agents)
+        return {**state, "plan": plan, "current_step_index": 0, "agents_ran": [*state["agents_ran"], "planner"]}
 
     def _dispatcher_node(self, state: OrchestratorState) -> OrchestratorState:
         # Passthrough node (logic in _route_step), but can be used for logging
         return state
 
     def _route_step(self, state: OrchestratorState) -> str:
-        steps = state["plan"].get("steps", [])
+        """The next agent to run. Every step in a parsed Plan names a known agent."""
+        steps = state["plan"].steps
         idx = state["current_step_index"]
-
         if idx >= len(steps):
-            if not state.get("validated"):
-                return "validator"
             return "end"
-
-        step = steps[idx]
-        agent_name = step.get("agent", "retrieval").lower()
-
-        if agent_name in ["retrieval", "analyst", "mentor", "memory"]:
-            return agent_name
-        return "end"
+        return steps[idx].agent
 
     # ... _execute_agent same ...
 
-    def _validator_node(self, state: OrchestratorState) -> OrchestratorState:
-        # Simple validation: "Does this answer the question?"
-        # We reuse the Mentor Agent for this reflective task
-        question = state["question"]
-        current_answer = state["final_answer"]
-        repo_id = state["repo_id"]
-
-        if not current_answer:
-            return {**state, "validated": True}
-
-        prompt = (
-            f"You are a quality reviewer. Your job is to refine an answer.\n"
-            f"User Question: {question}\n"
-            f"Proposed Answer: {current_answer}\n\n"
-            f"IMPORTANT: Return ONLY the final refined answer text. "
-            f"Do NOT include any meta-commentary like 'The answer is correct' or 'I would return it as is'. "
-            f"Do NOT repeat the citations section — citations are handled separately. "
-            f"If the answer is already good, return it unchanged. "
-            f"If it needs improvement, return the improved version. "
-            f"Output ONLY the answer the user should see."
-        )
-
-        try:
-            # The MentorAgent is styled as a senior engineer, good for review
-            refined_answer = self._mentor_agent.run(prompt, repo_id)
-        except Exception:
-            refined_answer = current_answer
-
-        return {
-            **state,
-            "final_answer": refined_answer,
-            "validated": True,
-            "results": state["results"] + ["Validation: Refined answer."],
-        }
-
     def _execute_agent(self, agent: Agent, state: OrchestratorState) -> OrchestratorState:
-        steps = state["plan"].get("steps", [])
+        steps = state["plan"].steps
         idx = state["current_step_index"]
         step = steps[idx]
 
-        instruction = step.get("instruction", "")
+        instruction = step.instruction
         repo_id = state["repo_id"]
 
         # Add context from previous results if available
@@ -267,11 +298,12 @@ class AgentOrchestrator:
             full_prompt = instruction
 
         try:
-            output = agent.run(full_prompt, repo_id)
+            with agent_run(step.agent):
+                output = agent.run(full_prompt, repo_id)
         except Exception as e:
-            output = f"Error executing {step.get('agent')}: {e}"
+            output = f"Error executing {step.agent}: {e}"
 
-        new_results = state["results"] + [f"Step {idx + 1} ({step.get('agent')}): {output}"]
+        new_results = state["results"] + [f"Step {idx + 1} ({step.agent}): {output}"]
         new_citations = list(state.get("citations", []))
         if agent is self._retrieval_agent:
             new_citations.extend(self._parse_citations_from_retrieval_output(output))
@@ -282,16 +314,207 @@ class AgentOrchestrator:
             "final_answer": output,
             "current_step_index": idx + 1,
             "citations": new_citations,
+            "final_agent": step.agent,
+            "agents_ran": [*state["agents_ran"], step.agent],
         }
 
     def _retrieval_node(self, state: OrchestratorState) -> OrchestratorState:
-        return self._execute_agent(self._retrieval_agent, state)
+        """Retrieval keeps its snippets in the state; citations come from them, not from parsed text."""
+        idx = state["current_step_index"]
+        # Search with what the visitor asked, not with how the planner paraphrased it. The
+        # planner chooses which agents run; it does not get to reword the query, because a
+        # different paraphrase of the same question returned different files between runs.
+        query = state.get("search_question") or state["question"]
+        retrieved = self._retrieve(query, state["repo_id"])
+        output = format_retrieval(retrieved.answer, retrieved.snippets)
+
+        return {
+            **state,
+            "results": state["results"] + [f"Step {idx + 1} (retrieval): {output}"],
+            "final_answer": output,
+            "current_step_index": idx + 1,
+            "citations": _merge_citations(state.get("citations", []), retrieved.citations),
+            "snippets": _merge_snippets(state.get("snippets", []), retrieved.snippets),
+            "final_agent": "retrieval",
+            "agents_ran": [*state["agents_ran"], "retrieval"],
+        }
+
+    def _retrieve(self, question: str, repo_id: str) -> GroundedAnswer:
+        """Snippets for a question, or an empty result if retrieval fails."""
+        retrieve = getattr(self._retrieval_agent, "retrieve", None)
+        try:
+            with agent_run("retrieval"):
+                if retrieve is not None:
+                    return retrieve(question, repo_id)
+                # A retrieval agent that only satisfies the text Agent contract.
+                text = self._retrieval_agent.run(question, repo_id)
+                return GroundedAnswer(
+                    answer=text,
+                    citations=self._parse_citations_from_retrieval_output(text),
+                    reasoning_steps=[],
+                    snippets=[],
+                )
+        except Exception as exc:
+            self._logger.warning("Retrieval failed (%s)", type(exc).__name__)
+            return GroundedAnswer(answer="", citations=[], reasoning_steps=[], snippets=[])
 
     def _analyst_node(self, state: OrchestratorState) -> OrchestratorState:
         return self._execute_agent(self._analyst_agent, state)
 
     def _mentor_node(self, state: OrchestratorState) -> OrchestratorState:
-        return self._execute_agent(self._mentor_agent, state)
+        """The mentor answers from the snippets retrieval already read, never its own search."""
+        steps = state["plan"].steps
+        idx = state["current_step_index"]
+        step = steps[idx]
+        snippets = state.get("snippets", [])
+        facts = _facts_from(state.get("results", []))
+
+        try:
+            output = self._mentor_answer(step.instruction or state["question"], snippets, state["repo_id"], facts=facts)
+        except Exception as exc:
+            kind = classify_quota(exc)
+            output = quota_answer(kind, snippets) if kind else f"Error executing mentor: {exc}"
+
+        return {
+            **state,
+            "results": state["results"] + [f"Step {idx + 1} (mentor): {output}"],
+            "final_answer": output,
+            # A second mentor step replaces the first; the last mentor to run has the answer.
+            "mentor_answer": output,
+            "current_step_index": idx + 1,
+            "final_agent": "mentor",
+            "agents_ran": [*state["agents_ran"], "mentor"],
+        }
+
+    def _mentor_answer(
+        self, question: str, snippets: list[Snippet], repo_id: str, facts: str = "", history: str = ""
+    ) -> str:
+        """Call the mentor's snippet-based entry point, falling back to the text Agent contract."""
+        answer = getattr(self._mentor_agent, "answer", None)
+        if answer is not None:
+            return answer(question, snippets, facts=facts, history=history)
+        prompt = question
+        if snippets:
+            prompt = f"{question}\n\nRetrieved context:\n{render_snippets(snippets)}"
+        if history:
+            return self._mentor_agent.run(prompt, repo_id, history=history)
+        return self._mentor_agent.run(prompt, repo_id)
 
     def _memory_node(self, state: OrchestratorState) -> OrchestratorState:
-        return self._execute_agent(self._memory_agent, state)
+        """Recalls this conversation's earlier turns; needs the session, not a text prompt."""
+        idx = state["current_step_index"]
+        recall = getattr(self._memory_agent, "recall", None)
+        try:
+            with agent_run("memory"):
+                if recall is not None:
+                    output = recall(state.get("session_id"), state["repo_id"])
+                else:
+                    output = self._memory_agent.run(state["plan"].steps[idx].instruction, state["repo_id"])
+        except Exception as exc:
+            output = f"Error executing memory: {exc}"
+
+        return {
+            **state,
+            "results": state["results"] + [f"Step {idx + 1} (memory): {output}"],
+            "final_answer": output,
+            "current_step_index": idx + 1,
+            "final_agent": "memory",
+            "agents_ran": [*state["agents_ran"], "memory"],
+        }
+
+
+def _merge_citations(existing: list[str], new: list[str]) -> list[str]:
+    """Keep order, drop repeats: two retrieval steps often find the same file."""
+    seen = set(existing)
+    return existing + [c for c in new if not (c in seen or seen.add(c))]
+
+
+def _merge_snippets(existing: list[Snippet], new: list[Snippet]) -> list[Snippet]:
+    seen = {(s.path, s.start_line, s.end_line) for s in existing}
+    out = list(existing)
+    for snippet in new:
+        key = (snippet.path, snippet.start_line, snippet.end_line)
+        if key not in seen:
+            seen.add(key)
+            out.append(snippet)
+    return out
+
+
+# Analyst output is exact, computed from the code; the mentor is told to prefer it over its
+# reading of the snippets. Only analyst steps count as facts.
+_FACT_PREFIX = "(analyst): "
+
+
+def _facts_from(results: list[str]) -> str:
+    facts = [r.split(_FACT_PREFIX, 1)[1] for r in results if _FACT_PREFIX in r]
+    return "\n\n".join(facts)
+
+
+# Graph nodes that are agents; the dispatcher is plumbing and is not reported.
+_AGENT_NODES = ("planner", "retrieval", "analyst", "mentor", "memory")
+
+
+def _detail(node: str, state: dict) -> str:
+    """A short, structural note about what an agent just did.
+
+    Only counts and plan shape: never the question, the answer or any code, because this
+    text is shown in the browser and must stay safe to put in a log line too.
+    """
+    if node == "planner":
+        plan = state.get("plan")
+        return f"planned {len(plan.steps)} step(s): {' -> '.join(plan.agents)}" if plan else "planned"
+    if node == "retrieval":
+        return f"read {len(state.get('snippets', []))} code snippet(s)"
+    if node == "mentor":
+        return "wrote the answer from the retrieved snippets"
+    if node == "analyst":
+        return "computed structural facts from the call graph"
+    if node == "memory":
+        return "recalled this conversation"
+    return ""
+
+
+# A plan with no mentor step has nobody to write the answer, so another agent's output
+# stands in. It is labelled for what it actually is: calling a file search "structural" was
+# wrong, and said so to the visitor.
+STRUCTURAL_PREFIX = "This is a structural result, computed from the code rather than written as an explanation.\n\n"
+SEARCH_PREFIX = "This is a search result, not a written answer.\n\n"
+RECALL_PREFIX = "This is recalled context from this conversation, not a written answer.\n\n"
+
+STAND_IN_PREFIXES = {
+    "analyst": STRUCTURAL_PREFIX,
+    "retrieval": SEARCH_PREFIX,
+    "memory": RECALL_PREFIX,
+}
+
+STAND_IN_NOTES = {
+    "analyst": "No mentor step in the plan; showing the structural result.",
+    "retrieval": "No mentor step in the plan; showing the search result.",
+    "memory": "No mentor step in the plan; showing the recalled context.",
+}
+
+
+def _final_answer(state: dict) -> tuple[str, str]:
+    """The answer to show, and a reasoning note when it is not the mentor's.
+
+    The mentor writes the answer. Whatever else the plan runs afterwards -- an analyst
+    summarising, a memory step recalling -- is a step along the way, not a replacement for
+    it. Only when the plan has no mentor at all does another agent's output stand in, and
+    then it is labelled.
+    """
+    mentor_answer = (state.get("mentor_answer") or "").strip()
+    if mentor_answer:
+        last = (state.get("final_answer") or "").strip()
+        if last and last != mentor_answer:
+            return mentor_answer, "Answer taken from the mentor step; later steps are shown above."
+        return mentor_answer, ""
+
+    last = (state.get("final_answer") or "").strip()
+    if not last:
+        return "No answer generated.", ""
+    agent = state.get("final_agent") or ""
+    prefix = STAND_IN_PREFIXES.get(agent)
+    if not prefix:
+        # An agent with no label of its own: show the output plainly rather than mislabel it.
+        return last, "No mentor step in the plan; showing the last agent's output."
+    return prefix + last, STAND_IN_NOTES[agent]

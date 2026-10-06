@@ -8,16 +8,24 @@ import {
     ChevronRight,
     ChevronDown,
     BrainCircuit,
+    Layers,
     Quote
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { openFilePreview, parseCitation } from "@/lib/citations";
+
+interface AgentStep {
+    name: string;
+    detail: string;
+}
 
 interface MessageBubbleProps {
     role: "user" | "planner" | "analyst" | "mentor" | "memory";
     content: string;
     reasoningSteps?: string[];
     citations?: string[];
+    /** One entry per agent that ran, in order, as deep mode reported it. */
+    agentSteps?: AgentStep[];
 }
 
 const AGENT_LABELS = {
@@ -57,7 +65,7 @@ const Collapsible = ({ title, icon: Icon, children, defaultOpen = false, preview
     );
 };
 
-export default function MessageBubble({ role, content, reasoningSteps, citations }: MessageBubbleProps) {
+export default function MessageBubble({ role, content, reasoningSteps, citations, agentSteps }: MessageBubbleProps) {
     const isUser = role === "user";
 
     // Deduplicate citations and clean them up
@@ -81,6 +89,26 @@ export default function MessageBubble({ role, content, reasoningSteps, citations
                     ? "bg-white/5 border-white/5 inline-block text-left"
                     : "bg-card border-border text-foreground/90 shadow-sm"
             )}>
+                {/* Deep analysis: one line per agent, in the order the graph ran them. */}
+                {!isUser && agentSteps && agentSteps.length > 0 && (
+                    <Collapsible
+                        title={`Agents (${agentSteps.length})`}
+                        icon={Layers}
+                        defaultOpen
+                        preview={agentSteps.map((s) => s.name).join(" → ")}
+                    >
+                        <ol className="space-y-1.5 font-mono text-muted/80 leading-relaxed">
+                            {agentSteps.map((step, i) => (
+                                <li key={i} className="flex gap-2">
+                                    <span className="text-accent/50">[{i + 1}]</span>
+                                    <span className="text-accent/80">{step.name}</span>
+                                    <span className="text-muted/60">— {step.detail}</span>
+                                </li>
+                            ))}
+                        </ol>
+                    </Collapsible>
+                )}
+
                 {/* Reasoning Steps (Planner Dropdown) */}
                 {!isUser && reasoningSteps && reasoningSteps.length > 0 && (
                     <Collapsible

@@ -31,6 +31,8 @@ services:
     image: grafana/grafana:latest
     ports:
       - "3000:3000"
+    # The datasource and both dashboards (codementor.json and codeatlas-agents.json) are
+    # provisioned, so Grafana comes up with the panels already there instead of an empty instance.
     volumes:
       - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro

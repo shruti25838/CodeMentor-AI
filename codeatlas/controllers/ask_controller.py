@@ -1,5 +1,6 @@
 import asyncio
 import json
+import queue
 import time
 
 from fastapi import APIRouter, Depends, Response
@@ -23,6 +24,10 @@ from codeatlas.services.qa.followup import needs_rewrite, rewrite_question
 from codeatlas.services.state.repo_state_store import RepoStateStore
 
 router = APIRouter(prefix="/ask", tags=["qa"])
+
+# A question with no repository is answered by one model call, not by the agent graph.
+# Recording it as "mentor" would claim an agent ran that did not.
+DIRECT_ANSWER = ("direct",)
 
 
 # ---------- normal (non-streaming) endpoint ----------
@@ -67,15 +72,18 @@ def _ask(request, orchestrator, llm_provider, timer: StageTimer) -> AskResponse:
             answer=response.content,
             citations=[],
             reasoning_steps=["General mode: answered without repo context."],
+            agents_used=list(DIRECT_ANSWER),
         )
         _track(request, resp, start)
         return resp
 
-    result = orchestrator.handle_question(request.question, request.repo_id)
+    # session_id was ignored here before, so /ask had no conversation memory at all.
+    result = orchestrator.handle_question(request.question, request.repo_id, session_id=request.session_id)
     resp = AskResponse(
         answer=result.answer,
         citations=result.citations,
         reasoning_steps=result.reasoning_steps,
+        agents_used=result.agents_used,
     )
     _track(request, resp, start)
     return resp
@@ -135,7 +143,7 @@ async def ask_stream(
                     repo_id=None,
                     latency_ms=latency,
                     citation_count=0,
-                    agents_used=["mentor"],
+                    agents_used=list(DIRECT_ANSWER),
                 )
                 timer.log("ask_stream")
                 yield _sse(
@@ -143,20 +151,33 @@ async def ask_stream(
                         "type": "done",
                         "citations": [],
                         "reasoning_steps": ["General mode: streamed response."],
+                        "agents_used": list(DIRECT_ANSWER),
                         "timings_ms": timer.as_dict(),
                     }
                 )
             else:
-                # ---- Repo mode: fast path (retrieval → mentor, no planner/validator) ----
-                yield _sse({"type": "status", "content": "Retrieving context..."})
-
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
-                    None,
-                    run_timed,
-                    timer,
-                    lambda: _answer_with_history(orchestrator, llm_provider, request, history),
-                )
+                # ---- Repo mode ----
+                if request.mode == "deep":
+                    # The planned five-agent pipeline. Each agent's step is sent as it
+                    # finishes, so the wait is visible rather than silent.
+                    yield _sse({"type": "status", "content": "Planning..."})
+                    result = None
+                    async for event in _run_deep(orchestrator, llm_provider, request, history, timer):
+                        if event["type"] == "result":
+                            result = event["result"]
+                        else:
+                            yield _sse(event)
+                    if result is None:  # pragma: no cover - the generator always ends with one
+                        raise RuntimeError("deep mode produced no answer")
+                else:
+                    yield _sse({"type": "status", "content": "Retrieving context..."})
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(
+                        None,
+                        run_timed,
+                        timer,
+                        lambda: _answer_with_history(orchestrator, llm_provider, request, history),
+                    )
 
                 yield _sse({"type": "status", "content": "Streaming answer..."})
 
@@ -179,7 +200,7 @@ async def ask_stream(
                     repo_id=request.repo_id,
                     latency_ms=latency,
                     citation_count=len(result.citations),
-                    agents_used=["retrieval", "mentor"],
+                    agents_used=result.agents_used,
                 )
                 timer.log("ask_stream")
                 yield _sse(
@@ -187,6 +208,7 @@ async def ask_stream(
                         "type": "done",
                         "citations": result.citations,
                         "reasoning_steps": result.reasoning_steps,
+                        "agents_used": result.agents_used,
                         "timings_ms": timer.as_dict(),
                     }
                 )
@@ -209,6 +231,50 @@ async def ask_stream(
 # ---------- helpers ----------
 
 
+async def _run_deep(orchestrator, llm_provider, request: AskRequest, history: list[Turn], timer: StageTimer):
+    """Bridge the orchestrator's blocking generator into the event loop.
+
+    The graph calls the model, so it must not run on the event loop. A worker thread pushes
+    each event onto a queue as the graph produces it, and this reads them as they arrive, so
+    an agent's step reaches the browser while the next agent is still working.
+    """
+    events: queue.Queue = queue.Queue()
+    done = object()
+
+    def produce() -> None:
+        try:
+            # A follow-up is rewritten into a standalone question for search, exactly as the
+            # fast path does, so deep mode searches with the visitor's meaning rather than
+            # with "why does it do that?".
+            search_question = None
+            if needs_rewrite(request.question, history):
+                with stage("rewrite"):
+                    search_question = rewrite_question(llm_provider.get_chat_model(), request.question, history)
+            for event in orchestrator.stream_question(
+                request.question, request.repo_id, request.session_id, search_question=search_question
+            ):
+                events.put(event)
+        except Exception as exc:  # noqa: BLE001 - reported to the caller as an event
+            events.put({"type": "failed", "error": exc})
+        finally:
+            events.put(done)
+
+    loop = asyncio.get_event_loop()
+    worker = loop.run_in_executor(None, run_timed, timer, produce)
+    try:
+        while True:
+            event = await loop.run_in_executor(None, events.get)
+            if event is done:
+                break
+            if event["type"] == "failed":
+                raise event["error"]
+            if event["type"] == "agent":
+                timer.mark("first_agent_event")
+            yield event
+    finally:
+        await worker
+
+
 def _answer_with_history(orchestrator, llm_provider, request: AskRequest, history: list[Turn]):
     """Repo-mode answer that sees earlier turns; a follow-up is rewritten for search first."""
     search_question = None
@@ -226,7 +292,12 @@ def _answer_with_history(orchestrator, llm_provider, request: AskRequest, histor
         steps.append(f"Used {len(history)} earlier turn(s) of this conversation.")
     if search_question is not None:
         steps.append(f"Searched with the follow-up rewritten as: {search_question}")
-    return type(result)(answer=result.answer, citations=result.citations, reasoning_steps=steps)
+    return type(result)(
+        answer=result.answer,
+        citations=result.citations,
+        reasoning_steps=steps,
+        agents_used=result.agents_used,
+    )
 
 
 def _as_messages(history: list[Turn]) -> list:
@@ -244,10 +315,11 @@ def _sse(data: dict) -> str:
 
 def _track(request: AskRequest, resp: AskResponse, start: float) -> None:
     latency = (time.perf_counter() - start) * 1000
-    agents = ["mentor"] if not request.repo_id else ["planner", "retrieval", "mentor", "validator"]
     tracker.record_query(
         repo_id=request.repo_id,
         latency_ms=latency,
         citation_count=len(resp.citations),
-        agents_used=agents,
+        # What really ran, as reported by the graph; this used to be a fixed list that named
+        # a validator that does not exist and never named the analyst even when it ran.
+        agents_used=resp.agents_used,
     )
