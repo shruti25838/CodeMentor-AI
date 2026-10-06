@@ -31,7 +31,7 @@ export async function askQuestionStream(
     callbacks: {
         onToken: (token: string) => void;
         onStatus: (status: string) => void;
-        onDone: (data: { citations: string[]; reasoning_steps: string[] }) => void;
+        onDone: (data: { citations: string[]; reasoning_steps: string[]; agents_used?: string[] }) => void;
         onError: (error: string) => void;
     },
 ) {

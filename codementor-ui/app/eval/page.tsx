@@ -97,6 +97,8 @@ export default function EvalDashboard() {
         mentor: "#22D3EE",
         analyst: "#F59E0B",
         memory: "#EC4899",
+        // A question with no repository: one model call, no agent pipeline.
+        direct: "#94A3B8",
     };
 
     return (

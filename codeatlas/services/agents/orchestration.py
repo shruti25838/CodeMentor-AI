@@ -25,6 +25,8 @@ class OrchestratorState(TypedDict):
     results: list[str]
     final_answer: str
     citations: list[str]
+    # Appended by each node as it runs, so the record reflects the graph, not a guess.
+    agents_ran: list[str]
     # The code retrieval actually read, carried so later steps need not search again.
     snippets: list[Snippet]
 
@@ -58,6 +60,7 @@ class AgentOrchestrator:
             "final_answer": "",
             "citations": [],
             "snippets": [],
+            "agents_ran": [],
         }
         final_state = self._graph.invoke(initial_state)
 
@@ -68,10 +71,14 @@ class AgentOrchestrator:
             reasoning.append(plan.note)
         reasoning.extend(final_state.get("results", []))
 
+        agents_ran = final_state.get("agents_ran", [])
+        reasoning.append(f"Agents that ran: {' -> '.join(agents_ran)}." if agents_ran else "No agent ran.")
+
         return AnswerResult(
             answer=final_state.get("final_answer", "No answer generated."),
             citations=final_state.get("citations", []),
             reasoning_steps=reasoning,
+            agents_used=agents_ran,
         )
 
     def handle_question_fast(
@@ -82,12 +89,18 @@ class AgentOrchestrator:
         history: earlier turns of this conversation, shown to the mentor. search_question: a
         standalone version of a follow-up, used for retrieval instead of the question as asked.
         """
+        # Appended as each agent is actually invoked, so a path that stops early reports
+        # only what it reached.
+        agents_ran: list[str] = []
+
         # 1. Retrieve — the only search this path makes.
+        agents_ran.append("retrieval")
         retrieved = self._retrieve(search_question or question, repo_id)
         citations = retrieved.citations
 
         # 2. The mentor answers from exactly those snippets, so the answer and the citations
         #    describe the same code.
+        agents_ran.append("mentor")
         try:
             answer = self._mentor_answer(question, retrieved.snippets, repo_id, history=history)
         except Exception as e:
@@ -100,7 +113,9 @@ class AgentOrchestrator:
             reasoning_steps=[
                 "Fast mode: retrieval + mentor (skipped the planner).",
                 f"Retrieved {len(retrieved.snippets)} code snippet(s), cited as {len(citations)} citation(s).",
+                f"Agents that ran: {' -> '.join(agents_ran)}.",
             ],
+            agents_used=agents_ran,
         )
 
     def handle_generation(self, prompt: str, repo_id: str) -> GenerateResult:
@@ -192,7 +207,7 @@ class AgentOrchestrator:
             if plan.note:
                 self._logger.info("Planner output adjusted: %s", plan.note)
 
-        return {**state, "plan": plan, "current_step_index": 0}
+        return {**state, "plan": plan, "current_step_index": 0, "agents_ran": [*state["agents_ran"], "planner"]}
 
     def _dispatcher_node(self, state: OrchestratorState) -> OrchestratorState:
         # Passthrough node (logic in _route_step), but can be used for logging
@@ -239,6 +254,7 @@ class AgentOrchestrator:
             "final_answer": output,
             "current_step_index": idx + 1,
             "citations": new_citations,
+            "agents_ran": [*state["agents_ran"], step.agent],
         }
 
     def _retrieval_node(self, state: OrchestratorState) -> OrchestratorState:
@@ -256,6 +272,7 @@ class AgentOrchestrator:
             "current_step_index": idx + 1,
             "citations": _merge_citations(state.get("citations", []), retrieved.citations),
             "snippets": _merge_snippets(state.get("snippets", []), retrieved.snippets),
+            "agents_ran": [*state["agents_ran"], "retrieval"],
         }
 
     def _retrieve(self, question: str, repo_id: str) -> GroundedAnswer:
@@ -297,6 +314,7 @@ class AgentOrchestrator:
             "results": state["results"] + [f"Step {idx + 1} (mentor): {output}"],
             "final_answer": output,
             "current_step_index": idx + 1,
+            "agents_ran": [*state["agents_ran"], "mentor"],
         }
 
     def _mentor_answer(
@@ -330,6 +348,7 @@ class AgentOrchestrator:
             "results": state["results"] + [f"Step {idx + 1} (memory): {output}"],
             "final_answer": output,
             "current_step_index": idx + 1,
+            "agents_ran": [*state["agents_ran"], "memory"],
         }
 
 

@@ -23,6 +23,10 @@ from codeatlas.services.state.repo_state_store import RepoStateStore
 
 router = APIRouter(prefix="/ask", tags=["qa"])
 
+# A question with no repository is answered by one model call, not by the agent graph.
+# Recording it as "mentor" would claim an agent ran that did not.
+DIRECT_ANSWER = ("direct",)
+
 
 # ---------- normal (non-streaming) endpoint ----------
 @router.post("", response_model=AskResponse)
@@ -66,6 +70,7 @@ def _ask(request, orchestrator, llm_provider, timer: StageTimer) -> AskResponse:
             answer=response.content,
             citations=[],
             reasoning_steps=["General mode: answered without repo context."],
+            agents_used=list(DIRECT_ANSWER),
         )
         _track(request, resp, start)
         return resp
@@ -76,6 +81,7 @@ def _ask(request, orchestrator, llm_provider, timer: StageTimer) -> AskResponse:
         answer=result.answer,
         citations=result.citations,
         reasoning_steps=result.reasoning_steps,
+        agents_used=result.agents_used,
     )
     _track(request, resp, start)
     return resp
@@ -135,7 +141,7 @@ async def ask_stream(
                     repo_id=None,
                     latency_ms=latency,
                     citation_count=0,
-                    agents_used=["mentor"],
+                    agents_used=list(DIRECT_ANSWER),
                 )
                 timer.log("ask_stream")
                 yield _sse(
@@ -143,6 +149,7 @@ async def ask_stream(
                         "type": "done",
                         "citations": [],
                         "reasoning_steps": ["General mode: streamed response."],
+                        "agents_used": list(DIRECT_ANSWER),
                         "timings_ms": timer.as_dict(),
                     }
                 )
@@ -179,7 +186,7 @@ async def ask_stream(
                     repo_id=request.repo_id,
                     latency_ms=latency,
                     citation_count=len(result.citations),
-                    agents_used=["retrieval", "mentor"],
+                    agents_used=result.agents_used,
                 )
                 timer.log("ask_stream")
                 yield _sse(
@@ -187,6 +194,7 @@ async def ask_stream(
                         "type": "done",
                         "citations": result.citations,
                         "reasoning_steps": result.reasoning_steps,
+                        "agents_used": result.agents_used,
                         "timings_ms": timer.as_dict(),
                     }
                 )
@@ -224,7 +232,12 @@ def _answer_with_history(orchestrator, llm_provider, request: AskRequest, histor
         steps.append(f"Used {len(history)} earlier turn(s) of this conversation.")
     if search_question is not None:
         steps.append(f"Searched with the follow-up rewritten as: {search_question}")
-    return type(result)(answer=result.answer, citations=result.citations, reasoning_steps=steps)
+    return type(result)(
+        answer=result.answer,
+        citations=result.citations,
+        reasoning_steps=steps,
+        agents_used=result.agents_used,
+    )
 
 
 def _as_messages(history: list[Turn]) -> list:
@@ -242,10 +255,11 @@ def _sse(data: dict) -> str:
 
 def _track(request: AskRequest, resp: AskResponse, start: float) -> None:
     latency = (time.perf_counter() - start) * 1000
-    agents = ["mentor"] if not request.repo_id else ["planner", "retrieval", "mentor"]
     tracker.record_query(
         repo_id=request.repo_id,
         latency_ms=latency,
         citation_count=len(resp.citations),
-        agents_used=agents,
+        # What really ran, as reported by the graph; this used to be a fixed list that named
+        # a validator that does not exist and never named the analyst even when it ran.
+        agents_used=resp.agents_used,
     )

@@ -13,3 +13,5 @@ class AskResponse(BaseModel):
     answer: str
     citations: list[str]
     reasoning_steps: list[str]
+    # The agents that actually ran, in order. Empty for a question answered without agents.
+    agents_used: list[str] = Field(default_factory=list)
