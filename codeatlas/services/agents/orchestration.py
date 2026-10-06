@@ -5,8 +5,11 @@ from langgraph.graph import END, StateGraph
 
 from codeatlas.services.agents.interfaces import Agent
 from codeatlas.services.agents.plan import Plan, default_plan, parse_plan
+from codeatlas.services.agents.retrieval_agent import format_retrieval
 from codeatlas.services.agents.types import AnswerResult, GenerateResult
 from codeatlas.services.memory.interfaces import MemoryStore
+from codeatlas.services.qa.answer_service import GroundedAnswer
+from codeatlas.services.retrieval.snippets import Snippet
 
 # Start of the answer when the mentor fails; such answers are not kept as conversation history.
 ANSWER_ERROR_PREFIX = "Error generating answer"
@@ -21,6 +24,8 @@ class OrchestratorState(TypedDict):
     results: list[str]
     final_answer: str
     citations: list[str]
+    # The code retrieval actually read, carried so later steps need not search again.
+    snippets: list[Snippet]
 
 
 class AgentOrchestrator:
@@ -52,6 +57,7 @@ class AgentOrchestrator:
             "results": [],
             "final_answer": "",
             "citations": [],
+            "snippets": [],
         }
         final_state = self._graph.invoke(initial_state)
 
@@ -77,12 +83,9 @@ class AgentOrchestrator:
         standalone version of a follow-up, used for retrieval instead of the question as asked.
         """
         # 1. Retrieve
-        try:
-            retrieval_output = self._retrieval_agent.run(search_question or question, repo_id)
-        except Exception as e:
-            self._logger.warning("Retrieval failed: %s", e)
-            retrieval_output = ""
-        citations = self._parse_citations_from_retrieval_output(retrieval_output)
+        retrieved = self._retrieve(search_question or question, repo_id)
+        citations = retrieved.citations
+        retrieval_output = format_retrieval(retrieved.answer, retrieved.snippets)
 
         # 2. Mentor answers using context
         mentor_prompt = f"{question}\n\nRetrieved context:\n{retrieval_output}" if retrieval_output else question
@@ -100,7 +103,7 @@ class AgentOrchestrator:
             citations=citations,
             reasoning_steps=[
                 "Fast mode: retrieval + mentor (skipped the planner).",
-                f"Retrieved {len(citations)} citations.",
+                f"Retrieved {len(retrieved.snippets)} code snippet(s), cited as {len(citations)} citation(s).",
             ],
         )
 
@@ -243,7 +246,39 @@ class AgentOrchestrator:
         }
 
     def _retrieval_node(self, state: OrchestratorState) -> OrchestratorState:
-        return self._execute_agent(self._retrieval_agent, state)
+        """Retrieval keeps its snippets in the state; citations come from them, not from parsed text."""
+        steps = state["plan"].steps
+        idx = state["current_step_index"]
+        step = steps[idx]
+        retrieved = self._retrieve(step.instruction or state["question"], state["repo_id"])
+        output = format_retrieval(retrieved.answer, retrieved.snippets)
+
+        return {
+            **state,
+            "results": state["results"] + [f"Step {idx + 1} (retrieval): {output}"],
+            "final_answer": output,
+            "current_step_index": idx + 1,
+            "citations": _merge_citations(state.get("citations", []), retrieved.citations),
+            "snippets": _merge_snippets(state.get("snippets", []), retrieved.snippets),
+        }
+
+    def _retrieve(self, question: str, repo_id: str) -> GroundedAnswer:
+        """Snippets for a question, or an empty result if retrieval fails."""
+        retrieve = getattr(self._retrieval_agent, "retrieve", None)
+        try:
+            if retrieve is not None:
+                return retrieve(question, repo_id)
+            # A retrieval agent that only satisfies the text Agent contract.
+            text = self._retrieval_agent.run(question, repo_id)
+            return GroundedAnswer(
+                answer=text,
+                citations=self._parse_citations_from_retrieval_output(text),
+                reasoning_steps=[],
+                snippets=[],
+            )
+        except Exception as exc:
+            self._logger.warning("Retrieval failed (%s)", type(exc).__name__)
+            return GroundedAnswer(answer="", citations=[], reasoning_steps=[], snippets=[])
 
     def _analyst_node(self, state: OrchestratorState) -> OrchestratorState:
         return self._execute_agent(self._analyst_agent, state)
@@ -253,3 +288,20 @@ class AgentOrchestrator:
 
     def _memory_node(self, state: OrchestratorState) -> OrchestratorState:
         return self._execute_agent(self._memory_agent, state)
+
+
+def _merge_citations(existing: list[str], new: list[str]) -> list[str]:
+    """Keep order, drop repeats: two retrieval steps often find the same file."""
+    seen = set(existing)
+    return existing + [c for c in new if not (c in seen or seen.add(c))]
+
+
+def _merge_snippets(existing: list[Snippet], new: list[Snippet]) -> list[Snippet]:
+    seen = {(s.path, s.start_line, s.end_line) for s in existing}
+    out = list(existing)
+    for snippet in new:
+        key = (snippet.path, snippet.start_line, snippet.end_line)
+        if key not in seen:
+            seen.add(key)
+            out.append(snippet)
+    return out
