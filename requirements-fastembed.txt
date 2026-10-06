@@ -1,0 +1,9 @@
+# Optional. Only needed for CODEATLAS_EMBEDDING_PROVIDER=fastembed.
+#
+#     pip install -r requirements-fastembed.txt
+#
+# Deliberately not in requirements.txt and not in the default Docker image: it pulls in
+# onnxruntime, tokenizers and huggingface-hub (~100 MB of wheels) and downloads an embedding
+# model the first time it is used. "hash" remains the default provider and needs none of it.
+# To bake this into an image instead: docker build --build-arg INSTALL_FASTEMBED=1 .
+fastembed==0.8.1

@@ -18,6 +18,7 @@ from codeatlas.observability.timing import stage
 from codeatlas.services.llm.quota import classify_quota, quota_answer
 from codeatlas.services.retrieval.embedding import EmbeddingService
 from codeatlas.services.retrieval.hash_embedder import STOPWORDS, split_identifier
+from codeatlas.services.retrieval.indexing import embedder_mismatch
 from codeatlas.services.retrieval.interfaces import CodeRetriever
 from codeatlas.services.retrieval.snippets import (
     DEFAULT_SNIPPET_MAX_CHARS,
@@ -102,6 +103,16 @@ class AnswerService:
     def retrieve(self, repo_id: str, question: str, top_k: int = 5) -> list[EmbeddingRecord]:
         """The records a question's answer is built from, best first. The retrieval eval calls this too."""
         settings = self._settings
+        stored = self._retriever.stored_embedder(repo_id)
+        if embedder_mismatch(stored, self._embedder):
+            # Returning nothing is honest; the alternative is confident nonsense (see embedder_mismatch).
+            self._logger.warning(
+                "Index for repo %s was built by embedder %r, not %r; refusing to search it. Analyze it again.",
+                repo_id,
+                stored,
+                self._embedder.signature(),
+            )
+            return []
         if settings.drop_stopwords:
             question = _without_stopwords(question)
         with stage("embed_query"):

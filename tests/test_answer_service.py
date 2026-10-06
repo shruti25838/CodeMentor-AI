@@ -10,7 +10,7 @@ class StubRetriever(CodeRetriever):
     def __init__(self, records: list[EmbeddingRecord]) -> None:
         self._records = records
 
-    def index(self, repo_id: str, records: list[EmbeddingRecord]) -> None:
+    def index(self, repo_id: str, records: list[EmbeddingRecord], embedder: str = "") -> None:
         return None
 
     def search(self, repo_id: str, query_vector: list[float], top_k: int) -> list[EmbeddingRecord]:

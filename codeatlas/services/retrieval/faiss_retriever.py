@@ -19,16 +19,20 @@ class FaissCodeRetriever(CodeRetriever):
             self._base_dir.mkdir(parents=True, exist_ok=True)
             self._load_all()
 
-    def index(self, repo_id: str, records: list[EmbeddingRecord]) -> None:
+    def index(self, repo_id: str, records: list[EmbeddingRecord], embedder: str = "") -> None:
         if not records:
             return
         vectors = np.array([record.vector for record in records], dtype="float32")
         vectors = _normalize(vectors)
         index = faiss.IndexFlatIP(vectors.shape[1])
         index.add(vectors)
-        self._indexes[repo_id] = _RepoIndex(index=index, records=records)
+        self._indexes[repo_id] = _RepoIndex(index=index, records=records, embedder=embedder)
         self._persist(repo_id)
-        self._logger.info("FAISS index stored for repo %s", repo_id)
+        self._logger.info("FAISS index stored for repo %s (embedder %s)", repo_id, embedder or "unrecorded")
+
+    def stored_embedder(self, repo_id: str) -> str | None:
+        repo_index = self._indexes.get(repo_id)
+        return None if repo_index is None else repo_index.embedder
 
     def search(self, repo_id: str, query_vector: list[float], top_k: int) -> list[EmbeddingRecord]:
         repo_index = self._indexes.get(repo_id)
@@ -64,7 +68,7 @@ class FaissCodeRetriever(CodeRetriever):
         index_path = self._base_dir / f"{repo_id}.faiss"
         meta_path = self._base_dir / f"{repo_id}.pkl"
         faiss.write_index(repo_index.index, str(index_path))
-        meta_path.write_bytes(pickle.dumps(repo_index.records))
+        meta_path.write_bytes(pickle.dumps({"records": repo_index.records, "embedder": repo_index.embedder}))
         self._logger.info("Persisted FAISS index to %s", index_path)
 
     def _load_all(self) -> None:
@@ -77,10 +81,15 @@ class FaissCodeRetriever(CodeRetriever):
                 continue
             try:
                 index = faiss.read_index(str(index_path))
-                records = pickle.loads(meta_path.read_bytes())
+                meta = pickle.loads(meta_path.read_bytes())
             except Exception:
                 continue
-            self._indexes[repo_id] = _RepoIndex(index=index, records=records)
+            # A file written before the embedder was recorded holds the record list on its own.
+            if isinstance(meta, dict):
+                records, embedder = meta["records"], meta.get("embedder", "")
+            else:
+                records, embedder = meta, ""
+            self._indexes[repo_id] = _RepoIndex(index=index, records=records, embedder=embedder)
             self._logger.info("Loaded FAISS index for repo %s", repo_id)
 
 
@@ -88,6 +97,8 @@ class FaissCodeRetriever(CodeRetriever):
 class _RepoIndex:
     index: faiss.IndexFlatIP
     records: list[EmbeddingRecord]
+    # Signature of the embedder that produced the vectors; "" in an index written before this was kept.
+    embedder: str = ""
 
 
 def _normalize(vectors: np.ndarray) -> np.ndarray:

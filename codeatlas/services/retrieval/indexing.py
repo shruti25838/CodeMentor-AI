@@ -16,6 +16,21 @@ class IndexingTimeoutError(Exception):
     """Indexing ran past its time limit; nothing was stored."""
 
 
+def embedder_mismatch(stored: str | None, embedder: EmbeddingService) -> bool:
+    """True when an index is known to have been built by a different embedder than this one.
+
+    Vectors from two embedders are not comparable, and nothing about a FAISS index makes that
+    visible: the hash embedder and bge-small are both 384 wide, so searching one with the other's
+    query vector returns confident nonsense rather than an error.
+
+    Two cases are deliberately not a mismatch. None means the retriever does not record the
+    embedder at all, and "" means the index was written before it was recorded; neither is
+    evidence of a different embedder, and treating them as one would blank out every index
+    written before this guard existed.
+    """
+    return bool(stored) and stored != embedder.signature()
+
+
 class CodeIndexService:
     def __init__(
         self,
@@ -44,7 +59,10 @@ class CodeIndexService:
         return f"{self._embedder.signature()}|max_chars={self._max_chars}|prefix={int(self._prefix_metadata)}"
 
     def has_index(self, repo_id: str) -> bool:
-        return self._retriever.has_index(repo_id)
+        """True only for an index this service could search: built by an embedder with this signature."""
+        return self._retriever.has_index(repo_id) and not embedder_mismatch(
+            self._retriever.stored_embedder(repo_id), self._embedder
+        )
 
     def discard(self, repo_id: str) -> None:
         """Remove any stored index for a repo (used to clean up after a failed analysis)."""
@@ -82,7 +100,7 @@ class CodeIndexService:
             )
 
         with stage("index_write"):
-            self._retriever.index(repository.repo_id, indexed_records)
+            self._retriever.index(repository.repo_id, indexed_records, self._embedder.signature())
         self._logger.info("Indexed %s records for repo %s", len(indexed_records), repository.repo_id)
 
     def _prepare(self, document: str, record: EmbeddingRecord, root: Path) -> str:

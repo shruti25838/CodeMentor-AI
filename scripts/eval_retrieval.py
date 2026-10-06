@@ -25,7 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from codeatlas.app.di import get_config, get_embedder, get_retrieval_settings  # noqa: E402
+from codeatlas.app.di import get_config, get_embedder, get_retrieval_settings, index_options  # noqa: E402
 from codeatlas.services.eval.retrieval_eval import RANKED_DEPTH, SPLITS, EvalSettings, IndexSettings, run  # noqa: E402
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService  # noqa: E402
 
@@ -99,14 +99,17 @@ def _settings(args) -> tuple[EvalSettings, object]:
         "skip_tests": _on(args.skip_tests),
     }
     retrieval = replace(get_retrieval_settings(), **{k: v for k, v in changes.items() if v is not None})
-    max_chars = config.embed_max_chars if args.embed_max_chars is None else (args.embed_max_chars or None)
-    prefix = config.embed_prefix_metadata if args.prefix_metadata is None else _on(args.prefix_metadata)
+    # The server's indexing options for the selected provider (fastembed has its own).
+    options = index_options(config)
+    max_chars = options["max_chars"] if args.embed_max_chars is None else (args.embed_max_chars or None)
+    prefix = options["prefix_metadata"] if args.prefix_metadata is None else _on(args.prefix_metadata)
     embedder = get_embedder()
     if isinstance(embedder, HashEmbeddingService) and (args.hash_lowercase or args.hash_subtokens):
         lowercase = embedder._lowercase if args.hash_lowercase is None else _on(args.hash_lowercase)
         subtokens = embedder._subtokens if args.hash_subtokens is None else _on(args.hash_subtokens)
         embedder = HashEmbeddingService(lowercase=lowercase, subtokens=subtokens)
-    return EvalSettings(retrieval=retrieval, index=IndexSettings(max_chars=max_chars, prefix_metadata=prefix)), embedder
+    index = IndexSettings(max_chars=max_chars, prefix_metadata=prefix, batch_size=options.get("batch_size", 64))
+    return EvalSettings(retrieval=retrieval, index=index), embedder
 
 
 def _on(value: str | None) -> bool | None:

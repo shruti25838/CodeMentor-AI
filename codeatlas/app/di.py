@@ -13,14 +13,16 @@ from codeatlas.services.memory.conversation import ConversationStore
 from codeatlas.services.parsing.tree_sitter_parser import TreeSitterAstParser
 from codeatlas.services.qa.answer_service import AnswerService, RetrievalSettings
 from codeatlas.services.qa.explain_service import CodeExplainService
+from codeatlas.services.retrieval.embedding import EmbeddingService
 from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever
+from codeatlas.services.retrieval.fastembed_embedder import FastEmbedEmbeddingService
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService
 from codeatlas.services.retrieval.indexing import CodeIndexService
 from codeatlas.services.retrieval.sentence_transformer_embedder import (
     SentenceTransformerEmbeddingService,
 )
 from codeatlas.services.state.repo_state_store import RepoStateStore
-from codeatlas.utils.config import AppConfig, load_config
+from codeatlas.utils.config import AppConfig, load_config, unknown_provider_message
 
 
 @lru_cache
@@ -50,23 +52,51 @@ def get_code_retriever() -> FaissCodeRetriever:
     return FaissCodeRetriever(base_dir=config.index_dir)
 
 
-@lru_cache
-def get_embedder() -> SentenceTransformerEmbeddingService | HashEmbeddingService:
-    config = get_config()
+def build_embedder(config: AppConfig) -> EmbeddingService:
+    """The embedder named by config.embedding_provider.
+
+    Every known name is listed here. An unknown name raises rather than falling back to a
+    default: a typo must not quietly produce a different kind of vector than the one asked for.
+    """
     if config.embedding_provider == "hash":
         return HashEmbeddingService(lowercase=config.hash_lowercase, subtokens=config.hash_subtokens)
-    return SentenceTransformerEmbeddingService(model_name=config.embedding_model)
+    if config.embedding_provider == "sentence":
+        return SentenceTransformerEmbeddingService(model_name=config.embedding_model)
+    if config.embedding_provider == "fastembed":
+        return FastEmbedEmbeddingService(model_name=config.fastembed_model, batch_size=config.fastembed_batch_size)
+    raise ValueError(unknown_provider_message(config.embedding_provider))
+
+
+@lru_cache
+def get_embedder() -> EmbeddingService:
+    return build_embedder(get_config())
+
+
+def index_options(config: AppConfig) -> dict:
+    """How the index is built, for the provider that is actually selected.
+
+    Only "fastembed" differs: a transformer on CPU is far slower per document than the hash
+    embedder, so it embeds one document at a time, sees only the first 3,000 characters of each,
+    and is given a longer time limit. Every other provider keeps the settings tuned for hash,
+    which is still the default.
+    """
+    if config.embedding_provider == "fastembed":
+        return {
+            "timeout_seconds": config.fastembed_index_timeout_seconds,
+            "batch_size": config.fastembed_batch_size,
+            "max_chars": config.fastembed_max_chars,
+            "prefix_metadata": config.embed_prefix_metadata,
+        }
+    return {
+        "timeout_seconds": config.index_timeout_seconds,
+        "max_chars": config.embed_max_chars,
+        "prefix_metadata": config.embed_prefix_metadata,
+    }
 
 
 @lru_cache
 def get_index_service() -> CodeIndexService:
-    return CodeIndexService(
-        embedder=get_embedder(),
-        retriever=get_code_retriever(),
-        timeout_seconds=get_config().index_timeout_seconds,
-        max_chars=get_config().embed_max_chars,
-        prefix_metadata=get_config().embed_prefix_metadata,
-    )
+    return CodeIndexService(embedder=get_embedder(), retriever=get_code_retriever(), **index_options(get_config()))
 
 
 @lru_cache
