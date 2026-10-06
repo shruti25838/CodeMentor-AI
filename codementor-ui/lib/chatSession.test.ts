@@ -20,8 +20,18 @@ test("falls back to getRandomValues outside a secure context", () => {
 
 test("the streamed chat sends the session id, and the chat window keeps one per conversation", () => {
     const api = readFileSync(new URL("./api.ts", import.meta.url), "utf8");
-    assert.match(api, /JSON\.stringify\(\{ question, repo_id: repoId, session_id: sessionId \}\)/);
+    assert.match(api, /JSON\.stringify\(\{ question, repo_id: repoId, session_id: sessionId, mode \}\)/);
     const chat = readFileSync(new URL("../components/Chat/ChatWindow.tsx", import.meta.url), "utf8");
     assert.match(chat, /useState\(\(\) => newChatSessionId\(\)\)/);
     assert.ok(!/localStorage[^\n]*session|sessionStorage/.test(chat), "the id is not stored in the browser");
+});
+
+test("fast mode is the default and deep mode is opt-in", () => {
+    const api = readFileSync(new URL("./api.ts", import.meta.url), "utf8");
+    // The default lives in the signature, so a caller that says nothing gets the fast path.
+    assert.match(api, /mode: AskMode = "fast"/);
+
+    const chat = readFileSync(new URL("../components/Chat/ChatWindow.tsx", import.meta.url), "utf8");
+    assert.match(chat, /useState\(false\)/, "the deep toggle starts off");
+    assert.match(chat, /deepMode \? "deep" : "fast"/);
 });

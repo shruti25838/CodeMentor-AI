@@ -1,5 +1,6 @@
 import asyncio
 import json
+import queue
 import time
 
 from fastapi import APIRouter, Depends, Response
@@ -154,16 +155,28 @@ async def ask_stream(
                     }
                 )
             else:
-                # ---- Repo mode: fast path (retrieval → mentor, no planner) ----
-                yield _sse({"type": "status", "content": "Retrieving context..."})
-
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
-                    None,
-                    run_timed,
-                    timer,
-                    lambda: _answer_with_history(orchestrator, llm_provider, request, history),
-                )
+                # ---- Repo mode ----
+                if request.mode == "deep":
+                    # The planned five-agent pipeline. Each agent's step is sent as it
+                    # finishes, so the wait is visible rather than silent.
+                    yield _sse({"type": "status", "content": "Planning..."})
+                    result = None
+                    async for event in _run_deep(orchestrator, request, timer):
+                        if event["type"] == "result":
+                            result = event["result"]
+                        else:
+                            yield _sse(event)
+                    if result is None:  # pragma: no cover - the generator always ends with one
+                        raise RuntimeError("deep mode produced no answer")
+                else:
+                    yield _sse({"type": "status", "content": "Retrieving context..."})
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(
+                        None,
+                        run_timed,
+                        timer,
+                        lambda: _answer_with_history(orchestrator, llm_provider, request, history),
+                    )
 
                 yield _sse({"type": "status", "content": "Streaming answer..."})
 
@@ -213,6 +226,41 @@ async def ask_stream(
 
 
 # ---------- helpers ----------
+
+
+async def _run_deep(orchestrator, request: AskRequest, timer: StageTimer):
+    """Bridge the orchestrator's blocking generator into the event loop.
+
+    The graph calls the model, so it must not run on the event loop. A worker thread pushes
+    each event onto a queue as the graph produces it, and this reads them as they arrive, so
+    an agent's step reaches the browser while the next agent is still working.
+    """
+    events: queue.Queue = queue.Queue()
+    done = object()
+
+    def produce() -> None:
+        try:
+            for event in orchestrator.stream_question(request.question, request.repo_id, request.session_id):
+                events.put(event)
+        except Exception as exc:  # noqa: BLE001 - reported to the caller as an event
+            events.put({"type": "failed", "error": exc})
+        finally:
+            events.put(done)
+
+    loop = asyncio.get_event_loop()
+    worker = loop.run_in_executor(None, run_timed, timer, produce)
+    try:
+        while True:
+            event = await loop.run_in_executor(None, events.get)
+            if event is done:
+                break
+            if event["type"] == "failed":
+                raise event["error"]
+            if event["type"] == "agent":
+                timer.mark("first_agent_event")
+            yield event
+    finally:
+        await worker
 
 
 def _answer_with_history(orchestrator, llm_provider, request: AskRequest, history: list[Turn]):

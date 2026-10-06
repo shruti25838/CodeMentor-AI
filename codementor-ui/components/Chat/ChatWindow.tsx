@@ -1,18 +1,24 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback, useSyncExternalStore } from "react";
-import { Send, Terminal, Loader2, Lightbulb } from "lucide-react";
+import { Send, Terminal, Loader2, Lightbulb, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import MessageBubble from "./MessageBubble";
+
+interface AgentStep {
+    name: string;
+    detail: string;
+}
 
 interface Message {
     role: "user" | "planner" | "analyst" | "mentor" | "memory";
     content: string;
     reasoningSteps?: string[];
     citations?: string[];
+    agentSteps?: AgentStep[];
 }
 
-import { askQuestionStream } from "@/lib/api";
+import { askQuestionStream, type AskMode } from "@/lib/api";
 import { newChatSessionId } from "@/lib/chatSession";
 import { pushRetrievedContext } from "@/components/Panels/ContextPanel";
 import { readSuggestedQuestions, SUGGESTIONS_STORAGE_KEY } from "@/lib/example";
@@ -40,6 +46,8 @@ export default function ChatWindow() {
     // One id per conversation on screen; the server keeps its last few turns (lib/chatSession.ts).
     const [sessionId] = useState(() => newChatSessionId());
     const [streamStatus, setStreamStatus] = useState<string | null>(null);
+    // Fast is the default. Deep runs the planned five-agent pipeline and shows each step.
+    const [deepMode, setDeepMode] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -109,7 +117,7 @@ export default function ChatWindow() {
 
             setMessages((prev) => [
                 ...prev,
-                { role: "mentor", content: "", reasoningSteps: [], citations: [] },
+                { role: "mentor", content: "", reasoningSteps: [], citations: [], agentSteps: [] },
             ]);
 
             await askQuestionStream(userMsg, repoId, sessionId, {
@@ -126,6 +134,20 @@ export default function ChatWindow() {
                 },
                 onStatus: (status: string) => {
                     setStreamStatus(status);
+                },
+                onAgent: (agent) => {
+                    setStreamStatus(`${agent.name}: ${agent.detail}`);
+                    setMessages((prev) => {
+                        const updated = [...prev];
+                        const last = updated[updated.length - 1];
+                        if (last && last.role !== "user") {
+                            updated[updated.length - 1] = {
+                                ...last,
+                                agentSteps: [...(last.agentSteps || []), agent],
+                            };
+                        }
+                        return updated;
+                    });
                 },
                 onDone: (data) => {
                     setStreamStatus(null);
@@ -166,7 +188,7 @@ export default function ChatWindow() {
                         return updated;
                     });
                 },
-            });
+            }, deepMode ? "deep" : "fast");
         } catch (err: any) {
             const errMsg =
                 typeof err === "string"
@@ -190,7 +212,7 @@ export default function ChatWindow() {
             setIsThinking(false);
             setStreamStatus(null);
         }
-    }, [input, isThinking, messages.length, sessionId]);
+    }, [input, isThinking, messages.length, sessionId, deepMode]);
 
     return (
         <div className="flex flex-col h-full bg-background">
@@ -206,6 +228,22 @@ export default function ChatWindow() {
                     )}
                 </div>
                 <div className="flex items-center gap-1.5 text-[10px] text-muted/60">
+                    <button
+                        type="button"
+                        onClick={() => setDeepMode((on) => !on)}
+                        aria-pressed={deepMode}
+                        title="Deep analysis runs the full five-agent pipeline and shows each step. Slower."
+                        className={cn(
+                            "flex items-center gap-1 px-2 py-0.5 rounded border transition-colors font-bold uppercase tracking-widest",
+                            deepMode
+                                ? "border-accent/50 bg-accent/10 text-accent"
+                                : "border-white/10 bg-white/5 text-muted/70 hover:text-foreground",
+                        )}
+                    >
+                        <Layers className="w-3 h-3" />
+                        Deep analysis
+                    </button>
+                    <span className="mx-1 text-muted/20">|</span>
                     <kbd className="px-1.5 py-0.5 bg-white/10 border border-white/10 rounded text-[9px] mono text-foreground/50 font-bold">Ctrl+K</kbd>
                     <span className="text-muted/50">focus</span>
                     <span className="mx-1 text-muted/20">|</span>
@@ -223,6 +261,7 @@ export default function ChatWindow() {
                         content={msg.content}
                         reasoningSteps={msg.reasoningSteps}
                         citations={msg.citations}
+                        agentSteps={msg.agentSteps}
                     />
                 ))}
 

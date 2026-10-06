@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Iterator
 from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -49,8 +50,8 @@ class AgentOrchestrator:
 
         self._graph = self._build_graph()
 
-    def handle_question(self, question: str, repo_id: str, session_id: str | None = None) -> AnswerResult:
-        initial_state: OrchestratorState = {
+    def _initial_state(self, question: str, repo_id: str, session_id: str | None) -> "OrchestratorState":
+        return {
             "question": question,
             "repo_id": repo_id,
             "session_id": session_id,
@@ -62,9 +63,27 @@ class AgentOrchestrator:
             "snippets": [],
             "agents_ran": [],
         }
-        final_state = self._graph.invoke(initial_state)
 
-        # Construct the final result from the state
+    def handle_question(self, question: str, repo_id: str, session_id: str | None = None) -> AnswerResult:
+        final_state = self._graph.invoke(self._initial_state(question, repo_id, session_id))
+        return self._result_from(final_state, question)
+
+    def stream_question(self, question: str, repo_id: str, session_id: str | None = None) -> Iterator[dict]:
+        """Run the graph, yielding one event as each agent finishes, then the answer.
+
+        Events are {"type": "agent", ...} as the real graph executes, and finally
+        {"type": "result", "result": AnswerResult}. Nothing here is logged.
+        """
+        state: dict = dict(self._initial_state(question, repo_id, session_id))
+        for update in self._graph.stream(state, stream_mode="updates"):
+            for node, delta in update.items():
+                if delta:
+                    state.update(delta)
+                if node in _AGENT_NODES:
+                    yield {"type": "agent", "name": node, "detail": _detail(node, state)}
+        yield {"type": "result", "result": self._result_from(state, question)}
+
+    def _result_from(self, final_state: dict, question: str) -> AnswerResult:
         plan = final_state.get("plan") or default_plan(question)
         reasoning = [f"Plan: {' -> '.join(plan.agents)}"]
         if plan.note:
@@ -377,3 +396,27 @@ _FACT_PREFIX = "(analyst): "
 def _facts_from(results: list[str]) -> str:
     facts = [r.split(_FACT_PREFIX, 1)[1] for r in results if _FACT_PREFIX in r]
     return "\n\n".join(facts)
+
+
+# Graph nodes that are agents; the dispatcher is plumbing and is not reported.
+_AGENT_NODES = ("planner", "retrieval", "analyst", "mentor", "memory")
+
+
+def _detail(node: str, state: dict) -> str:
+    """A short, structural note about what an agent just did.
+
+    Only counts and plan shape: never the question, the answer or any code, because this
+    text is shown in the browser and must stay safe to put in a log line too.
+    """
+    if node == "planner":
+        plan = state.get("plan")
+        return f"planned {len(plan.steps)} step(s): {' -> '.join(plan.agents)}" if plan else "planned"
+    if node == "retrieval":
+        return f"read {len(state.get('snippets', []))} code snippet(s)"
+    if node == "mentor":
+        return "wrote the answer from the retrieved snippets"
+    if node == "analyst":
+        return "computed structural facts from the call graph"
+    if node == "memory":
+        return "recalled this conversation"
+    return ""
