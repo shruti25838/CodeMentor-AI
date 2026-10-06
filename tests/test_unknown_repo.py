@@ -44,7 +44,7 @@ class ModelSpy:
         self.calls.append("get_chat_model")
         raise AssertionError("model requested")
 
-    def handle_question(self, question, repo_id):
+    def handle_question(self, question, repo_id, **kwargs):
         self.calls.append("handle_question")
         return AnswerResult(answer="ok", citations=[], reasoning_steps=[])
 

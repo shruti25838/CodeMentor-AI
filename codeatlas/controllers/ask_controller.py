@@ -70,7 +70,8 @@ def _ask(request, orchestrator, llm_provider, timer: StageTimer) -> AskResponse:
         _track(request, resp, start)
         return resp
 
-    result = orchestrator.handle_question(request.question, request.repo_id)
+    # session_id was ignored here before, so /ask had no conversation memory at all.
+    result = orchestrator.handle_question(request.question, request.repo_id, session_id=request.session_id)
     resp = AskResponse(
         answer=result.answer,
         citations=result.citations,

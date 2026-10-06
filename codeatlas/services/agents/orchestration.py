@@ -7,7 +7,6 @@ from codeatlas.services.agents.interfaces import Agent
 from codeatlas.services.agents.plan import Plan, default_plan, parse_plan
 from codeatlas.services.agents.retrieval_agent import format_retrieval
 from codeatlas.services.agents.types import AnswerResult, GenerateResult
-from codeatlas.services.memory.interfaces import MemoryStore
 from codeatlas.services.qa.answer_service import GroundedAnswer
 from codeatlas.services.retrieval.snippets import Snippet, render_snippets
 
@@ -19,6 +18,8 @@ ANSWER_ERROR_PREFIX = "Error generating answer"
 class OrchestratorState(TypedDict):
     question: str
     repo_id: str
+    # The browser's random id for this chat, when there is one; the memory agent needs it.
+    session_id: str | None
     plan: Plan
     current_step_index: int
     results: list[str]
@@ -36,22 +37,21 @@ class AgentOrchestrator:
         analyst_agent: Agent,
         mentor_agent: Agent,
         memory_agent: Agent,
-        memory_store: MemoryStore | None = None,
     ) -> None:
         self._planner = planner
         self._retrieval_agent = retrieval_agent
         self._analyst_agent = analyst_agent
         self._mentor_agent = mentor_agent
         self._memory_agent = memory_agent
-        self._memory_store = memory_store
         self._logger = logging.getLogger(__name__)
 
         self._graph = self._build_graph()
 
-    def handle_question(self, question: str, repo_id: str) -> AnswerResult:
+    def handle_question(self, question: str, repo_id: str, session_id: str | None = None) -> AnswerResult:
         initial_state: OrchestratorState = {
             "question": question,
             "repo_id": repo_id,
+            "session_id": session_id,
             "plan": default_plan(question),
             "current_step_index": 0,
             "results": [],
@@ -314,7 +314,23 @@ class AgentOrchestrator:
         return self._mentor_agent.run(prompt, repo_id)
 
     def _memory_node(self, state: OrchestratorState) -> OrchestratorState:
-        return self._execute_agent(self._memory_agent, state)
+        """Recalls this conversation's earlier turns; needs the session, not a text prompt."""
+        idx = state["current_step_index"]
+        recall = getattr(self._memory_agent, "recall", None)
+        try:
+            if recall is not None:
+                output = recall(state.get("session_id"), state["repo_id"])
+            else:
+                output = self._memory_agent.run(state["plan"].steps[idx].instruction, state["repo_id"])
+        except Exception as exc:
+            output = f"Error executing memory: {exc}"
+
+        return {
+            **state,
+            "results": state["results"] + [f"Step {idx + 1} (memory): {output}"],
+            "final_answer": output,
+            "current_step_index": idx + 1,
+        }
 
 
 def _merge_citations(existing: list[str], new: list[str]) -> list[str]:
