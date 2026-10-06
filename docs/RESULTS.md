@@ -174,3 +174,11 @@ Every number or claim here comes from a command that can be re-run.
 - Date: 2026-10-04
 - Commit: 88855ef (state checked)
 - Notes: `scripts/time_stages.py` writes to a temporary folder outside the repo and deletes it afterwards
+
+### Fix: the validator step is gone from the agent pipeline
+- Value: there is no validator agent, so the pipeline no longer pretends to have one. The graph's `validator` node took the finished answer and asked the mentor's model to rewrite it, costing one extra model call on every /ask and letting an already-grounded answer be reworded by a model that had not seen the code. Finishing the plan's steps now ends the run. A plan of one retrieval step makes exactly one agent call (was two: retrieval, then the validating mentor call). `validator` is also gone from the /ask analytics list and from the eval dashboard's agent colours
+- Command: `python -m pytest` (187 passed, 1 skipped; `tests/test_agent_pipeline.py`, 4 new tests, checks the compiled graph has no validator node, the orchestrator has no `_validator_node`, a one-step plan ends without a second agent call, and a mentor step is not re-run after the plan finishes); `ruff check codeatlas/ tests/`, `ruff format codeatlas/ tests/ --check`; in `codementor-ui`: `npm test` (19 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, same 28 warnings as before), `npm run build`
+- Dataset/repo: none (fake agents; no model key needed)
+- Date: 2026-10-05
+- Commit: fb67bd5
+- Notes: measured before the change against itsdangerous 672971d with a real model, one /ask took 66.4 s and 5 model calls, of which the validator was the last. The validator was never a separate agent: `_validator_node` called `self._mentor_agent` with a review prompt, so the eval dashboard's "validator" bar was counting mentor calls. The workspace welcome popup is deliberately untouched; it lists five agents and never mentioned a validator. Python 3.12.0 was used for every command here (the `py` launcher lists a 3.11 that is not present on disk)
