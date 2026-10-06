@@ -95,7 +95,6 @@ export default function EvalDashboard() {
         planner: "#8B5CF6",
         retrieval: "#3B82F6",
         mentor: "#22D3EE",
-        validator: "#10B981",
         analyst: "#F59E0B",
         memory: "#EC4899",
     };

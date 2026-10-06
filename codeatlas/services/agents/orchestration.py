@@ -20,7 +20,6 @@ class OrchestratorState(TypedDict):
     current_step_index: int
     results: list[str]
     final_answer: str
-    validated: bool
     citations: list[str]
 
 
@@ -52,7 +51,6 @@ class AgentOrchestrator:
             "current_step_index": 0,
             "results": [],
             "final_answer": "",
-            "validated": False,
             "citations": [],
         }
         final_state = self._graph.invoke(initial_state)
@@ -70,7 +68,7 @@ class AgentOrchestrator:
     def handle_question_fast(
         self, question: str, repo_id: str, history: str = "", search_question: str | None = None
     ) -> AnswerResult:
-        """Faster path: skip planner & validator, go straight retrieval → mentor.
+        """Faster path: skip the planner, go straight retrieval → mentor.
 
         history: earlier turns of this conversation, shown to the mentor. search_question: a
         standalone version of a follow-up, used for retrieval instead of the question as asked.
@@ -98,7 +96,7 @@ class AgentOrchestrator:
             answer=answer,
             citations=citations,
             reasoning_steps=[
-                "Fast mode: retrieval + mentor (skipped planner & validator).",
+                "Fast mode: retrieval + mentor (skipped the planner).",
                 f"Retrieved {len(citations)} citations.",
             ],
         )
@@ -150,7 +148,6 @@ class AgentOrchestrator:
         graph.add_node("analyst", self._analyst_node)
         graph.add_node("mentor", self._mentor_node)
         graph.add_node("memory", self._memory_node)
-        graph.add_node("validator", self._validator_node)
 
         graph.set_entry_point("planner")
 
@@ -165,7 +162,6 @@ class AgentOrchestrator:
                 "analyst": "analyst",
                 "mentor": "mentor",
                 "memory": "memory",
-                "validator": "validator",
                 "end": END,
             },
         )
@@ -175,7 +171,6 @@ class AgentOrchestrator:
         graph.add_edge("analyst", "dispatcher")
         graph.add_edge("mentor", "dispatcher")
         graph.add_edge("memory", "dispatcher")
-        graph.add_edge("validator", "dispatcher")
 
         return graph.compile()
 
@@ -203,8 +198,6 @@ class AgentOrchestrator:
         idx = state["current_step_index"]
 
         if idx >= len(steps):
-            if not state.get("validated"):
-                return "validator"
             return "end"
 
         step = steps[idx]
@@ -215,41 +208,6 @@ class AgentOrchestrator:
         return "end"
 
     # ... _execute_agent same ...
-
-    def _validator_node(self, state: OrchestratorState) -> OrchestratorState:
-        # Simple validation: "Does this answer the question?"
-        # We reuse the Mentor Agent for this reflective task
-        question = state["question"]
-        current_answer = state["final_answer"]
-        repo_id = state["repo_id"]
-
-        if not current_answer:
-            return {**state, "validated": True}
-
-        prompt = (
-            f"You are a quality reviewer. Your job is to refine an answer.\n"
-            f"User Question: {question}\n"
-            f"Proposed Answer: {current_answer}\n\n"
-            f"IMPORTANT: Return ONLY the final refined answer text. "
-            f"Do NOT include any meta-commentary like 'The answer is correct' or 'I would return it as is'. "
-            f"Do NOT repeat the citations section — citations are handled separately. "
-            f"If the answer is already good, return it unchanged. "
-            f"If it needs improvement, return the improved version. "
-            f"Output ONLY the answer the user should see."
-        )
-
-        try:
-            # The MentorAgent is styled as a senior engineer, good for review
-            refined_answer = self._mentor_agent.run(prompt, repo_id)
-        except Exception:
-            refined_answer = current_answer
-
-        return {
-            **state,
-            "final_answer": refined_answer,
-            "validated": True,
-            "results": state["results"] + ["Validation: Refined answer."],
-        }
 
     def _execute_agent(self, agent: Agent, state: OrchestratorState) -> OrchestratorState:
         steps = state["plan"].get("steps", [])
