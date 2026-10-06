@@ -17,7 +17,8 @@ class TreeSitterAstParser(AstParser):
         files: list[SourceFile] = []
         functions: list[FunctionNode] = []
 
-        for path in root.rglob("*"):
+        # Sorted so the index (and ties in search results) is the same on every OS.
+        for path in sorted(root.rglob("*")):
             if not path.is_file():
                 continue
             language = self._language_from_suffix(path.suffix)

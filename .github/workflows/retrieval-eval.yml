@@ -1,0 +1,56 @@
+name: Retrieval Eval
+
+# Fails if retrieval on the itsdangerous question set (20 questions, pinned commit) drops below the
+# numbers recorded in docs/RESULTS.md. No model key is used. Not a required check unless it is
+# added to branch protection.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'codeatlas/**'
+      - 'eval/questions/**'
+      - 'scripts/eval_retrieval.py'
+      - 'requirements.txt'
+      - '.github/workflows/retrieval-eval.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'codeatlas/**'
+      - 'eval/questions/**'
+      - 'scripts/eval_retrieval.py'
+      - 'requirements.txt'
+      - '.github/workflows/retrieval-eval.yml'
+
+jobs:
+  retrieval-eval:
+    name: Retrieval hit rate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Recorded for itsdangerous, all 20 questions, at 513641c (docs/RESULTS.md, tuning entry).
+      MIN_HIT_AT_5: '0.85'
+      MIN_HIT_AT_1: '0.70'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Evaluate retrieval
+        run: >
+          python scripts/eval_retrieval.py
+          --set eval/questions/itsdangerous.json
+          --split all
+          --min-hit-rate 5=$MIN_HIT_AT_5
+          --min-hit-rate 1=$MIN_HIT_AT_1

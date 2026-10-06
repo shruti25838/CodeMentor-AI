@@ -1,6 +1,7 @@
 import logging
 import re
 from dataclasses import dataclass, field
+from math import sqrt
 from pathlib import Path
 
 from langchain_core.language_models import BaseChatModel
@@ -16,6 +17,7 @@ from codeatlas.observability.agent_metrics import (
 from codeatlas.observability.timing import stage
 from codeatlas.services.llm.quota import classify_quota, quota_answer
 from codeatlas.services.retrieval.embedding import EmbeddingService
+from codeatlas.services.retrieval.hash_embedder import STOPWORDS, split_identifier
 from codeatlas.services.retrieval.interfaces import CodeRetriever
 from codeatlas.services.retrieval.snippets import (
     DEFAULT_SNIPPET_MAX_CHARS,
@@ -43,6 +45,23 @@ def _clean_display_path(raw_path: str) -> str:
 
 
 @dataclass(frozen=True)
+class RetrievalSettings:
+    """How a question's records are chosen. The defaults are what the chat uses."""
+
+    # Records taken from the vector search before reranking (at least top_k).
+    candidates: int = 10
+    # Rerank score = weight * keyword overlap + (1 - weight) * vector similarity. 1.0 orders by
+    # keyword overlap alone (vector order only breaks ties); 0.0 keeps the vector order.
+    rerank_weight: float = 1.0
+    # Match question words against the parts of identifiers (verify_signature -> verify, signature).
+    rerank_subtokens: bool = False
+    # Leave common English words ("how", "does", "the") out of the question for search and rerank.
+    drop_stopwords: bool = False
+    # Drop records from test files (test_*.py, *_test.py, conftest.py, or under a tests/ folder).
+    skip_tests: bool = False
+
+
+@dataclass(frozen=True)
 class GroundedAnswer:
     answer: str
     citations: list[str]
@@ -58,12 +77,14 @@ class AnswerService:
         retriever: CodeRetriever,
         embedder: EmbeddingService,
         llm: BaseChatModel | None = None,
+        settings: RetrievalSettings | None = None,
         snippet_max_chars: int = DEFAULT_SNIPPET_MAX_CHARS,
         total_max_chars: int = DEFAULT_TOTAL_MAX_CHARS,
     ) -> None:
         self._retriever = retriever
         self._embedder = embedder
         self._llm = llm
+        self._settings = settings or RetrievalSettings()
         self._snippet_max_chars = snippet_max_chars
         self._total_max_chars = total_max_chars
         self._logger = logging.getLogger(__name__)
@@ -78,15 +99,24 @@ class AnswerService:
             ]
         )
 
-    def answer(self, repo_id: str, question: str, top_k: int = 5) -> GroundedAnswer:
-        self._logger.info("Answering question for repo %s", repo_id)
+    def retrieve(self, repo_id: str, question: str, top_k: int = 5) -> list[EmbeddingRecord]:
+        """The records a question's answer is built from, best first. The retrieval eval calls this too."""
+        settings = self._settings
+        if settings.drop_stopwords:
+            question = _without_stopwords(question)
         with stage("embed_query"):
             query_vector = self._embedder.embed_query(question)
         with stage("search"):
-            records = self._retriever.search(repo_id, query_vector, max(top_k, 10))
+            records = self._retriever.search(repo_id, query_vector, max(top_k, settings.candidates))
+        if settings.skip_tests:
+            records = [r for r in records if not _is_test_path(r.metadata.get("path", ""))]
         # Reranking reads each candidate's snippet from disk.
         with stage("rerank"):
-            records = self._rerank(question, records)[:top_k]
+            return self._rerank(question, records, query_vector)[:top_k]
+
+    def answer(self, repo_id: str, question: str, top_k: int = 5) -> GroundedAnswer:
+        self._logger.info("Answering question for repo %s", repo_id)
+        records = self.retrieve(repo_id, question, top_k)
         self._logger.info("Retrieved %s records for repo %s", len(records), repo_id)
         # Read each record's code once, capped, and keep only what fits the context budget.
         # Citations describe exactly these snippets, so the answer and the citations agree.
@@ -157,14 +187,18 @@ class AnswerService:
         line_count = len(text.splitlines()) if text else 0
         return clip_snippet(display_path, text, 1, line_count, self._snippet_max_chars)
 
-    def _rerank(self, query: str, records: list[EmbeddingRecord]) -> list[EmbeddingRecord]:
-        query_tokens = _tokenize(query)
+    def _rerank(self, query: str, records: list[EmbeddingRecord], query_vector: list[float]) -> list[EmbeddingRecord]:
+        subtokens = self._settings.rerank_subtokens
+        weight = self._settings.rerank_weight
+        query_tokens = _tokenize(query, subtokens)
         if not query_tokens:
             return records
         scored: list[tuple[float, EmbeddingRecord]] = []
         for record in records:
             snippet = _record_text(record)
-            score = _overlap_score(query_tokens, snippet)
+            score = _overlap_score(query_tokens, snippet, subtokens)
+            if weight != 1.0:
+                score = weight * score + (1 - weight) * _cosine(query_vector, record.vector)
             # Penalize __init__.py files with little content
             path = record.metadata.get("path", "")
             if path.endswith("__init__.py") and len(snippet.strip()) < 50:
@@ -217,18 +251,48 @@ def _read_snippet(path: Path, start_line: int, end_line: int) -> str:
     return "\n".join(lines[start:end])
 
 
-def _tokenize(text: str) -> set[str]:
-    tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_]+", text.lower())
-    return set(tokens)
+def _tokenize(text: str, subtokens: bool = False) -> set[str]:
+    if not subtokens:
+        return set(re.findall(r"[A-Za-z_][A-Za-z0-9_]+", text.lower()))
+    tokens: set[str] = set()
+    for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]+", text):
+        tokens.add(token.lower())
+        tokens.update(split_identifier(token))
+    return tokens
 
 
-def _overlap_score(query_tokens: set[str], text: str) -> float:
+def _overlap_score(query_tokens: set[str], text: str, subtokens: bool = False) -> float:
     if not text:
         return 0.0
-    tokens = _tokenize(text)
+    tokens = _tokenize(text, subtokens)
     if not tokens:
         return 0.0
     return len(query_tokens & tokens) / len(query_tokens)
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    norm = sqrt(sum(x * x for x in a)) * sqrt(sum(y * y for y in b))
+    return dot / norm if norm else 0.0
+
+
+def _without_stopwords(question: str) -> str:
+    words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", question)
+    kept = [word for word in words if word.lower() not in STOPWORDS]
+    return " ".join(kept) if kept else question
+
+
+def _is_test_path(path: str) -> bool:
+    parts = Path(path.replace("\\", "/")).parts
+    name = parts[-1] if parts else ""
+    return (
+        name.startswith("test_")
+        or name.endswith("_test.py")
+        or name == "conftest.py"
+        or any(part in ("tests", "test") for part in parts[:-1])
+    )
 
 
 def _parse_int(value: str | None) -> int | None:

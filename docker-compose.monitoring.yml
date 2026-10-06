@@ -1,30 +1,44 @@
+# The app plus Prometheus and Grafana. /metrics needs the API key, so set CODEATLAS_API_KEY first:
+# in .env next to this file, or in the shell ($env:CODEATLAS_API_KEY = "..." in PowerShell).
+# Prometheus gets the same key as a Docker secret file. See docs/MONITORING.md.
 services:
   codeatlas:
     build: .
     ports:
       - "8000:8000"
     environment:
-      CODEATLAS_AUTH_ENABLED: "false"
-      CODEATLAS_EMBEDDING_PROVIDER: "sentence"
+      CODEATLAS_AUTH_ENABLED: "true"
+      CODEATLAS_API_KEY: ${CODEATLAS_API_KEY:?Set CODEATLAS_API_KEY (in .env or the shell); Prometheus needs it to read /metrics}
+      # sentence-transformers is not installed in the image, so the hash embedder is the one that works.
+      CODEATLAS_EMBEDDING_PROVIDER: "hash"
       CODEATLAS_LLM_PROVIDER: "openai"
     volumes:
       - ./.codeatlas:/app/.codeatlas
 
   prometheus:
-    image: prom/prometheus:latest
+    # Pinned: ops/prometheus.yml sends the key with http_headers (checked with promtool on 2.53 and 3.5).
+    image: prom/prometheus:v3.5.0
     volumes:
       - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    secrets:
+      - codeatlas_api_key
     ports:
       - "9090:9090"
+    depends_on:
+      - codeatlas
 
   grafana:
     image: grafana/grafana:latest
     ports:
       - "3000:3000"
-    depends_on:
-      - prometheus
-    # The datasource and the agent dashboard are provisioned, so Grafana comes up with the
-    # panels already there instead of an empty instance.
+    # The datasource and both dashboards (codementor.json and codeatlas-agents.json) are
+    # provisioned, so Grafana comes up with the panels already there instead of an empty instance.
     volumes:
       - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./ops/grafana/dashboards:/etc/grafana/provisioning/dashboards-data:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+secrets:
+  codeatlas_api_key:
+    environment: CODEATLAS_API_KEY

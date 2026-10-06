@@ -67,6 +67,29 @@ def test_other_spellings_of_the_url_hit(tmp_path, variant):
     assert _analyze(env, variant).json()["repository_id"] == first.json()["repository_id"]
 
 
+def test_index_built_with_other_embedding_settings_is_not_reused(tmp_path):
+    env = _env(tmp_path)
+    first = _analyze(env)
+    assert env.state.get(first.json()["repository_id"]).index_format == env.index.index_format
+    env.index = CodeIndexService(
+        embedder=HashEmbeddingService(subtokens=True),
+        retriever=FaissCodeRetriever(base_dir=str(env.index_dir)),
+    )
+    second = _analyze(env)
+    assert second.json()["repository_id"] != first.json()["repository_id"]
+    assert "clone" in _stages(second)
+    # Saved with the new format, so the next request hits again.
+    assert _analyze(env).json()["repository_id"] == second.json()["repository_id"]
+
+
+def test_state_saved_before_index_formats_is_not_reused(tmp_path):
+    env = _env(tmp_path)
+    first = _analyze(env)
+    repo_id = first.json()["repository_id"]
+    env.state.save(repo_id, replace(env.state.get(repo_id), index_format=""))
+    assert _analyze(env).json()["repository_id"] != repo_id
+
+
 def test_new_commit_misses_and_indexes_again(tmp_path):
     env = _env(tmp_path)
     first = _analyze(env)

@@ -65,6 +65,8 @@ def _from_cache(repo_url, loader, index_service, state_store, timer) -> AnalyzeR
             (repo_id, state)
             for repo_id, state in state_store.items()
             if state.commit
+            # An index built with other embedding settings would not match today's query vectors.
+            and state.index_format == index_service.index_format
             and _cache_key(state.url) == key
             and index_service.has_index(repo_id)
             and Path(state.root_path).is_dir()
@@ -128,6 +130,7 @@ def _analyze(request, loader, parser, graph_builder, index_service, state_store,
                 name=repo.name,
                 url=repo.url,
                 commit=repo.commit,
+                index_format=index_service.index_format,
             ),
         )
     return AnalyzeRepoResponse(

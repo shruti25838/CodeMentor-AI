@@ -4,5 +4,11 @@ global:
 scrape_configs:
   - job_name: codeatlas
     metrics_path: /metrics
+    # /metrics needs the API key. Prometheus reads it from a file (a Docker secret here) and sends
+    # it as X-API-Key, so the key is never written into this config. http_headers is accepted by
+    # Prometheus 2.53 and 3.5 (checked with promtool); older releases may not have it.
+    http_headers:
+      X-API-Key:
+        files: [/run/secrets/codeatlas_api_key]
     static_configs:
       - targets: ["codeatlas:8000"]

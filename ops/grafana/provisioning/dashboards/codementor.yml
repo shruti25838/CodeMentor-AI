@@ -1,0 +1,13 @@
+# Loads every dashboard JSON in ops/grafana/dashboards at start-up, so both the chat panels
+# (codementor.json) and the agent panels (codeatlas-agents.json) are there without anyone
+# importing them by hand.
+apiVersion: 1
+
+providers:
+  - name: CodeMentor
+    folder: CodeMentor
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

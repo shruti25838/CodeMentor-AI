@@ -1,4 +1,5 @@
 import os
+from time import perf_counter
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI
@@ -20,6 +21,7 @@ from codeatlas.controllers.metrics_controller import router as metrics_router
 from codeatlas.controllers.overview_controller import router as overview_router
 from codeatlas.controllers.repos_controller import router as repos_router
 from codeatlas.controllers.search_controller import router as search_router
+from codeatlas.observability.metrics import ERROR_COUNT, REQUEST_COUNT, REQUEST_LATENCY, load_eval_results
 from codeatlas.utils.config import AppConfig
 from codeatlas.utils.logging import configure_logging
 
@@ -92,24 +94,35 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     def redoc_docs():
         return get_redoc_html(openapi_url="/openapi.json", title=f"{app.title} - ReDoc")
 
+    load_eval_results(config.eval_results_dir)
+
     @app.middleware("http")
     async def record_metrics(request, call_next):
-        from time import perf_counter
-
-        from codeatlas.observability.metrics import REQUEST_COUNT, REQUEST_LATENCY
-
         start = perf_counter()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            # Starlette turns this into a 500 outside this middleware; count it as one here.
+            path = _route_path(request)
+            REQUEST_COUNT.labels(method=request.method, path=path, status="500").inc()
+            REQUEST_LATENCY.labels(path=path).observe(perf_counter() - start)
+            ERROR_COUNT.labels(path=path, kind="exception").inc()
+            raise
         elapsed = perf_counter() - start
-        REQUEST_COUNT.labels(
-            method=request.method,
-            path=request.url.path,
-            status=str(response.status_code),
-        ).inc()
-        REQUEST_LATENCY.labels(path=request.url.path).observe(elapsed)
+        path = _route_path(request)
+        REQUEST_COUNT.labels(method=request.method, path=path, status=str(response.status_code)).inc()
+        REQUEST_LATENCY.labels(path=path).observe(elapsed)
+        if response.status_code >= 500:
+            ERROR_COUNT.labels(path=path, kind="http_5xx").inc()
         return response
 
     return app
+
+
+def _route_path(request) -> str:
+    """The matched route's template, so unknown URLs (scanners, typos) share one label value."""
+    route = request.scope.get("route")
+    return getattr(route, "path", None) or "unmatched"
 
 
 app = create_app()

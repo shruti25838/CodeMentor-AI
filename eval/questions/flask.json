@@ -1,0 +1,28 @@
+{
+  "name": "flask",
+  "repo_url": "https://github.com/pallets/flask",
+  "commit": "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35",
+  "note": "Written from the source at this commit. expected_files are paths relative to the repo root; a retrieved record counts as relevant if its file is in the list. Split alternates dev/test in the order the questions were written, fixed before any results were seen.",
+  "questions": [
+    {"id": "flask-01", "split": "dev", "question": "How does the flask command find the application object in a module?", "expected_files": ["src/flask/cli.py"]},
+    {"id": "flask-02", "split": "test", "question": "How are environment variables that start with FLASK_ loaded into the config?", "expected_files": ["src/flask/config.py"]},
+    {"id": "flask-03", "split": "dev", "question": "How is the session cookie signed, and how are old secret keys still accepted?", "expected_files": ["src/flask/sessions.py"]},
+    {"id": "flask-04", "split": "test", "question": "How does the session serializer keep tuples, bytes and datetimes when it stores them as JSON?", "expected_files": ["src/flask/json/tag.py"]},
+    {"id": "flask-05", "split": "dev", "question": "What happens when a view returns a tuple instead of a response object?", "expected_files": ["src/flask/app.py"]},
+    {"id": "flask-06", "split": "test", "question": "How does Flask choose which error handler to call for an exception?", "expected_files": ["src/flask/sansio/app.py", "src/flask/app.py"]},
+    {"id": "flask-07", "split": "dev", "question": "Why does adding a route after the app has handled its first request raise an error?", "expected_files": ["src/flask/sansio/scaffold.py", "src/flask/sansio/app.py"]},
+    {"id": "flask-08", "split": "test", "question": "How does a blueprint add its URL prefix and name to the routes it registers?", "expected_files": ["src/flask/sansio/blueprints.py"]},
+    {"id": "flask-09", "split": "dev", "question": "How does a class-based view send the request to the method named after the HTTP verb?", "expected_files": ["src/flask/views.py"]},
+    {"id": "flask-10", "split": "test", "question": "How are flashed messages stored and read back on the next request?", "expected_files": ["src/flask/helpers.py"]},
+    {"id": "flask-11", "split": "dev", "question": "How does send_from_directory stop a request from reading files outside the directory?", "expected_files": ["src/flask/helpers.py"]},
+    {"id": "flask-12", "split": "test", "question": "How are dates, decimals and dataclasses turned into JSON in a response?", "expected_files": ["src/flask/json/provider.py"]},
+    {"id": "flask-13", "split": "dev", "question": "How can a streaming generator keep using the request after the view has returned?", "expected_files": ["src/flask/helpers.py"]},
+    {"id": "flask-14", "split": "test", "question": "How are async view functions run?", "expected_files": ["src/flask/app.py"]},
+    {"id": "flask-15", "split": "dev", "question": "How can a test change the session before making a request with the test client?", "expected_files": ["src/flask/testing.py"]},
+    {"id": "flask-16", "split": "test", "question": "How are templates looked up when blueprints have their own template folders?", "expected_files": ["src/flask/templating.py"]},
+    {"id": "flask-17", "split": "dev", "question": "Where does the app's logger send messages by default?", "expected_files": ["src/flask/logging.py"]},
+    {"id": "flask-18", "split": "test", "question": "What error explains that request.files is empty because the form was not sent as multipart/form-data?", "expected_files": ["src/flask/debughelpers.py", "src/flask/wrappers.py"]},
+    {"id": "flask-19", "split": "dev", "question": "How is the maximum size of a request body set and enforced?", "expected_files": ["src/flask/wrappers.py"]},
+    {"id": "flask-20", "split": "test", "question": "In the tutorial app, how is a page protected so only logged-in users can see it?", "expected_files": ["examples/tutorial/flaskr/auth.py"]}
+  ]
+}

@@ -39,6 +39,20 @@ class AppConfig:
     chat_history_tokens: int = 1500
     chat_session_ttl_seconds: int = 1800
     chat_max_sessions: int = 1000
+    # Retrieval and indexing settings, chosen with scripts/eval_retrieval.py on the dev questions and
+    # checked on the held-out ones (see docs/RESULTS.md). Changing an index setting means earlier
+    # indexes are not reused by the index cache.
+    retrieval_candidates: int = 20
+    rerank_weight: float = 1.0
+    rerank_subtokens: bool = False
+    drop_stopwords: bool = True
+    skip_tests: bool = False
+    embed_max_chars: int | None = None
+    embed_prefix_metadata: bool = True
+    hash_lowercase: bool = False
+    hash_subtokens: bool = True
+    # Folder of scripts/eval_retrieval.py --json results; read at startup into the retrieval gauges.
+    eval_results_dir: str = "eval/results"
 
 
 def load_config() -> AppConfig:
@@ -71,4 +85,5 @@ def load_config() -> AppConfig:
         chat_history_tokens=int(os.getenv("CODEATLAS_CHAT_HISTORY_TOKENS", "1500")),
         chat_session_ttl_seconds=int(os.getenv("CODEATLAS_CHAT_SESSION_TTL_SECONDS", "1800")),
         chat_max_sessions=int(os.getenv("CODEATLAS_CHAT_MAX_SESSIONS", "1000")),
+        eval_results_dir=os.getenv("CODEATLAS_EVAL_RESULTS_DIR", "eval/results"),
     )
