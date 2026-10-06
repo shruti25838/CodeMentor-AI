@@ -148,3 +148,18 @@ def test_parser_walks_files_in_sorted_order(tmp_path, monkeypatch):
     repo = Repository(repo_id="r", name="r", url="u", root_path=str(tmp_path), ingested_at=datetime.now(UTC))
     parsed = TreeSitterAstParser().parse_repository(repo)
     assert [Path(f.path).name for f in parsed.files] == ["a.py", "b.py", "c.py"]
+
+
+def test_script_exit_code_follows_min_hit_rate(tmp_path):
+    import sys
+
+    url = _make_source_repo(tmp_path / "src", SOURCE)
+    path = _question_file(tmp_path, url, _head(url))
+    script = Path(__file__).resolve().parent.parent / "scripts" / "eval_retrieval.py"
+    base = [sys.executable, str(script), "--set", str(path), "--split", "all", "--cache-dir", str(tmp_path / "c")]
+    ok = subprocess.run([*base, "--min-hit-rate", "5=0.5"], capture_output=True, text=True)
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    assert "ok: overall hit@5" in ok.stdout
+    fail = subprocess.run([*base, "--min-hit-rate", "5=1.01"], capture_output=True, text=True)
+    assert fail.returncode == 1
+    assert "FAIL: overall hit@5" in fail.stdout
