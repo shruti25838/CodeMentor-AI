@@ -14,6 +14,7 @@ from codeatlas.observability.agent_metrics import (
     record_failure,
 )
 from codeatlas.observability.timing import stage
+from codeatlas.services.llm.quota import classify_quota, quota_answer
 from codeatlas.services.retrieval.embedding import EmbeddingService
 from codeatlas.services.retrieval.interfaces import CodeRetriever
 from codeatlas.services.retrieval.snippets import (
@@ -130,6 +131,11 @@ class AnswerService:
             agent = current_agent()
             record_failure(agent, classify(exc))
             record_failure(agent, FALLBACK_LOCATIONS)
+            # A refused call is told to the visitor as such; the locations go underneath it,
+            # under a heading, so the list is never read as the answer.
+            kind = classify_quota(exc)
+            if kind:
+                return [quota_answer(kind, snippets)]
             return _location_list(snippets)
 
     def _snippet_for(self, record: EmbeddingRecord) -> Snippet:

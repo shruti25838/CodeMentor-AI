@@ -3,6 +3,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from codeatlas.observability.timing import stage
 from codeatlas.services.agents.interfaces import Agent
+from codeatlas.services.llm.quota import TRUNCATED_NOTE, was_truncated
 from codeatlas.services.qa.answer_service import AnswerService
 from codeatlas.services.retrieval.snippets import Snippet
 
@@ -77,7 +78,11 @@ class CodingMentorAgent(Agent):
                 }
             )
         answer = str(response.content)
-        return answer if answer.strip() else EMPTY_ANSWER
+        if not answer.strip():
+            return EMPTY_ANSWER
+        # The provider says when it stopped because the output budget ran out; saying so is
+        # better than letting the answer trail off mid-sentence with no explanation.
+        return answer + TRUNCATED_NOTE if was_truncated(response) else answer
 
     def run(self, prompt: str, repo_id: str | None = None, history: str = "") -> str:
         """Agent contract for callers that have no snippets; retrieves once, then answers."""

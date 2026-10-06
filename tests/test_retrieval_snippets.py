@@ -238,6 +238,8 @@ def test_format_retrieval_without_snippets_does_not_wrap_the_summary() -> None:
 
 def test_a_model_failure_still_returns_the_snippets_and_citations(repo) -> None:
     """This is the 413 path: the request was rejected, but the code that was read is still true."""
+    from codeatlas.services.llm.quota import FILES_HEADING, MESSAGES, TOO_LARGE
+
     small, _ = repo
     model = RecordingModel()
     model.state.error = RuntimeError("Error code: 413 - request too large")
@@ -245,7 +247,10 @@ def test_a_model_failure_still_returns_the_snippets_and_citations(repo) -> None:
 
     assert result.snippets, "snippets survive a failed model call"
     assert result.citations
-    assert "Top relevant locations:" in result.answer
+    # The visitor is told why, and the locations sit underneath a heading rather than
+    # standing in for an answer.
+    assert MESSAGES[TOO_LARGE] in result.answer
+    assert FILES_HEADING in result.answer
     assert "core.py (lines 4-5)" in result.answer.replace("\\", "/")
 
 

@@ -9,6 +9,7 @@ from codeatlas.services.agents.interfaces import Agent
 from codeatlas.services.agents.plan import Plan, default_plan, parse_plan
 from codeatlas.services.agents.retrieval_agent import format_retrieval
 from codeatlas.services.agents.types import AnswerResult, GenerateResult
+from codeatlas.services.llm.quota import classify_quota, quota_answer
 from codeatlas.services.qa.answer_service import GroundedAnswer
 from codeatlas.services.retrieval.snippets import Snippet, render_snippets
 
@@ -125,9 +126,12 @@ class AgentOrchestrator:
             with agent_run("mentor"):
                 answer = self._mentor_answer(question, retrieved.snippets, repo_id, history=history)
         except Exception as e:
-            self._logger.warning("Mentor failed: %s", e)
+            self._logger.warning("Mentor failed: %s", type(e).__name__)
             record_failure("mentor", AGENT_ERROR)
-            answer = f"{ANSWER_ERROR_PREFIX}: {e}"
+            # A provider refusal is a quota problem, not a bug; the visitor is told so and
+            # still gets the files that matched, rather than the raw exception text.
+            kind = classify_quota(e)
+            answer = quota_answer(kind, retrieved.snippets) if kind else f"{ANSWER_ERROR_PREFIX}: {e}"
 
         return AnswerResult(
             answer=answer,
@@ -333,7 +337,8 @@ class AgentOrchestrator:
         try:
             output = self._mentor_answer(step.instruction or state["question"], snippets, state["repo_id"], facts=facts)
         except Exception as exc:
-            output = f"Error executing mentor: {exc}"
+            kind = classify_quota(exc)
+            output = quota_answer(kind, snippets) if kind else f"Error executing mentor: {exc}"
 
         return {
             **state,

@@ -142,7 +142,9 @@ def test_a_413_records_both_the_reason_and_the_degraded_answer(tmp_path) -> None
     with agent_run("retrieval"):
         result = service([function_record(small, "add", 1, 2)], llm=model).answer("r", "q")
 
-    assert "Top relevant locations:" in result.answer
+    from codeatlas.services.llm.quota import MESSAGES, TOO_LARGE
+
+    assert MESSAGES[TOO_LARGE] in result.answer
     assert value("codeatlas_agent_failures_total", agent="retrieval", reason=PAYLOAD_TOO_LARGE) == too_large + 1
     assert value("codeatlas_agent_failures_total", agent="retrieval", reason=FALLBACK_LOCATIONS) == fallback + 1
 
