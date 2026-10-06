@@ -248,3 +248,111 @@ def test_an_unknown_memory_figure_never_stops_the_run() -> None:
     """-1 must not be read as 'no memory left'; the guard only fires on a real low figure."""
     for free, min_free, should_stop in [(-1, 600, False), (5000, 600, False), (100, 600, True), (600, 600, False)]:
         assert (0 <= free < min_free) is should_stop
+
+
+# ---------- a run that got no answer is not finished work ----------
+
+
+def test_an_empty_answer_counts_as_no_answer() -> None:
+    from answer_smoke import looks_like_no_answer
+
+    assert looks_like_no_answer("")
+    assert looks_like_no_answer("   \n ")
+
+
+def test_a_quota_message_counts_as_no_answer() -> None:
+    """A run refused by the provider measured its mood, not the pipeline."""
+    from answer_smoke import looks_like_no_answer
+
+    from codeatlas.services.llm.quota import DAILY, MESSAGES, PER_MINUTE, TOO_LARGE
+
+    for kind in (DAILY, PER_MINUTE, TOO_LARGE):
+        assert looks_like_no_answer(MESSAGES[kind] + "\n\nsome files")
+
+
+def test_the_old_bare_location_list_counts_as_no_answer() -> None:
+    from answer_smoke import looks_like_no_answer
+
+    assert looks_like_no_answer("Top relevant locations:\n- a.py")
+
+
+def test_a_failed_answer_counts_as_no_answer() -> None:
+    from answer_smoke import looks_like_no_answer
+
+    from codeatlas.services.agents.orchestration import ANSWER_ERROR_PREFIX
+
+    assert looks_like_no_answer(f"{ANSWER_ERROR_PREFIX}: boom")
+
+
+def test_an_empty_answer_notice_counts_as_no_answer() -> None:
+    from answer_smoke import looks_like_no_answer
+
+    from codeatlas.services.agents.coding_mentor_agent import EMPTY_ANSWER
+
+    assert looks_like_no_answer(EMPTY_ANSWER)
+
+
+def test_a_real_answer_is_not_no_answer() -> None:
+    from answer_smoke import looks_like_no_answer
+
+    assert not looks_like_no_answer("Signing works like this, see src/signer.py (lines 31-37).")
+
+
+def test_resume_redoes_a_no_answer_run_but_keeps_an_answered_one() -> None:
+    from answer_smoke import key_of
+
+    rows = [
+        {"repo": "flask", "question": "q1", "mode": "deep", "no_answer": True},
+        {"repo": "flask", "question": "q2", "mode": "deep", "no_answer": False},
+        {"repo": "flask", "question": "q1", "mode": "fast", "no_answer": False},
+    ]
+    already = {key_of(r) for r in rows if not r.get("no_answer")}
+
+    assert ("flask", "q1", "deep") not in already, "the unanswered deep run is done again"
+    assert ("flask", "q2", "deep") in already
+    assert ("flask", "q1", "fast") in already, "fast runs are never repeated"
+
+
+def test_a_row_without_the_flag_is_treated_as_answered() -> None:
+    """Results written before the flag existed must not all be redone."""
+    from answer_smoke import key_of
+
+    rows = [{"repo": "flask", "question": "q", "mode": "fast"}]
+    already = {key_of(r) for r in rows if not r.get("no_answer")}
+    assert len(already) == 1
+
+
+# ---------- the daily floor ----------
+
+
+def test_the_daily_figure_is_unknown_until_the_provider_says_it() -> None:
+    import answer_smoke
+
+    answer_smoke._seen_daily.clear()
+    assert answer_smoke.seen_daily_remaining() is None
+
+
+def test_the_providers_stated_figure_is_used_once_seen() -> None:
+    import answer_smoke
+
+    answer_smoke._seen_daily.clear()
+    answer_smoke._seen_daily.append(752)
+    assert answer_smoke.seen_daily_remaining() == 752
+    answer_smoke._seen_daily.clear()
+
+
+@pytest.mark.parametrize(
+    "start,spent,estimate,floor,should_stop",
+    [
+        (199_800, 0, 7000, 40_000, False),
+        (199_800, 120_000, 7000, 40_000, False),
+        (199_800, 153_000, 7000, 40_000, True),
+        (199_800, 160_000, 7000, 40_000, True),
+        (0, 999_999, 7000, 40_000, False),  # 0 start disables the floor
+    ],
+)
+def test_the_daily_floor_stops_before_dipping_under_it(
+    start: int, spent: int, estimate: int, floor: int, should_stop: bool
+) -> None:
+    left = start - spent
+    assert bool(start and left - estimate < floor) is should_stop

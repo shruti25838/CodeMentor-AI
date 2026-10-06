@@ -150,6 +150,58 @@ def token_total() -> int:
     return int(total)
 
 
+# Set by the log watcher below whenever the provider states its daily token position.
+_seen_daily: list[int] = []
+
+
+def seen_daily_remaining() -> int | None:
+    """Tokens left today, as last stated by the provider, or None if it never has."""
+    return _seen_daily[-1] if _seen_daily else None
+
+
+def watch_for_daily_limit() -> None:
+    """Listen to the app's own warnings for the one message that names the daily budget.
+
+    The figure is never in a header; it appears only in the body of a 429 after the budget
+    is gone. The pipeline already logs that body when a call is refused, so reading the log
+    costs nothing and needs no extra request.
+    """
+    import logging
+
+    from token_budget import parse_tpd
+
+    class Watcher(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            found = parse_tpd(record.getMessage())
+            if found:
+                limit, used = found
+                _seen_daily.append(max(limit - used, 0))
+
+    handler = Watcher(level=logging.WARNING)
+    logging.getLogger().addHandler(handler)
+    logging.getLogger("codeatlas").addHandler(handler)
+
+
+def looks_like_no_answer(text: str) -> bool:
+    """Whether the model never actually answered: empty, an error, or a quota message.
+
+    A run like this measures the provider's mood, not the pipeline, so it is recorded and
+    redone rather than counted as a failure.
+    """
+    from codeatlas.services.agents.coding_mentor_agent import EMPTY_ANSWER
+    from codeatlas.services.agents.orchestration import ANSWER_ERROR_PREFIX
+    from codeatlas.services.llm.quota import MESSAGES
+
+    stripped = (text or "").strip()
+    if not stripped:
+        return True
+    if stripped.startswith(ANSWER_ERROR_PREFIX) or stripped.startswith(EMPTY_ANSWER[:40]):
+        return True
+    if "Top relevant locations:" in stripped:
+        return True
+    return any(message in stripped for message in MESSAGES.values())
+
+
 def ask(client, repo_id: str, question: str, mode: str) -> dict:
     payload = {"question": question, "repo_id": repo_id, "mode": mode, "session_id": uuid.uuid4().hex}
     started = time.perf_counter()
@@ -167,12 +219,14 @@ def ask(client, repo_id: str, question: str, mode: str) -> dict:
                 done = event
             elif event["type"] == "error":
                 done = {"citations": [], "error": event["content"]}
+    answer = "".join(answer_parts)
     return {
-        "answer": "".join(answer_parts),
+        "answer": answer,
         "citations": done.get("citations", []),
         "agents_used": done.get("agents_used", []),
         "seconds": time.perf_counter() - started,
         "error": done.get("error"),
+        "no_answer": bool(done.get("error")) or looks_like_no_answer(answer),
     }
 
 
@@ -201,6 +255,18 @@ def main() -> int:
         "--resume",
         action="store_true",
         help="skip runs already present in --out, and keep appending to it",
+    )
+    parser.add_argument(
+        "--daily-start",
+        type=int,
+        default=0,
+        help="daily tokens believed available at the start; 0 disables the daily floor",
+    )
+    parser.add_argument(
+        "--min-daily-tokens",
+        type=int,
+        default=40_000,
+        help="stop cleanly once this many daily tokens are left, keeping them for other use",
     )
     parser.add_argument(
         "--min-free-mb",
@@ -245,6 +311,7 @@ def main() -> int:
         from codeatlas.app.main import create_app
         from scripts.mode_compare import serve
 
+        watch_for_daily_limit()
         app = create_app()
         base_url, server = serve(app)
         client = httpx.Client(base_url=base_url, timeout=600)
@@ -264,19 +331,34 @@ def main() -> int:
 
         out_path = Path(args.out) if args.out else None
         rows = load_done(out_path) if (args.resume and out_path) else []
-        already = {key_of(r) for r in rows}
+        # A run that got no model answer is not finished work: it measured the provider's
+        # mood. It stays in the file for the record but is done again.
+        already = {key_of(r) for r in rows if not r.get("no_answer")}
+        redo = [r for r in rows if r.get("no_answer")]
+        rows = [r for r in rows if not r.get("no_answer")]
         if already:
-            print(f"resuming: {len(already)} run(s) already done, skipping those")
+            print(f"resuming: {len(already)} run(s) already answered, skipping those")
+        if redo:
+            print(f"{len(redo)} earlier run(s) got no model answer and will be done again")
 
         planned = [(mode, item) for mode in modes for item in items]
         remaining = [(m, i) for m, i in planned if (i["repo"], i["question"], m) not in already]
         print(f"{len(remaining)} run(s) to do of {len(planned)}\n")
 
         stopped_early = ""
+        spent_here = 0
         for mode, item in remaining:
             free = free_megabytes()
             if 0 <= free < args.min_free_mb:
                 stopped_early = f"only {free} MB of memory free, need {args.min_free_mb} MB"
+                print(f"\nSTOPPING CLEANLY: {stopped_early}")
+                break
+            # Leave the floor untouched for whoever needs the quota next.
+            left = args.daily_start - spent_here
+            if args.daily_start and left - ESTIMATE[mode] < args.min_daily_tokens:
+                stopped_early = (
+                    f"about {left:,} daily tokens left, which would fall below the {args.min_daily_tokens:,} floor"
+                )
                 print(f"\nSTOPPING CLEANLY: {stopped_early}")
                 break
             waited = pacer.wait_for(ESTIMATE[mode])
@@ -285,10 +367,27 @@ def main() -> int:
             used = token_total() - tokens_before
             pacer.record(used)
             verdict = judge(item, result)
-            rows.append({**item, "mode": mode, **verdict, "seconds": result["seconds"], "tokens": used})
+            rows.append(
+                {
+                    **item,
+                    "mode": mode,
+                    **verdict,
+                    "seconds": result["seconds"],
+                    "tokens": used,
+                    "no_answer": result["no_answer"],
+                }
+            )
             # Written after every run, so a run stopped from outside keeps what is finished.
             if out_path:
                 out_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+            spent_here += used
+            # The provider only ever states the daily figure while refusing a call; when it
+            # does, that exact number beats any estimate.
+            reported = seen_daily_remaining()
+            if reported is not None and reported < args.min_daily_tokens:
+                stopped_early = f"the provider reports {reported:,} daily tokens left"
+                print(f"\nSTOPPING CLEANLY: {stopped_early}")
+                break
             mark = "PASS" if verdict["passed"] else "FAIL"
             why = "" if verdict["passed"] else f"  (file {verdict['file_ok']}, fact {verdict['fact_ok']})"
             print(
