@@ -27,6 +27,7 @@ class LlmProvider:
             return ChatOpenAI(
                 model=self._config.llm_model,
                 temperature=self._config.llm_temperature,
+                max_tokens=self._config.llm_max_tokens,
             )
         elif self._config.llm_provider == "groq":
             import os
@@ -36,6 +37,9 @@ class LlmProvider:
                 api_key=os.getenv("GROQ_API_KEY"),
                 model=self._config.llm_model,
                 temperature=self._config.llm_temperature,
+                # Without an explicit budget the provider's own default applies; with one
+                # that is too small a reasoning model returns an empty answer.
+                max_tokens=self._config.llm_max_tokens,
             )
         return FallbackChatModel()
 

@@ -11,6 +11,14 @@ NO_CONTEXT = (
     "Try naming a file, class or function, or re-index the repository."
 )
 
+# A reasoning model spends part of its output budget thinking before it writes anything the
+# user sees. If the budget runs out first the reply comes back empty, and an empty answer
+# shown as the answer looks like the app silently failed.
+EMPTY_ANSWER = (
+    "The model returned an empty answer. This usually means its output budget was used up "
+    "before it finished; raise CODEATLAS_LLM_MAX_TOKENS and ask again."
+)
+
 _SYSTEM = (
     "You are a senior software engineer and mentor.\n"
     "Answer ONLY from the numbered code snippets and the structural facts below. They are the "
@@ -68,7 +76,8 @@ class CodingMentorAgent(Agent):
                     "history": f"Earlier in this conversation:\n{history}\n\n" if history else "",
                 }
             )
-        return str(response.content)
+        answer = str(response.content)
+        return answer if answer.strip() else EMPTY_ANSWER
 
     def run(self, prompt: str, repo_id: str | None = None, history: str = "") -> str:
         """Agent contract for callers that have no snippets; retrieves once, then answers."""
