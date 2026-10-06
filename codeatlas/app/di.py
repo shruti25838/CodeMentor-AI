@@ -1,5 +1,4 @@
 from functools import lru_cache
-from pathlib import Path
 
 from codeatlas.services.agents.coding_mentor_agent import CodingMentorAgent
 from codeatlas.services.agents.memory_agent import MemoryAgent
@@ -11,8 +10,6 @@ from codeatlas.services.dependency.import_graph_builder import ImportGraphBuilde
 from codeatlas.services.ingestion.git_loader import GitRepositoryLoader
 from codeatlas.services.llm.provider import LlmProvider
 from codeatlas.services.memory.conversation import ConversationStore
-from codeatlas.services.memory.interfaces import MemoryStore
-from codeatlas.services.memory.json_store import JsonMemoryStore
 from codeatlas.services.parsing.tree_sitter_parser import TreeSitterAstParser
 from codeatlas.services.qa.answer_service import AnswerService
 from codeatlas.services.qa.explain_service import CodeExplainService
@@ -85,26 +82,16 @@ def get_explain_service() -> CodeExplainService:
 
 
 @lru_cache
-def get_memory_store() -> MemoryStore:
-    config = get_config()
-    # Ensure state directory exists
-    Path(config.state_dir).mkdir(parents=True, exist_ok=True)
-    memory_file = Path(config.state_dir) / "agent_memory.json"
-    return JsonMemoryStore(file_path=str(memory_file))
-
-
-@lru_cache
 def get_agent_orchestrator() -> AgentOrchestrator:
     llm = get_llm_provider().get_chat_model()
     answer_service = get_answer_service()
     repo_state_store = get_repo_state_store()
-    memory_store = get_memory_store()
 
     planner = PlannerAgent(llm=llm)
     retrieval_agent = RetrievalAgent(answer_service=answer_service)
     analyst_agent = RepoAnalystAgent(state_store=repo_state_store, llm=llm)
-    mentor_agent = CodingMentorAgent(answer_service=answer_service, llm=llm)
-    memory_agent = MemoryAgent(memory_store=memory_store)
+    mentor_agent = CodingMentorAgent(llm=llm, answer_service=answer_service)
+    memory_agent = MemoryAgent(conversations=get_conversation_store())
 
     return AgentOrchestrator(
         planner=planner,
@@ -112,7 +99,6 @@ def get_agent_orchestrator() -> AgentOrchestrator:
         analyst_agent=analyst_agent,
         mentor_agent=mentor_agent,
         memory_agent=memory_agent,
-        memory_store=memory_store,
     )
 
 

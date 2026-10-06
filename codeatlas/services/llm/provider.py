@@ -5,6 +5,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_openai import ChatOpenAI
 
+from codeatlas.observability.agent_metrics import AgentUsageCallback
 from codeatlas.utils.config import AppConfig
 
 
@@ -14,10 +15,19 @@ class LlmProvider:
         self._logger = logging.getLogger(__name__)
 
     def get_chat_model(self) -> BaseChatModel:
+        return self._counted(self._build())
+
+    @staticmethod
+    def _counted(model: BaseChatModel) -> BaseChatModel:
+        """Attach the metrics callback, so every call is attributed to the running agent."""
+        return model.with_config({"callbacks": [AgentUsageCallback()]})
+
+    def _build(self) -> BaseChatModel:
         if self._config.llm_provider == "openai":
             return ChatOpenAI(
                 model=self._config.llm_model,
                 temperature=self._config.llm_temperature,
+                max_tokens=self._config.llm_max_tokens,
             )
         elif self._config.llm_provider == "groq":
             import os
@@ -27,6 +37,9 @@ class LlmProvider:
                 api_key=os.getenv("GROQ_API_KEY"),
                 model=self._config.llm_model,
                 temperature=self._config.llm_temperature,
+                # Without an explicit budget the provider's own default applies; with one
+                # that is too small a reasoning model returns an empty answer.
+                max_tokens=self._config.llm_max_tokens,
             )
         return FallbackChatModel()
 

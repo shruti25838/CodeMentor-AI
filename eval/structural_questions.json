@@ -1,0 +1,62 @@
+[
+  {"repo": "itsdangerous", "split": "development", "kind": "where_defined", "subject": "Signer", "note": "one class, one definition"},
+  {"repo": "itsdangerous", "split": "development", "kind": "where_defined", "subject": "TimestampSigner", "note": "subclass of Signer"},
+  {"repo": "itsdangerous", "split": "development", "kind": "where_defined", "subject": "want_bytes", "note": "module-level helper"},
+  {"repo": "itsdangerous", "split": "development", "kind": "where_defined", "subject": "base64_encode", "note": "module-level helper"},
+  {"repo": "itsdangerous", "split": "development", "kind": "where_defined", "subject": "Signer.sign", "note": "qualified method name"},
+  {"repo": "itsdangerous", "split": "development", "kind": "where_defined", "subject": "get_signature", "note": "defined on four classes"},
+  {"repo": "itsdangerous", "split": "development", "kind": "where_defined", "subject": "BadSignature", "note": "exception class"},
+
+  {"repo": "itsdangerous", "split": "development", "kind": "who_calls", "subject": "want_bytes", "note": "helper called across modules"},
+  {"repo": "itsdangerous", "split": "development", "kind": "who_calls", "subject": "base64_decode", "note": "helper called across modules"},
+  {"repo": "itsdangerous", "split": "development", "kind": "who_calls", "subject": "derive_key", "note": "called through self inside Signer"},
+  {"repo": "itsdangerous", "split": "development", "kind": "who_calls", "subject": "get_signature", "note": "dispatched through self on a base class"},
+
+  {"repo": "itsdangerous", "split": "development", "kind": "who_imports", "subject": "itsdangerous.signer", "note": "imported by the package and by siblings"},
+  {"repo": "itsdangerous", "split": "development", "kind": "who_imports", "subject": "itsdangerous.encoding", "note": "leaf helper module"},
+
+  {"repo": "itsdangerous", "split": "held-out", "kind": "where_defined", "subject": "Serializer", "note": "largest class"},
+  {"repo": "itsdangerous", "split": "held-out", "kind": "where_defined", "subject": "URLSafeTimedSerializer", "note": "two mixins"},
+  {"repo": "itsdangerous", "split": "held-out", "kind": "where_defined", "subject": "bytes_to_int", "note": "small helper"},
+  {"repo": "itsdangerous", "split": "held-out", "kind": "where_defined", "subject": "dump_payload", "note": "method defined on more than one class"},
+
+  {"repo": "itsdangerous", "split": "held-out", "kind": "who_calls", "subject": "base64_encode", "note": "helper called across modules"},
+  {"repo": "itsdangerous", "split": "held-out", "kind": "who_calls", "subject": "int_to_bytes", "note": "called only in timed.py"},
+  {"repo": "itsdangerous", "split": "held-out", "kind": "who_calls", "subject": "_make_keys_list", "note": "private helper"},
+  {"repo": "itsdangerous", "split": "held-out", "kind": "who_calls", "subject": "load_payload", "note": "method dispatched through self"},
+
+  {"repo": "itsdangerous", "split": "held-out", "kind": "who_imports", "subject": "itsdangerous.exc", "note": "exceptions imported widely"},
+  {"repo": "itsdangerous", "split": "held-out", "kind": "who_imports", "subject": "itsdangerous.serializer", "note": "imported by timed and url_safe"},
+  {"repo": "itsdangerous", "split": "held-out", "kind": "who_imports", "subject": "itsdangerous._json", "note": "private module, one importer"},
+
+  {"repo": "flask", "split": "development", "kind": "where_defined", "subject": "Flask", "note": "also redefined in a test"},
+  {"repo": "flask", "split": "development", "kind": "where_defined", "subject": "Blueprint", "note": "defined in flask and in sansio"},
+  {"repo": "flask", "split": "development", "kind": "where_defined", "subject": "send_file", "note": "module-level helper"},
+  {"repo": "flask", "split": "development", "kind": "where_defined", "subject": "url_for", "note": "defined in more than one module"},
+  {"repo": "flask", "split": "development", "kind": "where_defined", "subject": "AppContext", "note": "context class"},
+  {"repo": "flask", "split": "development", "kind": "where_defined", "subject": "Config", "note": "config class"},
+  {"repo": "flask", "split": "development", "kind": "where_defined", "subject": "SecureCookieSessionInterface", "note": "session class"},
+
+  {"repo": "flask", "split": "development", "kind": "who_calls", "subject": "send_file", "note": "called from helpers and tests"},
+  {"repo": "flask", "split": "development", "kind": "who_calls", "subject": "stream_with_context", "note": "decorator-like helper"},
+  {"repo": "flask", "split": "development", "kind": "who_calls", "subject": "get_root_path", "note": "helper used during app setup"},
+
+  {"repo": "flask", "split": "development", "kind": "who_imports", "subject": "flask.globals", "note": "imported very widely"},
+  {"repo": "flask", "split": "development", "kind": "who_imports", "subject": "flask.helpers", "note": "imported widely"},
+  {"repo": "flask", "split": "development", "kind": "who_imports", "subject": "flask.sansio.app", "note": "namespace package with no __init__.py"},
+
+  {"repo": "flask", "split": "held-out", "kind": "where_defined", "subject": "RequestContext", "note": "context class"},
+  {"repo": "flask", "split": "held-out", "kind": "where_defined", "subject": "Request", "note": "defined in wrappers and subclassed in tests"},
+  {"repo": "flask", "split": "held-out", "kind": "where_defined", "subject": "FlaskClient", "note": "test client"},
+  {"repo": "flask", "split": "held-out", "kind": "where_defined", "subject": "TaggedJSONSerializer", "note": "json tagging"},
+  {"repo": "flask", "split": "held-out", "kind": "where_defined", "subject": "ScriptInfo", "note": "cli helper"},
+
+  {"repo": "flask", "split": "held-out", "kind": "who_calls", "subject": "render_template", "note": "called from templating and tests"},
+  {"repo": "flask", "split": "held-out", "kind": "who_calls", "subject": "flash", "note": "helper called from tests"},
+  {"repo": "flask", "split": "held-out", "kind": "who_calls", "subject": "get_load_dotenv", "note": "cli helper"},
+
+  {"repo": "flask", "split": "held-out", "kind": "who_imports", "subject": "flask.ctx", "note": "context module"},
+  {"repo": "flask", "split": "held-out", "kind": "who_imports", "subject": "flask.json.tag", "note": "nested package module"},
+  {"repo": "flask", "split": "held-out", "kind": "who_imports", "subject": "flask.signals", "note": "small leaf module"},
+  {"repo": "flask", "split": "held-out", "kind": "who_imports", "subject": "flask.typing", "note": "imported only for type checking"}
+]

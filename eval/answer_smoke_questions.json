@@ -1,0 +1,18 @@
+[
+  {"repo": "itsdangerous", "question": "How does Signer derive its signing key by default?", "expected_file": "src/itsdangerous/signer.py", "fact": "django-concat", "note": "default_key_derivation = \"django-concat\" at signer.py:127"},
+  {"repo": "itsdangerous", "question": "Which hash algorithm does Signer use by default?", "expected_file": "src/itsdangerous/signer.py", "fact": "sha1", "note": "default_digest_method = staticmethod(_lazy_sha1) at signer.py:120"},
+  {"repo": "itsdangerous", "question": "What does the base64_encode function do?", "expected_file": "src/itsdangerous/encoding.py", "fact": "base64", "note": "base64_encode at encoding.py:20"},
+  {"repo": "itsdangerous", "question": "How does URLSafeSerializer compress the payload before encoding it?", "expected_file": "src/itsdangerous/url_safe.py", "fact": "zlib", "note": "zlib.compress at url_safe.py:58"},
+  {"repo": "itsdangerous", "question": "Which exception is raised when a signed value is older than max_age?", "expected_file": "src/itsdangerous/exc.py", "fact": "SignatureExpired", "note": "class SignatureExpired(BadTimeSignature) at exc.py:60"},
+  {"repo": "itsdangerous", "question": "What does TimestampSigner add to a value when it signs it?", "expected_file": "src/itsdangerous/timed.py", "fact": "timestamp", "note": "get_timestamp at timed.py:29, used by sign at timed.py:45"},
+  {"repo": "itsdangerous", "question": "What is the purpose of the want_bytes helper?", "expected_file": "src/itsdangerous/encoding.py", "fact": "bytes", "note": "want_bytes at encoding.py:11 encodes a str to bytes"},
+  {"repo": "itsdangerous", "question": "Which class does BadSignature inherit from?", "expected_file": "src/itsdangerous/exc.py", "fact": "BadData", "note": "class BadSignature(BadData) at exc.py:22"},
+
+  {"repo": "flask", "question": "What salt does the secure cookie session interface use?", "expected_file": "src/flask/sessions.py", "fact": "cookie-session", "note": "salt = \"cookie-session\" at sessions.py:291"},
+  {"repo": "flask", "question": "How can Flask load configuration from environment variables that share a prefix?", "expected_file": "src/flask/config.py", "fact": "from_prefixed_env", "note": "Config.from_prefixed_env at config.py:126"},
+  {"repo": "flask", "question": "Which helper serves a file from inside a directory?", "expected_file": "src/flask/helpers.py", "fact": "send_from_directory", "note": "send_from_directory at helpers.py:543"},
+  {"repo": "flask", "question": "How does Flask work out the root path for an import name?", "expected_file": "src/flask/helpers.py", "fact": "get_root_path", "note": "get_root_path at helpers.py:587"},
+  {"repo": "flask", "question": "Which class represents the application context?", "expected_file": "src/flask/ctx.py", "fact": "AppContext", "note": "class AppContext at ctx.py:260"},
+  {"repo": "flask", "question": "Which function renders a template by name?", "expected_file": "src/flask/templating.py", "fact": "render_template", "note": "render_template at templating.py:136"},
+  {"repo": "flask", "question": "How do I show a one-time message to the user on the next request?", "expected_file": "src/flask/helpers.py", "fact": "flash", "note": "flash at helpers.py:326"}
+]

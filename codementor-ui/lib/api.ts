@@ -23,6 +23,9 @@ export async function askQuestion(question: string, repoId?: string) {
     return response.json();
 }
 
+/** "fast" is retrieval then mentor. "deep" runs the planned five-agent pipeline. */
+export type AskMode = "fast" | "deep";
+
 /** Stream an answer via SSE — calls back on each event type. sessionId: see lib/chatSession.ts. */
 export async function askQuestionStream(
     question: string,
@@ -31,14 +34,16 @@ export async function askQuestionStream(
     callbacks: {
         onToken: (token: string) => void;
         onStatus: (status: string) => void;
-        onDone: (data: { citations: string[]; reasoning_steps: string[] }) => void;
+        onAgent?: (agent: { name: string; detail: string }) => void;
+        onDone: (data: { citations: string[]; reasoning_steps: string[]; agents_used?: string[] }) => void;
         onError: (error: string) => void;
     },
+    mode: AskMode = "fast",
 ) {
     const response = await serverFetch(`${BASE_URL}/ask/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, repo_id: repoId, session_id: sessionId }),
+        body: JSON.stringify({ question, repo_id: repoId, session_id: sessionId, mode }),
     }, ONCE);
 
     if (!response.ok) {
@@ -67,6 +72,9 @@ export async function askQuestionStream(
                             break;
                         case "status":
                             callbacks.onStatus(data.content);
+                            break;
+                        case "agent":
+                            callbacks.onAgent?.({ name: data.name, detail: data.detail });
                             break;
                         case "done":
                             callbacks.onDone(data);

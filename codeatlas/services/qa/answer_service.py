@@ -1,15 +1,30 @@
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
 from codeatlas.models.embedding_record import EmbeddingRecord
+from codeatlas.observability.agent_metrics import (
+    FALLBACK_LOCATIONS,
+    classify,
+    current_agent,
+    record_failure,
+)
 from codeatlas.observability.timing import stage
+from codeatlas.services.llm.quota import classify_quota, quota_answer
 from codeatlas.services.retrieval.embedding import EmbeddingService
 from codeatlas.services.retrieval.interfaces import CodeRetriever
+from codeatlas.services.retrieval.snippets import (
+    DEFAULT_SNIPPET_MAX_CHARS,
+    DEFAULT_TOTAL_MAX_CHARS,
+    Snippet,
+    clip_snippet,
+    fit_snippets,
+    render_snippets,
+)
 
 
 def _clean_display_path(raw_path: str) -> str:
@@ -32,6 +47,9 @@ class GroundedAnswer:
     answer: str
     citations: list[str]
     reasoning_steps: list[str]
+    # The code the answer was built from, in the same order as `citations`. Later agents use
+    # these instead of searching again, so what they read matches what the user is shown.
+    snippets: list[Snippet] = field(default_factory=list)
 
 
 class AnswerService:
@@ -40,10 +58,14 @@ class AnswerService:
         retriever: CodeRetriever,
         embedder: EmbeddingService,
         llm: BaseChatModel | None = None,
+        snippet_max_chars: int = DEFAULT_SNIPPET_MAX_CHARS,
+        total_max_chars: int = DEFAULT_TOTAL_MAX_CHARS,
     ) -> None:
         self._retriever = retriever
         self._embedder = embedder
         self._llm = llm
+        self._snippet_max_chars = snippet_max_chars
+        self._total_max_chars = total_max_chars
         self._logger = logging.getLogger(__name__)
         self._prompt = ChatPromptTemplate.from_messages(
             [
@@ -66,70 +88,74 @@ class AnswerService:
         with stage("rerank"):
             records = self._rerank(question, records)[:top_k]
         self._logger.info("Retrieved %s records for repo %s", len(records), repo_id)
-        citations = [self._citation_text(record) for record in records]
-        answer_lines = self._format_answer(question, records)
+        # Read each record's code once, capped, and keep only what fits the context budget.
+        # Citations describe exactly these snippets, so the answer and the citations agree.
+        snippets = fit_snippets(
+            [self._snippet_for(record) for record in records],
+            self._total_max_chars,
+        )
+        citations = [_citation_text(snippet) for snippet in snippets]
+        answer_lines = self._format_answer(question, snippets)
         reasoning = [
             f"Embedded query for repo_id={repo_id}.",
-            f"Retrieved {len(records)} records.",
+            f"Retrieved {len(records)} records, kept {len(snippets)} snippets within the context budget.",
         ]
         return GroundedAnswer(
             answer="\n".join(answer_lines),
             citations=citations,
             reasoning_steps=reasoning,
+            snippets=snippets,
         )
 
-    def _format_answer(self, question: str, records: list[EmbeddingRecord]) -> list[str]:
-        if not records:
+    def _format_answer(self, question: str, snippets: list[Snippet]) -> list[str]:
+        if not snippets:
             return [
                 "No relevant code locations found.",
                 "Try a different query or re-run analysis.",
             ]
 
         if self._llm is None:
-            lines = ["Top relevant locations:"]
-            for record in records:
-                lines.append(self._format_record(record))
-            return lines
+            return _location_list(snippets)
 
-        context = self._build_context(records)
         try:
             chain = self._prompt | self._llm
             with stage("llm"):
-                response = chain.invoke({"question": question, "context": context})
+                response = chain.invoke({"question": question, "context": render_snippets(snippets)})
             return [response.content]
         except Exception as exc:
-            self._logger.warning("LLM answer failed, falling back: %s", exc)
-            lines = ["Top relevant locations:"]
-            for record in records:
-                lines.append(self._format_record(record))
-            return lines
+            # The locations are still true when the model is unavailable or refuses the request,
+            # so the caller keeps the snippets either way.
+            self._logger.warning("LLM answer failed, falling back to the location list: %s", exc)
+            # Two facts worth separating: why the provider refused, and that the answer the
+            # user gets is the degraded one.
+            agent = current_agent()
+            record_failure(agent, classify(exc))
+            record_failure(agent, FALLBACK_LOCATIONS)
+            # A refused call is told to the visitor as such; the locations go underneath it,
+            # under a heading, so the list is never read as the answer.
+            kind = classify_quota(exc)
+            if kind:
+                return [quota_answer(kind, snippets)]
+            return _location_list(snippets)
 
-    def _format_record(self, record: EmbeddingRecord) -> str:
-        path = _clean_display_path(record.metadata.get("path", ""))
-        if record.scope == "function":
-            signature = record.metadata.get("signature", "")
-            return f"- function: {path} :: {signature}"
-        language = record.metadata.get("language", "")
-        label = f"{language} file" if language else "file"
-        return f"- {label}: {path}"
-
-    def _citation_text(self, record: EmbeddingRecord) -> str:
+    def _snippet_for(self, record: EmbeddingRecord) -> Snippet:
+        """The code a record points at, clipped, with the line range actually kept."""
         display_path = _clean_display_path(record.metadata.get("path", ""))
-        snippet = _record_snippet(record)
-        snippet = " ".join(snippet.splitlines()[:2]).strip()
-        if len(snippet) > 200:
-            snippet = f"{snippet[:200]}..."
-        line_range = _line_range(record)
-        prefix = f"{display_path}{line_range}"
-        return f"{prefix} | {snippet}" if snippet else prefix
+        path = record.metadata.get("path")
+        if not path:
+            return Snippet(path=display_path, start_line=0, end_line=0, text="")
 
-    def _build_context(self, records: list[EmbeddingRecord]) -> str:
-        chunks: list[str] = []
-        for record in records:
-            display_path = _clean_display_path(record.metadata.get("path", ""))
-            snippet = _record_snippet(record)
-            chunks.append(f"[{display_path}]\n{snippet}")
-        return "\n\n".join(chunks)
+        start = _parse_int(record.metadata.get("start_line"))
+        end = _parse_int(record.metadata.get("end_line"))
+        if record.scope == "function" and start and end:
+            text = _read_snippet(Path(path), start, end)
+            return clip_snippet(display_path, text, start, end, self._snippet_max_chars)
+
+        # A whole file: read it, but never send more than one snippet's worth. Sending whole
+        # files is what pushed a single request past the model's per-minute token allowance.
+        text = _safe_read(Path(path))
+        line_count = len(text.splitlines()) if text else 0
+        return clip_snippet(display_path, text, 1, line_count, self._snippet_max_chars)
 
     def _rerank(self, query: str, records: list[EmbeddingRecord]) -> list[EmbeddingRecord]:
         query_tokens = _tokenize(query)
@@ -137,7 +163,7 @@ class AnswerService:
             return records
         scored: list[tuple[float, EmbeddingRecord]] = []
         for record in records:
-            snippet = _record_snippet(record)
+            snippet = _record_text(record)
             score = _overlap_score(query_tokens, snippet)
             # Penalize __init__.py files with little content
             path = record.metadata.get("path", "")
@@ -148,7 +174,21 @@ class AnswerService:
         return [record for _, record in scored]
 
 
-def _record_snippet(record: EmbeddingRecord) -> str:
+def _location_list(snippets: list[Snippet]) -> list[str]:
+    """What the caller gets when there is no model: the locations, which are still true."""
+    return ["Top relevant locations:"] + [f"- {snippet.location}" for snippet in snippets]
+
+
+def _citation_text(snippet: Snippet) -> str:
+    """One citation line: the snippet's own location and its first two lines."""
+    preview = " ".join(snippet.text.splitlines()[:2]).strip()
+    if len(preview) > 200:
+        preview = f"{preview[:200]}..."
+    return f"{snippet.location} | {preview}" if preview else snippet.location
+
+
+def _record_text(record: EmbeddingRecord) -> str:
+    """A record's code, uncapped; used for reranking, which is local and never sent anywhere."""
     path = record.metadata.get("path")
     if not path:
         return ""
@@ -198,11 +238,3 @@ def _parse_int(value: str | None) -> int | None:
         return int(value)
     except ValueError:
         return None
-
-
-def _line_range(record: EmbeddingRecord) -> str:
-    start = _parse_int(record.metadata.get("start_line"))
-    end = _parse_int(record.metadata.get("end_line"))
-    if start is None or end is None:
-        return ""
-    return f" (lines {start}-{end})"

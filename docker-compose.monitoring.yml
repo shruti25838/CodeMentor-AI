@@ -23,3 +23,8 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
+    # The datasource and the agent dashboard are provisioned, so Grafana comes up with the
+    # panels already there instead of an empty instance.
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/etc/grafana/provisioning/dashboards-data:ro
