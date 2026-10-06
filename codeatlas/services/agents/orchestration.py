@@ -1,10 +1,10 @@
-import json
 import logging
-from typing import Any, TypedDict
+from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
 
 from codeatlas.services.agents.interfaces import Agent
+from codeatlas.services.agents.plan import Plan, default_plan, parse_plan
 from codeatlas.services.agents.types import AnswerResult, GenerateResult
 from codeatlas.services.memory.interfaces import MemoryStore
 
@@ -16,7 +16,7 @@ ANSWER_ERROR_PREFIX = "Error generating answer"
 class OrchestratorState(TypedDict):
     question: str
     repo_id: str
-    plan: dict[str, Any]
+    plan: Plan
     current_step_index: int
     results: list[str]
     final_answer: str
@@ -47,7 +47,7 @@ class AgentOrchestrator:
         initial_state: OrchestratorState = {
             "question": question,
             "repo_id": repo_id,
-            "plan": {},
+            "plan": default_plan(question),
             "current_step_index": 0,
             "results": [],
             "final_answer": "",
@@ -56,7 +56,10 @@ class AgentOrchestrator:
         final_state = self._graph.invoke(initial_state)
 
         # Construct the final result from the state
-        reasoning = [f"Plan: {json.dumps(final_state.get('plan', {}))}"]
+        plan = final_state.get("plan") or default_plan(question)
+        reasoning = [f"Plan: {' -> '.join(plan.agents)}"]
+        if plan.note:
+            reasoning.append(plan.note)
         reasoning.extend(final_state.get("results", []))
 
         return AnswerResult(
@@ -180,12 +183,15 @@ class AgentOrchestrator:
         question = state["question"]
         repo_id = state["repo_id"]
         try:
-            plan_str = self._planner.run(question, repo_id)
-            plan = json.loads(plan_str)
-        except Exception as e:
-            self._logger.error(f"Planning failed: {e}")
-            # Fallback plan
-            plan = {"steps": [{"agent": "retrieval", "instruction": question}]}
+            raw = self._planner.run(question, repo_id)
+        except Exception as exc:
+            # The planner is one model call; losing it should cost the default plan, not the answer.
+            self._logger.warning("Planner failed (%s), using the default plan", type(exc).__name__)
+            plan = default_plan(question, f"Planner failed ({type(exc).__name__}); used the default plan.")
+        else:
+            plan = parse_plan(raw, question)
+            if plan.note:
+                self._logger.info("Planner output adjusted: %s", plan.note)
 
         return {**state, "plan": plan, "current_step_index": 0}
 
@@ -194,27 +200,21 @@ class AgentOrchestrator:
         return state
 
     def _route_step(self, state: OrchestratorState) -> str:
-        steps = state["plan"].get("steps", [])
+        """The next agent to run. Every step in a parsed Plan names a known agent."""
+        steps = state["plan"].steps
         idx = state["current_step_index"]
-
         if idx >= len(steps):
             return "end"
-
-        step = steps[idx]
-        agent_name = step.get("agent", "retrieval").lower()
-
-        if agent_name in ["retrieval", "analyst", "mentor", "memory"]:
-            return agent_name
-        return "end"
+        return steps[idx].agent
 
     # ... _execute_agent same ...
 
     def _execute_agent(self, agent: Agent, state: OrchestratorState) -> OrchestratorState:
-        steps = state["plan"].get("steps", [])
+        steps = state["plan"].steps
         idx = state["current_step_index"]
         step = steps[idx]
 
-        instruction = step.get("instruction", "")
+        instruction = step.instruction
         repo_id = state["repo_id"]
 
         # Add context from previous results if available
@@ -227,9 +227,9 @@ class AgentOrchestrator:
         try:
             output = agent.run(full_prompt, repo_id)
         except Exception as e:
-            output = f"Error executing {step.get('agent')}: {e}"
+            output = f"Error executing {step.agent}: {e}"
 
-        new_results = state["results"] + [f"Step {idx + 1} ({step.get('agent')}): {output}"]
+        new_results = state["results"] + [f"Step {idx + 1} ({step.agent}): {output}"]
         new_citations = list(state.get("citations", []))
         if agent is self._retrieval_agent:
             new_citations.extend(self._parse_citations_from_retrieval_output(output))
