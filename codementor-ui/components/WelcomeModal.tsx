@@ -6,7 +6,6 @@ import {
     BrainCircuit,
     Search,
     GitFork,
-    Code2,
     MessageSquare,
     Lightbulb,
     Sparkles,
@@ -16,7 +15,7 @@ const capabilities = [
     {
         icon: BrainCircuit,
         title: "Planner Agent",
-        desc: "Breaks your question into steps and dynamically selects the right agents to handle each part.",
+        desc: "Turn on Deep analysis to have your question broken into steps and routed to the right agents. The default chat skips this and goes straight from search to answer, which is faster.",
         repoOnly: false,
     },
     {
@@ -32,12 +31,6 @@ const capabilities = [
         repoOnly: true,
     },
     {
-        icon: Code2,
-        title: "Code Generation",
-        desc: "Generates code, example usage, and refactoring suggestions grounded in your repo's existing patterns.",
-        repoOnly: false,
-    },
-    {
         icon: MessageSquare,
         title: "Coding Mentor",
         desc: "Explains code, answers architecture questions, reviews logic, and teaches best practices like a senior engineer.",
@@ -46,7 +39,7 @@ const capabilities = [
     {
         icon: Lightbulb,
         title: "Context Memory",
-        desc: "Remembers your conversation context so follow-up questions build on previous answers.",
+        desc: "Remembers the last few turns in this chat window, so follow-up questions build on what you just asked.",
         repoOnly: false,
     },
 ];
