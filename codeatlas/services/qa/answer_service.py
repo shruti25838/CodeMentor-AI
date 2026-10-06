@@ -7,6 +7,12 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
 from codeatlas.models.embedding_record import EmbeddingRecord
+from codeatlas.observability.agent_metrics import (
+    FALLBACK_LOCATIONS,
+    classify,
+    current_agent,
+    record_failure,
+)
 from codeatlas.observability.timing import stage
 from codeatlas.services.retrieval.embedding import EmbeddingService
 from codeatlas.services.retrieval.interfaces import CodeRetriever
@@ -119,6 +125,11 @@ class AnswerService:
             # The locations are still true when the model is unavailable or refuses the request,
             # so the caller keeps the snippets either way.
             self._logger.warning("LLM answer failed, falling back to the location list: %s", exc)
+            # Two facts worth separating: why the provider refused, and that the answer the
+            # user gets is the degraded one.
+            agent = current_agent()
+            record_failure(agent, classify(exc))
+            record_failure(agent, FALLBACK_LOCATIONS)
             return _location_list(snippets)
 
     def _snippet_for(self, record: EmbeddingRecord) -> Snippet:

@@ -4,6 +4,7 @@ from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from codeatlas.observability.agent_metrics import AGENT_ERROR, agent_run, record_failure, record_plan
 from codeatlas.services.agents.interfaces import Agent
 from codeatlas.services.agents.plan import Plan, default_plan, parse_plan
 from codeatlas.services.agents.retrieval_agent import format_retrieval
@@ -121,9 +122,11 @@ class AgentOrchestrator:
         #    describe the same code.
         agents_ran.append("mentor")
         try:
-            answer = self._mentor_answer(question, retrieved.snippets, repo_id, history=history)
+            with agent_run("mentor"):
+                answer = self._mentor_answer(question, retrieved.snippets, repo_id, history=history)
         except Exception as e:
             self._logger.warning("Mentor failed: %s", e)
+            record_failure("mentor", AGENT_ERROR)
             answer = f"{ANSWER_ERROR_PREFIX}: {e}"
 
         return AnswerResult(
@@ -216,7 +219,8 @@ class AgentOrchestrator:
         question = state["question"]
         repo_id = state["repo_id"]
         try:
-            raw = self._planner.run(question, repo_id)
+            with agent_run("planner"):
+                raw = self._planner.run(question, repo_id)
         except Exception as exc:
             # The planner is one model call; losing it should cost the default plan, not the answer.
             self._logger.warning("Planner failed (%s), using the default plan", type(exc).__name__)
@@ -226,6 +230,7 @@ class AgentOrchestrator:
             if plan.note:
                 self._logger.info("Planner output adjusted: %s", plan.note)
 
+        record_plan("default" if plan.note else "model", plan.agents)
         return {**state, "plan": plan, "current_step_index": 0, "agents_ran": [*state["agents_ran"], "planner"]}
 
     def _dispatcher_node(self, state: OrchestratorState) -> OrchestratorState:
@@ -258,7 +263,8 @@ class AgentOrchestrator:
             full_prompt = instruction
 
         try:
-            output = agent.run(full_prompt, repo_id)
+            with agent_run(step.agent):
+                output = agent.run(full_prompt, repo_id)
         except Exception as e:
             output = f"Error executing {step.agent}: {e}"
 
@@ -298,16 +304,17 @@ class AgentOrchestrator:
         """Snippets for a question, or an empty result if retrieval fails."""
         retrieve = getattr(self._retrieval_agent, "retrieve", None)
         try:
-            if retrieve is not None:
-                return retrieve(question, repo_id)
-            # A retrieval agent that only satisfies the text Agent contract.
-            text = self._retrieval_agent.run(question, repo_id)
-            return GroundedAnswer(
-                answer=text,
-                citations=self._parse_citations_from_retrieval_output(text),
-                reasoning_steps=[],
-                snippets=[],
-            )
+            with agent_run("retrieval"):
+                if retrieve is not None:
+                    return retrieve(question, repo_id)
+                # A retrieval agent that only satisfies the text Agent contract.
+                text = self._retrieval_agent.run(question, repo_id)
+                return GroundedAnswer(
+                    answer=text,
+                    citations=self._parse_citations_from_retrieval_output(text),
+                    reasoning_steps=[],
+                    snippets=[],
+                )
         except Exception as exc:
             self._logger.warning("Retrieval failed (%s)", type(exc).__name__)
             return GroundedAnswer(answer="", citations=[], reasoning_steps=[], snippets=[])
@@ -355,10 +362,11 @@ class AgentOrchestrator:
         idx = state["current_step_index"]
         recall = getattr(self._memory_agent, "recall", None)
         try:
-            if recall is not None:
-                output = recall(state.get("session_id"), state["repo_id"])
-            else:
-                output = self._memory_agent.run(state["plan"].steps[idx].instruction, state["repo_id"])
+            with agent_run("memory"):
+                if recall is not None:
+                    output = recall(state.get("session_id"), state["repo_id"])
+                else:
+                    output = self._memory_agent.run(state["plan"].steps[idx].instruction, state["repo_id"])
         except Exception as exc:
             output = f"Error executing memory: {exc}"
 

@@ -1,0 +1,14 @@
+# Loads every dashboard JSON in ops/grafana/dashboards at start-up, so the agent panels are
+# there without anyone importing them by hand.
+apiVersion: 1
+
+providers:
+  - name: CodeAtlas
+    orgId: 1
+    folder: CodeAtlas
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards-data
