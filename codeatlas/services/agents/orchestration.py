@@ -27,6 +27,10 @@ class OrchestratorState(TypedDict):
     current_step_index: int
     results: list[str]
     final_answer: str
+    # The mentor's own answer, kept apart from final_answer so a later step in the
+    # plan cannot overwrite it. A plan ending in the analyst used to replace the
+    # answer with structural facts and throw the mentor's work away.
+    mentor_answer: str
     citations: list[str]
     # Appended by each node as it runs, so the record reflects the graph, not a guess.
     agents_ran: list[str]
@@ -61,6 +65,7 @@ class AgentOrchestrator:
             "current_step_index": 0,
             "results": [],
             "final_answer": "",
+            "mentor_answer": "",
             "citations": [],
             "snippets": [],
             "agents_ran": [],
@@ -95,8 +100,12 @@ class AgentOrchestrator:
         agents_ran = final_state.get("agents_ran", [])
         reasoning.append(f"Agents that ran: {' -> '.join(agents_ran)}." if agents_ran else "No agent ran.")
 
+        answer, note = _final_answer(final_state)
+        if note:
+            reasoning.append(note)
+
         return AnswerResult(
-            answer=final_state.get("final_answer", "No answer generated."),
+            answer=answer,
             citations=final_state.get("citations", []),
             reasoning_steps=reasoning,
             agents_used=agents_ran,
@@ -344,6 +353,8 @@ class AgentOrchestrator:
             **state,
             "results": state["results"] + [f"Step {idx + 1} (mentor): {output}"],
             "final_answer": output,
+            # A second mentor step replaces the first; the last mentor to run has the answer.
+            "mentor_answer": output,
             "current_step_index": idx + 1,
             "agents_ran": [*state["agents_ran"], "mentor"],
         }
@@ -433,3 +444,29 @@ def _detail(node: str, state: dict) -> str:
     if node == "memory":
         return "recalled this conversation"
     return ""
+
+
+# Said above a structural result, so a plan with no mentor step does not look as though the
+# agent that happened to run last was answering the question in prose.
+STRUCTURAL_PREFIX = "This is a structural result, computed from the code rather than written as an explanation.\n\n"
+
+
+def _final_answer(state: dict) -> tuple[str, str]:
+    """The answer to show, and a reasoning note when it is not the mentor's.
+
+    The mentor writes the answer. Whatever else the plan runs afterwards -- an analyst
+    summarising, a memory step recalling -- is a step along the way, not a replacement for
+    it. Only when the plan has no mentor at all does another agent's output stand in, and
+    then it is labelled.
+    """
+    mentor_answer = (state.get("mentor_answer") or "").strip()
+    if mentor_answer:
+        last = (state.get("final_answer") or "").strip()
+        if last and last != mentor_answer:
+            return mentor_answer, "Answer taken from the mentor step; later steps are shown above."
+        return mentor_answer, ""
+
+    last = (state.get("final_answer") or "").strip()
+    if not last:
+        return "No answer generated.", ""
+    return STRUCTURAL_PREFIX + last, "No mentor step in the plan; showing the structural result."

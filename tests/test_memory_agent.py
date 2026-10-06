@@ -173,4 +173,5 @@ def test_a_memory_step_without_a_session_does_not_fail_the_request() -> None:
     )
     result = orchestrator.handle_question("recall", "repo")
 
-    assert result.answer == NO_SESSION
+    # No mentor in the plan, so the memory output stands in, labelled as a raw result.
+    assert NO_SESSION in result.answer
