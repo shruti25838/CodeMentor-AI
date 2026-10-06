@@ -20,6 +20,9 @@ ANSWER_ERROR_PREFIX = "Error generating answer"
 # Define the state for the graph
 class OrchestratorState(TypedDict):
     question: str
+    # What retrieval searches with: the visitor's question, or its standalone
+    # rewrite for a follow-up. Never the planner's wording for the step.
+    search_question: str
     repo_id: str
     # The browser's random id for this chat, when there is one; the memory agent needs it.
     session_id: str | None
@@ -31,6 +34,9 @@ class OrchestratorState(TypedDict):
     # plan cannot overwrite it. A plan ending in the analyst used to replace the
     # answer with structural facts and throw the mentor's work away.
     mentor_answer: str
+    # Which agent produced final_answer, so a stand-in answer can be labelled for
+    # what it actually is rather than all being called structural.
+    final_agent: str
     citations: list[str]
     # Appended by each node as it runs, so the record reflects the graph, not a guess.
     agents_ran: list[str]
@@ -56,9 +62,12 @@ class AgentOrchestrator:
 
         self._graph = self._build_graph()
 
-    def _initial_state(self, question: str, repo_id: str, session_id: str | None) -> "OrchestratorState":
+    def _initial_state(
+        self, question: str, repo_id: str, session_id: str | None, search_question: str | None = None
+    ) -> "OrchestratorState":
         return {
             "question": question,
+            "search_question": search_question or question,
             "repo_id": repo_id,
             "session_id": session_id,
             "plan": default_plan(question),
@@ -66,22 +75,35 @@ class AgentOrchestrator:
             "results": [],
             "final_answer": "",
             "mentor_answer": "",
+            "final_agent": "",
             "citations": [],
             "snippets": [],
             "agents_ran": [],
         }
 
-    def handle_question(self, question: str, repo_id: str, session_id: str | None = None) -> AnswerResult:
-        final_state = self._graph.invoke(self._initial_state(question, repo_id, session_id))
+    def handle_question(
+        self,
+        question: str,
+        repo_id: str,
+        session_id: str | None = None,
+        search_question: str | None = None,
+    ) -> AnswerResult:
+        final_state = self._graph.invoke(self._initial_state(question, repo_id, session_id, search_question))
         return self._result_from(final_state, question)
 
-    def stream_question(self, question: str, repo_id: str, session_id: str | None = None) -> Iterator[dict]:
+    def stream_question(
+        self,
+        question: str,
+        repo_id: str,
+        session_id: str | None = None,
+        search_question: str | None = None,
+    ) -> Iterator[dict]:
         """Run the graph, yielding one event as each agent finishes, then the answer.
 
         Events are {"type": "agent", ...} as the real graph executes, and finally
         {"type": "result", "result": AnswerResult}. Nothing here is logged.
         """
-        state: dict = dict(self._initial_state(question, repo_id, session_id))
+        state: dict = dict(self._initial_state(question, repo_id, session_id, search_question))
         for update in self._graph.stream(state, stream_mode="updates"):
             for node, delta in update.items():
                 if delta:
@@ -292,15 +314,18 @@ class AgentOrchestrator:
             "final_answer": output,
             "current_step_index": idx + 1,
             "citations": new_citations,
+            "final_agent": step.agent,
             "agents_ran": [*state["agents_ran"], step.agent],
         }
 
     def _retrieval_node(self, state: OrchestratorState) -> OrchestratorState:
         """Retrieval keeps its snippets in the state; citations come from them, not from parsed text."""
-        steps = state["plan"].steps
         idx = state["current_step_index"]
-        step = steps[idx]
-        retrieved = self._retrieve(step.instruction or state["question"], state["repo_id"])
+        # Search with what the visitor asked, not with how the planner paraphrased it. The
+        # planner chooses which agents run; it does not get to reword the query, because a
+        # different paraphrase of the same question returned different files between runs.
+        query = state.get("search_question") or state["question"]
+        retrieved = self._retrieve(query, state["repo_id"])
         output = format_retrieval(retrieved.answer, retrieved.snippets)
 
         return {
@@ -310,6 +335,7 @@ class AgentOrchestrator:
             "current_step_index": idx + 1,
             "citations": _merge_citations(state.get("citations", []), retrieved.citations),
             "snippets": _merge_snippets(state.get("snippets", []), retrieved.snippets),
+            "final_agent": "retrieval",
             "agents_ran": [*state["agents_ran"], "retrieval"],
         }
 
@@ -356,6 +382,7 @@ class AgentOrchestrator:
             # A second mentor step replaces the first; the last mentor to run has the answer.
             "mentor_answer": output,
             "current_step_index": idx + 1,
+            "final_agent": "mentor",
             "agents_ran": [*state["agents_ran"], "mentor"],
         }
 
@@ -391,6 +418,7 @@ class AgentOrchestrator:
             "results": state["results"] + [f"Step {idx + 1} (memory): {output}"],
             "final_answer": output,
             "current_step_index": idx + 1,
+            "final_agent": "memory",
             "agents_ran": [*state["agents_ran"], "memory"],
         }
 
@@ -446,9 +474,24 @@ def _detail(node: str, state: dict) -> str:
     return ""
 
 
-# Said above a structural result, so a plan with no mentor step does not look as though the
-# agent that happened to run last was answering the question in prose.
+# A plan with no mentor step has nobody to write the answer, so another agent's output
+# stands in. It is labelled for what it actually is: calling a file search "structural" was
+# wrong, and said so to the visitor.
 STRUCTURAL_PREFIX = "This is a structural result, computed from the code rather than written as an explanation.\n\n"
+SEARCH_PREFIX = "This is a search result, not a written answer.\n\n"
+RECALL_PREFIX = "This is recalled context from this conversation, not a written answer.\n\n"
+
+STAND_IN_PREFIXES = {
+    "analyst": STRUCTURAL_PREFIX,
+    "retrieval": SEARCH_PREFIX,
+    "memory": RECALL_PREFIX,
+}
+
+STAND_IN_NOTES = {
+    "analyst": "No mentor step in the plan; showing the structural result.",
+    "retrieval": "No mentor step in the plan; showing the search result.",
+    "memory": "No mentor step in the plan; showing the recalled context.",
+}
 
 
 def _final_answer(state: dict) -> tuple[str, str]:
@@ -469,4 +512,9 @@ def _final_answer(state: dict) -> tuple[str, str]:
     last = (state.get("final_answer") or "").strip()
     if not last:
         return "No answer generated.", ""
-    return STRUCTURAL_PREFIX + last, "No mentor step in the plan; showing the structural result."
+    agent = state.get("final_agent") or ""
+    prefix = STAND_IN_PREFIXES.get(agent)
+    if not prefix:
+        # An agent with no label of its own: show the output plainly rather than mislabel it.
+        return last, "No mentor step in the plan; showing the last agent's output."
+    return prefix + last, STAND_IN_NOTES[agent]

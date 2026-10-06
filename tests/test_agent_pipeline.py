@@ -6,7 +6,7 @@ Every agent here is a fake, so these tests need no model key and make no network
 import json
 
 from codeatlas.services.agents.interfaces import Agent
-from codeatlas.services.agents.orchestration import STRUCTURAL_PREFIX, AgentOrchestrator
+from codeatlas.services.agents.orchestration import SEARCH_PREFIX, AgentOrchestrator
 
 FIVE_AGENTS = {"planner", "retrieval", "analyst", "mentor", "memory"}
 
@@ -72,14 +72,15 @@ def test_plan_ends_after_its_last_step_with_no_extra_agent_call() -> None:
     orchestrator, agents = build(plan_of(("retrieval", "find x")))
     result = orchestrator.handle_question("q", "repo")
 
-    assert agents["retrieval"].calls == ["find x"]
+    # Retrieval searches with the visitor's question, not the planner's wording for the step.
+    assert agents["retrieval"].calls == ["q"]
     # The mentor was the validator's stand-in; with the validator gone it must not be called.
     assert agents["mentor"].calls == []
     assert agents["analyst"].calls == []
-    # No mentor in the plan, so the retrieval output stands in and is labelled as a raw
-    # result rather than passed off as a written answer.
+    # No mentor in the plan, so the retrieval output stands in, labelled a search result
+    # rather than passed off as a written answer.
     assert agents["retrieval"].reply in result.answer
-    assert result.answer.startswith(STRUCTURAL_PREFIX)
+    assert result.answer.startswith(SEARCH_PREFIX)
 
 
 def test_mentor_answer_is_not_rewritten_after_the_plan_finishes() -> None:

@@ -161,7 +161,7 @@ async def ask_stream(
                     # finishes, so the wait is visible rather than silent.
                     yield _sse({"type": "status", "content": "Planning..."})
                     result = None
-                    async for event in _run_deep(orchestrator, request, timer):
+                    async for event in _run_deep(orchestrator, llm_provider, request, history, timer):
                         if event["type"] == "result":
                             result = event["result"]
                         else:
@@ -228,7 +228,7 @@ async def ask_stream(
 # ---------- helpers ----------
 
 
-async def _run_deep(orchestrator, request: AskRequest, timer: StageTimer):
+async def _run_deep(orchestrator, llm_provider, request: AskRequest, history: list[Turn], timer: StageTimer):
     """Bridge the orchestrator's blocking generator into the event loop.
 
     The graph calls the model, so it must not run on the event loop. A worker thread pushes
@@ -240,7 +240,16 @@ async def _run_deep(orchestrator, request: AskRequest, timer: StageTimer):
 
     def produce() -> None:
         try:
-            for event in orchestrator.stream_question(request.question, request.repo_id, request.session_id):
+            # A follow-up is rewritten into a standalone question for search, exactly as the
+            # fast path does, so deep mode searches with the visitor's meaning rather than
+            # with "why does it do that?".
+            search_question = None
+            if needs_rewrite(request.question, history):
+                with stage("rewrite"):
+                    search_question = rewrite_question(llm_provider.get_chat_model(), request.question, history)
+            for event in orchestrator.stream_question(
+                request.question, request.repo_id, request.session_id, search_question=search_question
+            ):
                 events.put(event)
         except Exception as exc:  # noqa: BLE001 - reported to the caller as an event
             events.put({"type": "failed", "error": exc})

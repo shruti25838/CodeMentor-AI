@@ -12,7 +12,12 @@ No model is involved anywhere here.
 import pytest
 from test_agent_pipeline import FakeAgent, plan_of
 
-from codeatlas.services.agents.orchestration import STRUCTURAL_PREFIX, AgentOrchestrator
+from codeatlas.services.agents.orchestration import (
+    RECALL_PREFIX,
+    SEARCH_PREFIX,
+    STRUCTURAL_PREFIX,
+    AgentOrchestrator,
+)
 
 MENTOR = "The signer derives its key with django-concat."
 ANALYST = "sign is called from 3 places"
@@ -107,12 +112,33 @@ def test_a_plan_with_a_mentor_always_answers_with_the_mentor(steps, expected) ->
     assert ask(*steps).answer == expected
 
 
-@pytest.mark.parametrize("agent,output", [("analyst", ANALYST), ("memory", MEMORY)])
-def test_a_plan_without_a_mentor_keeps_the_last_output_but_labels_it(agent: str, output: str) -> None:
+@pytest.mark.parametrize(
+    "agent,output,prefix",
+    [
+        ("analyst", ANALYST, STRUCTURAL_PREFIX),
+        ("memory", MEMORY, RECALL_PREFIX),
+        ("retrieval", RETRIEVAL, SEARCH_PREFIX),
+    ],
+)
+def test_a_plan_without_a_mentor_labels_the_output_for_what_it_is(agent: str, output: str, prefix: str) -> None:
+    """Calling a file search or a recalled turn a "structural result" was simply wrong."""
     result = ask((agent, "do it"))
 
-    assert result.answer.startswith(STRUCTURAL_PREFIX)
-    assert output in result.answer
+    assert result.answer.startswith(prefix)
+    assert output.splitlines()[0] in result.answer
+
+
+def test_the_three_labels_are_different_from_each_other() -> None:
+    assert len({STRUCTURAL_PREFIX, SEARCH_PREFIX, RECALL_PREFIX}) == 3
+    assert "structural" in STRUCTURAL_PREFIX
+    assert "search result" in SEARCH_PREFIX
+    assert "recalled context" in RECALL_PREFIX
+
+
+def test_only_the_analyst_is_called_structural() -> None:
+    assert not ask(("retrieval", "find")).answer.startswith(STRUCTURAL_PREFIX)
+    assert not ask(("memory", "recall")).answer.startswith(STRUCTURAL_PREFIX)
+    assert ask(("analyst", "facts")).answer.startswith(STRUCTURAL_PREFIX)
 
 
 def test_a_structural_answer_is_not_silently_passed_off_as_prose() -> None:
@@ -175,3 +201,89 @@ def test_an_empty_run_still_says_so() -> None:
     )
     # An empty plan falls back to the default, which has a mentor.
     assert orchestrator.handle_question("q", "repo").answer == MENTOR
+
+
+# ---------- retrieval searches with the visitor's question, not the planner's wording ----------
+
+
+class RecordingRetrieval(FakeAgent):
+    """Keeps every query it was asked to search for."""
+
+    def __init__(self) -> None:
+        super().__init__("retrieval", RETRIEVAL)
+        self.queries: list[str] = []
+
+    def retrieve(self, question, repo_id, top_k=5):
+        from codeatlas.services.qa.answer_service import GroundedAnswer
+
+        self.queries.append(question)
+        return GroundedAnswer(answer="found", citations=["a.py (lines 1-2)"], reasoning_steps=[], snippets=[])
+
+
+def search_queries_for(plan_json: str, question: str, search_question: str | None = None) -> list[str]:
+    retrieval = RecordingRetrieval()
+    orchestrator = AgentOrchestrator(
+        planner=FakeAgent("planner", plan_json),
+        retrieval_agent=retrieval,
+        analyst_agent=FakeAgent("analyst", ANALYST),
+        mentor_agent=FakeAgent("mentor", MENTOR),
+        memory_agent=FakeAgent("memory", MEMORY),
+    )
+    orchestrator.handle_question(question, "repo", search_question=search_question)
+    return retrieval.queries
+
+
+QUESTION = "How does Signer derive its key?"
+
+
+def test_two_planners_wording_the_step_differently_search_the_same() -> None:
+    """The planner is a model call, so its wording varied run to run and moved the search."""
+    first = search_queries_for(
+        plan_of(("retrieval", "Locate the Signer class and its key derivation"), ("mentor", "explain")), QUESTION
+    )
+    second = search_queries_for(
+        plan_of(("retrieval", "find where signing keys come from in this repo"), ("mentor", "explain")), QUESTION
+    )
+
+    assert first == second == [QUESTION]
+
+
+def test_the_planners_instruction_never_reaches_the_search() -> None:
+    queries = search_queries_for(plan_of(("retrieval", "SOME PLANNER WORDING"), ("mentor", "b")), QUESTION)
+    assert "SOME PLANNER WORDING" not in queries[0]
+
+
+def test_an_empty_instruction_does_not_change_the_search_either() -> None:
+    assert search_queries_for(plan_of(("retrieval", "")), QUESTION) == [QUESTION]
+
+
+def test_two_retrieval_steps_both_search_the_question() -> None:
+    queries = search_queries_for(plan_of(("retrieval", "first wording"), ("retrieval", "second wording")), QUESTION)
+    assert queries == [QUESTION, QUESTION]
+
+
+def test_a_rewritten_follow_up_is_what_search_sees() -> None:
+    """A follow-up like "why does it do that?" is useless as a query; the rewrite is used."""
+    rewritten = "Why does Signer use a salt?"
+    queries = search_queries_for(
+        plan_of(("retrieval", "look into it"), ("mentor", "explain")),
+        "why does it do that?",
+        search_question=rewritten,
+    )
+    assert queries == [rewritten]
+
+
+def test_the_planner_still_chooses_which_agents_run() -> None:
+    """Only the query is taken out of the planner's hands; routing is still its job."""
+    retrieval = RecordingRetrieval()
+    orchestrator = AgentOrchestrator(
+        planner=FakeAgent("planner", plan_of(("analyst", "structure"), ("mentor", "explain"))),
+        retrieval_agent=retrieval,
+        analyst_agent=FakeAgent("analyst", ANALYST),
+        mentor_agent=FakeAgent("mentor", MENTOR),
+        memory_agent=FakeAgent("memory", MEMORY),
+    )
+    result = orchestrator.handle_question(QUESTION, "repo")
+
+    assert result.agents_used == ["planner", "analyst", "mentor"]
+    assert retrieval.queries == [], "a plan without a retrieval step runs no search"
