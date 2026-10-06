@@ -20,7 +20,7 @@ class RecordingRetriever(CodeRetriever):
         self.searched_top_k: int | None = None
         self.indexed: list[EmbeddingRecord] = []
 
-    def index(self, repo_id: str, records: list[EmbeddingRecord]) -> None:
+    def index(self, repo_id: str, records: list[EmbeddingRecord], embedder: str = "") -> None:
         self.indexed = records
 
     def search(self, repo_id: str, query_vector: list[float], top_k: int) -> list[EmbeddingRecord]:

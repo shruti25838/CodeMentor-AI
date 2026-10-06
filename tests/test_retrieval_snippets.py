@@ -29,7 +29,7 @@ class StubRetriever(CodeRetriever):
     def __init__(self, records: list[EmbeddingRecord]) -> None:
         self._records = records
 
-    def index(self, repo_id, records) -> None:
+    def index(self, repo_id, records, embedder="") -> None:
         return None
 
     def search(self, repo_id, query_vector, top_k):
