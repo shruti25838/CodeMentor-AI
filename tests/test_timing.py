@@ -119,9 +119,11 @@ def test_ask_stream_reports_chat_stages_without_question_text(tmp_path, caplog):
     done = _events(resp)[-1]
     assert done["type"] == "done"
     timings = done["timings_ms"]
-    # The fast path asks the model three times: retrieval summary, mentor's own retrieval, mentor answer.
-    assert timings["llm_calls"] == 3
-    assert timings["embed_query_calls"] == 2
+    # The fast path asks the model twice: the retrieval summary, then the mentor's answer.
+    # It was three until the mentor stopped running its own second search.
+    assert timings["llm_calls"] == 2
+    assert "embed_query_calls" not in timings, "one search per question, so no repeat count"
+    assert timings["search"] >= 0
     for name in ("embed_query", "search", "rerank", "llm", "first_token_sent", "total"):
         assert name in timings
     assert timings["first_token_sent"] <= timings["total"]

@@ -9,7 +9,7 @@ from codeatlas.services.agents.retrieval_agent import format_retrieval
 from codeatlas.services.agents.types import AnswerResult, GenerateResult
 from codeatlas.services.memory.interfaces import MemoryStore
 from codeatlas.services.qa.answer_service import GroundedAnswer
-from codeatlas.services.retrieval.snippets import Snippet
+from codeatlas.services.retrieval.snippets import Snippet, render_snippets
 
 # Start of the answer when the mentor fails; such answers are not kept as conversation history.
 ANSWER_ERROR_PREFIX = "Error generating answer"
@@ -82,18 +82,14 @@ class AgentOrchestrator:
         history: earlier turns of this conversation, shown to the mentor. search_question: a
         standalone version of a follow-up, used for retrieval instead of the question as asked.
         """
-        # 1. Retrieve
+        # 1. Retrieve — the only search this path makes.
         retrieved = self._retrieve(search_question or question, repo_id)
         citations = retrieved.citations
-        retrieval_output = format_retrieval(retrieved.answer, retrieved.snippets)
 
-        # 2. Mentor answers using context
-        mentor_prompt = f"{question}\n\nRetrieved context:\n{retrieval_output}" if retrieval_output else question
+        # 2. The mentor answers from exactly those snippets, so the answer and the citations
+        #    describe the same code.
         try:
-            if history:
-                answer = self._mentor_agent.run(mentor_prompt, repo_id, history=history)
-            else:
-                answer = self._mentor_agent.run(mentor_prompt, repo_id)
+            answer = self._mentor_answer(question, retrieved.snippets, repo_id, history=history)
         except Exception as e:
             self._logger.warning("Mentor failed: %s", e)
             answer = f"{ANSWER_ERROR_PREFIX}: {e}"
@@ -284,7 +280,38 @@ class AgentOrchestrator:
         return self._execute_agent(self._analyst_agent, state)
 
     def _mentor_node(self, state: OrchestratorState) -> OrchestratorState:
-        return self._execute_agent(self._mentor_agent, state)
+        """The mentor answers from the snippets retrieval already read, never its own search."""
+        steps = state["plan"].steps
+        idx = state["current_step_index"]
+        step = steps[idx]
+        snippets = state.get("snippets", [])
+        facts = _facts_from(state.get("results", []))
+
+        try:
+            output = self._mentor_answer(step.instruction or state["question"], snippets, state["repo_id"], facts=facts)
+        except Exception as exc:
+            output = f"Error executing mentor: {exc}"
+
+        return {
+            **state,
+            "results": state["results"] + [f"Step {idx + 1} (mentor): {output}"],
+            "final_answer": output,
+            "current_step_index": idx + 1,
+        }
+
+    def _mentor_answer(
+        self, question: str, snippets: list[Snippet], repo_id: str, facts: str = "", history: str = ""
+    ) -> str:
+        """Call the mentor's snippet-based entry point, falling back to the text Agent contract."""
+        answer = getattr(self._mentor_agent, "answer", None)
+        if answer is not None:
+            return answer(question, snippets, facts=facts, history=history)
+        prompt = question
+        if snippets:
+            prompt = f"{question}\n\nRetrieved context:\n{render_snippets(snippets)}"
+        if history:
+            return self._mentor_agent.run(prompt, repo_id, history=history)
+        return self._mentor_agent.run(prompt, repo_id)
 
     def _memory_node(self, state: OrchestratorState) -> OrchestratorState:
         return self._execute_agent(self._memory_agent, state)
@@ -305,3 +332,13 @@ def _merge_snippets(existing: list[Snippet], new: list[Snippet]) -> list[Snippet
             seen.add(key)
             out.append(snippet)
     return out
+
+
+# Analyst output is exact, computed from the code; the mentor is told to prefer it over its
+# reading of the snippets. Only analyst steps count as facts.
+_FACT_PREFIX = "(analyst): "
+
+
+def _facts_from(results: list[str]) -> str:
+    facts = [r.split(_FACT_PREFIX, 1)[1] for r in results if _FACT_PREFIX in r]
+    return "\n\n".join(facts)

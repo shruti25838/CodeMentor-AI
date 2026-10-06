@@ -103,7 +103,7 @@ def get_agent_orchestrator() -> AgentOrchestrator:
     planner = PlannerAgent(llm=llm)
     retrieval_agent = RetrievalAgent(answer_service=answer_service)
     analyst_agent = RepoAnalystAgent(state_store=repo_state_store, llm=llm)
-    mentor_agent = CodingMentorAgent(answer_service=answer_service, llm=llm)
+    mentor_agent = CodingMentorAgent(llm=llm, answer_service=answer_service)
     memory_agent = MemoryAgent(memory_store=memory_store)
 
     return AgentOrchestrator(

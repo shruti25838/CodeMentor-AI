@@ -225,8 +225,10 @@ def test_follow_up_is_rewritten_once_and_used_for_search(tmp_path):
     assert any(REWRITTEN in p for p in chat.llm.prompts_containing(ANSWER_SYSTEM))
     # ...while the mentor still answers the question as asked, with the history.
     [mentor_prompt] = chat.llm.prompts_containing(MENTOR_HISTORY)
-    assert "Goal: what about negative numbers?" in mentor_prompt
-    assert done["timings_ms"]["llm_calls"] == 3
+    assert "Question: what about negative numbers?" in mentor_prompt
+    # Two `llm` calls now, not three: the retrieval summary and the mentor's answer. The
+    # mentor no longer runs a search of its own. The rewrite is counted as its own stage.
+    assert done["timings_ms"]["llm_calls"] == 2
     assert "rewrite" in done["timings_ms"]
 
 
