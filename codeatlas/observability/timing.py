@@ -59,7 +59,11 @@ class StageTimer:
         return ", ".join(f"{name};dur={ms}" for name, ms in self.as_dict().items() if not name.endswith("_calls"))
 
     def log(self, what: str) -> None:
+        """Log the request's timings and record them in the Prometheus stage histogram."""
+        from codeatlas.observability.metrics import observe_stages
+
         logger.info("timing %s %s", what, " ".join(f"{k}={v}" for k, v in self.as_dict().items()))
+        observe_stages(what, dict(self._ms), self.elapsed_ms())
 
 
 @contextmanager

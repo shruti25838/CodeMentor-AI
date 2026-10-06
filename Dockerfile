@@ -10,6 +10,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY codeatlas ./codeatlas
+# Retrieval eval results, read at startup into the codeatlas_retrieval_* gauges on /metrics.
+COPY eval/results ./eval/results
 COPY README.md .
 
 EXPOSE 8000

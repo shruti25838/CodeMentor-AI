@@ -12,6 +12,7 @@ from codeatlas.app.di import (
     get_repo_state_store,
 )
 from codeatlas.controllers.repo_guard import require_known_repo
+from codeatlas.observability.metrics import ERROR_COUNT
 from codeatlas.observability.timing import StageTimer, run_timed, stage, timed_request
 from codeatlas.observability.tracker import tracker
 from codeatlas.schemas.ask import AskRequest, AskResponse
@@ -190,6 +191,8 @@ async def ask_stream(
                     }
                 )
         except Exception as e:
+            # The stream already answered 200, so the middleware cannot see this failure.
+            ERROR_COUNT.labels(path="/ask/stream", kind="stream_error").inc()
             yield _sse({"type": "error", "content": str(e)})
 
     return StreamingResponse(

@@ -1,0 +1,315 @@
+{
+  "codementor_commit": "0bd92e8",
+  "embedder": "hash (HashEmbeddingService, 384 dims, subtokens, hashed bag of words, not semantic)",
+  "settings": {
+    "retrieval": {
+      "candidates": 20,
+      "rerank_weight": 1.0,
+      "rerank_subtokens": false,
+      "drop_stopwords": true,
+      "skip_tests": false
+    },
+    "index": {
+      "max_chars": null,
+      "prefix_metadata": true
+    }
+  },
+  "split": "test",
+  "repos": {
+    "itsdangerous": {
+      "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
+      "files_indexed": 15,
+      "records_indexed": 159,
+      "questions": 10,
+      "hit_rate": {
+        "@1": 0.8,
+        "@3": 0.8,
+        "@5": 0.9
+      },
+      "precision": {
+        "@1": 0.8,
+        "@3": 0.7,
+        "@5": 0.56
+      },
+      "mrr@10": 0.82
+    },
+    "flask": {
+      "commit": "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35",
+      "files_indexed": 83,
+      "records_indexed": 1705,
+      "questions": 10,
+      "hit_rate": {
+        "@1": 0.4,
+        "@3": 0.5,
+        "@5": 0.6
+      },
+      "precision": {
+        "@1": 0.4,
+        "@3": 0.3667,
+        "@5": 0.28
+      },
+      "mrr@10": 0.47
+    }
+  },
+  "overall": {
+    "questions": 20,
+    "hit_rate": {
+      "@1": 0.6,
+      "@3": 0.65,
+      "@5": 0.75
+    },
+    "precision": {
+      "@1": 0.6,
+      "@3": 0.5333,
+      "@5": 0.42
+    },
+    "mrr@10": 0.645
+  },
+  "per_question": {
+    "itsdangerous": [
+      {
+        "id": "itsd-02",
+        "top5": [
+          "src/itsdangerous/url_safe.py",
+          "src/itsdangerous/__init__.py",
+          "src/itsdangerous/url_safe.py",
+          "tests/test_itsdangerous/test_url_safe.py",
+          "tests/test_itsdangerous/test_url_safe.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 1.0
+      },
+      {
+        "id": "itsd-04",
+        "top5": [
+          "src/itsdangerous/signer.py",
+          "src/itsdangerous/signer.py",
+          "src/itsdangerous/signer.py",
+          "src/itsdangerous/serializer.py",
+          "src/itsdangerous/serializer.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 1.0
+      },
+      {
+        "id": "itsd-06",
+        "top5": [
+          "src/itsdangerous/signer.py",
+          "src/itsdangerous/serializer.py",
+          "src/itsdangerous/signer.py",
+          "src/itsdangerous/signer.py",
+          "src/itsdangerous/serializer.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 1.0
+      },
+      {
+        "id": "itsd-08",
+        "top5": [
+          "src/itsdangerous/url_safe.py",
+          "src/itsdangerous/url_safe.py",
+          "src/itsdangerous/url_safe.py",
+          "src/itsdangerous/exc.py",
+          "src/itsdangerous/exc.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 1.0
+      },
+      {
+        "id": "itsd-10",
+        "top5": [
+          "src/itsdangerous/timed.py",
+          "src/itsdangerous/timed.py",
+          "src/itsdangerous/timed.py",
+          "src/itsdangerous/timed.py",
+          "src/itsdangerous/timed.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 1.0
+      },
+      {
+        "id": "itsd-12",
+        "top5": [
+          "tests/test_itsdangerous/test_timed.py",
+          "tests/test_itsdangerous/test_timed.py",
+          "tests/test_itsdangerous/test_timed.py",
+          "tests/test_itsdangerous/test_timed.py",
+          "src/itsdangerous/exc.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 0.2
+      },
+      {
+        "id": "itsd-14",
+        "top5": [
+          "src/itsdangerous/serializer.py",
+          "src/itsdangerous/exc.py",
+          "src/itsdangerous/timed.py",
+          "src/itsdangerous/serializer.py",
+          "tests/test_itsdangerous/test_serializer.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 1.0
+      },
+      {
+        "id": "itsd-16",
+        "top5": [
+          "src/itsdangerous/signer.py",
+          "src/itsdangerous/signer.py",
+          "src/itsdangerous/signer.py",
+          "src/itsdangerous/serializer.py",
+          "src/itsdangerous/serializer.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 1.0
+      },
+      {
+        "id": "itsd-18",
+        "top5": [
+          "src/itsdangerous/timed.py",
+          "src/itsdangerous/timed.py",
+          "src/itsdangerous/timed.py",
+          "src/itsdangerous/timed.py",
+          "src/itsdangerous/exc.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 1.0
+      },
+      {
+        "id": "itsd-20",
+        "top5": [
+          "tests/test_itsdangerous/test_timed.py",
+          "tests/test_itsdangerous/test_signer.py",
+          "tests/test_itsdangerous/test_signer.py",
+          "src/itsdangerous/exc.py",
+          "tests/test_itsdangerous/test_timed.py"
+        ],
+        "hit@5": 0.0,
+        "rr": 0.0
+      }
+    ],
+    "flask": [
+      {
+        "id": "flask-02",
+        "top5": [
+          "src/flask/config.py",
+          "src/flask/config.py",
+          "src/flask/config.py",
+          "tests/test_config.py",
+          "tests/test_config.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 1.0
+      },
+      {
+        "id": "flask-04",
+        "top5": [
+          "src/flask/sessions.py",
+          "src/flask/sessions.py",
+          "src/flask/ctx.py",
+          "tests/test_basic.py",
+          "src/flask/json/tag.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 0.2
+      },
+      {
+        "id": "flask-06",
+        "top5": [
+          "tests/test_basic.py",
+          "src/flask/sansio/app.py",
+          "src/flask/sansio/scaffold.py",
+          "tests/test_user_error_handler.py",
+          "tests/test_user_error_handler.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 0.5
+      },
+      {
+        "id": "flask-08",
+        "top5": [
+          "src/flask/sansio/blueprints.py",
+          "src/flask/sansio/blueprints.py",
+          "src/flask/sansio/blueprints.py",
+          "src/flask/sansio/blueprints.py",
+          "src/flask/wrappers.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 1.0
+      },
+      {
+        "id": "flask-10",
+        "top5": [
+          "tests/test_basic.py",
+          "src/flask/app.py",
+          "src/flask/ctx.py",
+          "tests/test_basic.py",
+          "src/flask/ctx.py"
+        ],
+        "hit@5": 0.0,
+        "rr": 0.0
+      },
+      {
+        "id": "flask-12",
+        "top5": [
+          "tests/test_basic.py",
+          "src/flask/helpers.py",
+          "tests/test_json.py",
+          "examples/celery/src/task_app/__init__.py",
+          "tests/test_blueprints.py"
+        ],
+        "hit@5": 0.0,
+        "rr": 0.0
+      },
+      {
+        "id": "flask-14",
+        "top5": [
+          "tests/test_async.py",
+          "tests/test_async.py",
+          "tests/test_async.py",
+          "src/flask/views.py",
+          "tests/test_blueprints.py"
+        ],
+        "hit@5": 0.0,
+        "rr": 0.0
+      },
+      {
+        "id": "flask-16",
+        "top5": [
+          "src/flask/templating.py",
+          "tests/test_apps/blueprintapp/apps/frontend/__init__.py",
+          "src/flask/templating.py",
+          "src/flask/templating.py",
+          "tests/test_blueprints.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 1.0
+      },
+      {
+        "id": "flask-18",
+        "top5": [
+          "src/flask/wrappers.py",
+          "src/flask/wrappers.py",
+          "src/flask/helpers.py",
+          "src/flask/app.py",
+          "src/flask/app.py"
+        ],
+        "hit@5": 1.0,
+        "rr": 1.0
+      },
+      {
+        "id": "flask-20",
+        "top5": [
+          "tests/test_basic.py",
+          "tests/test_cli.py",
+          "tests/test_cli.py",
+          "tests/test_cli.py",
+          "examples/celery/src/task_app/__init__.py"
+        ],
+        "hit@5": 0.0,
+        "rr": 0.0
+      }
+    ]
+  },
+  "seconds": 1.2
+}
