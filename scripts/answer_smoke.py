@@ -44,6 +44,57 @@ TOKEN_BUDGET_PER_MINUTE = 7000
 ESTIMATE = {"fast": 4000, "deep": 7000}
 
 
+def free_megabytes() -> int:
+    """Physical memory still available, or -1 when it cannot be read.
+
+    A long run was once stopped from outside because the machine ran out of memory, which
+    loses the runs still to come. Checking first lets the run stop on its own terms, with
+    everything finished so far already written to disk.
+    """
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class _Status(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            status = _Status()
+            status.dwLength = ctypes.sizeof(_Status)
+            if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return -1
+            return int(status.ullAvailPhys // (1024 * 1024))
+        with open("/proc/meminfo") as handle:
+            for line in handle:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+    except Exception:
+        return -1
+    return -1
+
+
+def key_of(row: dict) -> tuple[str, str, str]:
+    return (row["repo"], row["question"], row["mode"])
+
+
+def load_done(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return []
+
+
 @dataclass
 class Pacer:
     """Waits only as long as the provider's per-minute token allowance requires."""
@@ -146,6 +197,17 @@ def main() -> int:
     parser.add_argument("--mode", choices=["fast", "deep", "both"], default="both")
     parser.add_argument("--limit", type=int, default=0, help="first N questions per repository")
     parser.add_argument("--out", default="")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="skip runs already present in --out, and keep appending to it",
+    )
+    parser.add_argument(
+        "--min-free-mb",
+        type=int,
+        default=600,
+        help="stop cleanly before a run if less memory than this is free",
+    )
     args = parser.parse_args()
 
     items = json.loads(QUESTIONS.read_text(encoding="utf-8"))
@@ -199,23 +261,40 @@ def main() -> int:
         modes = ["fast", "deep"] if args.mode == "both" else [args.mode]
         pacer = Pacer()
         before_failures = failure_counts()
-        rows = []
 
-        for mode in modes:
-            for item in items:
-                waited = pacer.wait_for(ESTIMATE[mode])
-                tokens_before = token_total()
-                result = ask(client, repo_ids[item["repo"]], item["question"], mode)
-                used = token_total() - tokens_before
-                pacer.record(used)
-                verdict = judge(item, result)
-                rows.append({**item, "mode": mode, **verdict, "seconds": result["seconds"], "tokens": used})
-                mark = "PASS" if verdict["passed"] else "FAIL"
-                why = "" if verdict["passed"] else f"  (file {verdict['file_ok']}, fact {verdict['fact_ok']})"
-                print(
-                    f"{mark} {mode:4s} {item['repo']:12s} {item['question'][:46]:46s}"
-                    f" {result['seconds']:5.1f}s{why}" + (f"  waited {waited:.0f}s" if waited else "")
-                )
+        out_path = Path(args.out) if args.out else None
+        rows = load_done(out_path) if (args.resume and out_path) else []
+        already = {key_of(r) for r in rows}
+        if already:
+            print(f"resuming: {len(already)} run(s) already done, skipping those")
+
+        planned = [(mode, item) for mode in modes for item in items]
+        remaining = [(m, i) for m, i in planned if (i["repo"], i["question"], m) not in already]
+        print(f"{len(remaining)} run(s) to do of {len(planned)}\n")
+
+        stopped_early = ""
+        for mode, item in remaining:
+            free = free_megabytes()
+            if 0 <= free < args.min_free_mb:
+                stopped_early = f"only {free} MB of memory free, need {args.min_free_mb} MB"
+                print(f"\nSTOPPING CLEANLY: {stopped_early}")
+                break
+            waited = pacer.wait_for(ESTIMATE[mode])
+            tokens_before = token_total()
+            result = ask(client, repo_ids[item["repo"]], item["question"], mode)
+            used = token_total() - tokens_before
+            pacer.record(used)
+            verdict = judge(item, result)
+            rows.append({**item, "mode": mode, **verdict, "seconds": result["seconds"], "tokens": used})
+            # Written after every run, so a run stopped from outside keeps what is finished.
+            if out_path:
+                out_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+            mark = "PASS" if verdict["passed"] else "FAIL"
+            why = "" if verdict["passed"] else f"  (file {verdict['file_ok']}, fact {verdict['fact_ok']})"
+            print(
+                f"{mark} {mode:4s} {item['repo']:12s} {item['question'][:46]:46s}"
+                f" {result['seconds']:5.1f}s{why}" + (f"  waited {waited:.0f}s" if waited else "")
+            )
 
         after_failures = failure_counts()
         elapsed = time.perf_counter() - started
