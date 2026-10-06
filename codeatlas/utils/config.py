@@ -1,6 +1,11 @@
 import os
 from dataclasses import dataclass
 
+from codeatlas.services.retrieval.fastembed_embedder import (
+    DEFAULT_FASTEMBED_BATCH_SIZE,
+    DEFAULT_FASTEMBED_MODEL,
+)
+
 # A reasoning model spends part of its output budget on reasoning before it writes anything
 # the user sees. Measured against openai/gpt-oss-20b with a short question: a budget of 64
 # tokens produced an empty answer (the reasoning used all 64 and the reply was cut off),
@@ -12,7 +17,7 @@ DEFAULT_LLM_MAX_TOKENS = 2048
 # Every embedding provider the app knows how to build. A name outside this list is a typo or a
 # provider that was never wired up, and either way it must not fall through to some default:
 # the vectors would silently be the wrong ones. See codeatlas/app/di.py:build_embedder.
-EMBEDDING_PROVIDERS = ("hash", "sentence")
+EMBEDDING_PROVIDERS = ("hash", "sentence", "fastembed")
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,14 @@ class AppConfig:
     embed_prefix_metadata: bool = True
     hash_lowercase: bool = False
     hash_subtokens: bool = True
+    # Settings below apply only when embedding_provider == "fastembed". That provider runs a real
+    # transformer on CPU, which is far slower per document than the hash embedder, so it indexes one
+    # document at a time, embeds only the first 3,000 characters of each, and gets its own time
+    # limit. None of these three touch any other provider.
+    fastembed_model: str = DEFAULT_FASTEMBED_MODEL
+    fastembed_batch_size: int = DEFAULT_FASTEMBED_BATCH_SIZE
+    fastembed_max_chars: int = 3000
+    fastembed_index_timeout_seconds: int = 900
     # Folder of scripts/eval_retrieval.py --json results; read at startup into the retrieval gauges.
     eval_results_dir: str = "eval/results"
 
@@ -107,4 +120,8 @@ def load_config() -> AppConfig:
         chat_session_ttl_seconds=int(os.getenv("CODEATLAS_CHAT_SESSION_TTL_SECONDS", "1800")),
         chat_max_sessions=int(os.getenv("CODEATLAS_CHAT_MAX_SESSIONS", "1000")),
         eval_results_dir=os.getenv("CODEATLAS_EVAL_RESULTS_DIR", "eval/results"),
+        fastembed_model=os.getenv("CODEATLAS_FASTEMBED_MODEL", DEFAULT_FASTEMBED_MODEL),
+        fastembed_batch_size=int(os.getenv("CODEATLAS_FASTEMBED_BATCH_SIZE", str(DEFAULT_FASTEMBED_BATCH_SIZE))),
+        fastembed_max_chars=int(os.getenv("CODEATLAS_FASTEMBED_MAX_CHARS", "3000")),
+        fastembed_index_timeout_seconds=int(os.getenv("CODEATLAS_FASTEMBED_INDEX_TIMEOUT_SECONDS", "900")),
     )

@@ -20,6 +20,7 @@ from codeatlas.services.parsing.tree_sitter_parser import TreeSitterAstParser
 from codeatlas.services.qa.answer_service import AnswerService, RetrievalSettings
 from codeatlas.services.retrieval.embedding import EmbeddingService
 from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever
+from codeatlas.services.retrieval.fastembed_embedder import FastEmbedEmbeddingService
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService
 from codeatlas.services.retrieval.indexing import CodeIndexService
 from codeatlas.services.retrieval.sentence_transformer_embedder import SentenceTransformerEmbeddingService
@@ -88,6 +89,7 @@ class IndexSettings:
 
     max_chars: int | None = None
     prefix_metadata: bool = False
+    batch_size: int = 64
 
 
 @dataclass(frozen=True)
@@ -106,6 +108,8 @@ def describe_embedder(embedder: EmbeddingService) -> str:
         return f"hash (HashEmbeddingService, {embedder._dimension} dims{extra}, hashed bag of words, not semantic)"
     if isinstance(embedder, SentenceTransformerEmbeddingService):
         return f"sentence-transformers ({embedder._model_name})"
+    if isinstance(embedder, FastEmbedEmbeddingService):
+        return f"fastembed ({embedder._model_name}, ONNX on CPU, semantic)"
     return type(embedder).__name__
 
 
@@ -145,6 +149,7 @@ def evaluate_set(
         retriever=retriever,
         max_chars=settings.index.max_chars,
         prefix_metadata=settings.index.prefix_metadata,
+        batch_size=settings.index.batch_size,
     ).index_repository(repository, parsed)
     answers = AnswerService(retriever=retriever, embedder=embedder, llm=None, settings=settings.retrieval)
 
