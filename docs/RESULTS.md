@@ -564,3 +564,41 @@ Every number or claim here comes from a command that can be re-run.
 - Commit: cdd285a
 - Notes: **which of these tests the new code is actually responsible for was checked, not assumed.** With `embedder_mismatch` forced to return `False`, 6 of the 18 fail and 12 still pass. The 12 include both end-to-end `/analyze-repo` tests, because the pre-existing state-store comparison already covered that path; they are kept as regression cover but they do **not** demonstrate this change. The 6 that do are the two `embedder_mismatch` cases, the identical-vectors case, the default-signature case, `has_index`, and the two question-path cases.
   **Limits, and a deliberate hole.** An index with no recorded embedder — every index written before this commit — is still searched and still reused. Absence of a record is not evidence of a different embedder, and refusing them all would blank out existing deployments until every repository was analyzed again; the trade is that an index from before this commit gets no protection at all. `stored_embedder` returns `None` by default on `CodeRetriever`, so a retriever that does not track it is treated the same way. The guard is on the embedder's *name for itself*: an embedder that changes how it produces vectors without changing its `signature()` would pass, which is why the fastembed signature carries its model name. The on-disk `.pkl` now holds a dict rather than a bare record list, and a file in the old shape is still read
+
+### Check: retrieval eval, hash against fastembed, on the dev split and the held-out split
+- Value: both providers were run over the same 40 questions at the same pinned commits, with no setting tuned on either split. **fastembed is better on both splits, and the gain on the held-out split is the larger of the two.**
+
+  **dev split (20 questions)**
+
+  | repo | n | embedder | hit@1 | hit@3 | hit@5 | P@1 | P@3 | P@5 | MRR@10 |
+  |------|---|----------|-------|-------|-------|-----|-----|-----|--------|
+  | itsdangerous | 10 | hash | 0.600 | 0.700 | 0.800 | 0.600 | 0.500 | 0.400 | 0.692 |
+  | itsdangerous | 10 | **fastembed** | 0.600 | **0.800** | **0.900** | 0.600 | **0.567** | **0.520** | **0.708** |
+  | flask | 10 | hash | 0.600 | 0.700 | 0.700 | 0.600 | 0.467 | 0.360 | 0.633 |
+  | flask | 10 | **fastembed** | **0.700** | **1.000** | **1.000** | **0.700** | **0.633** | **0.480** | **0.850** |
+  | overall | 20 | hash | 0.600 | 0.700 | 0.750 | 0.600 | 0.483 | 0.380 | 0.662 |
+  | overall | 20 | **fastembed** | **0.650** | **0.900** | **0.950** | **0.650** | **0.600** | **0.500** | **0.779** |
+
+  **test split, held out (20 questions)**
+
+  | repo | n | embedder | hit@1 | hit@3 | hit@5 | P@1 | P@3 | P@5 | MRR@10 |
+  |------|---|----------|-------|-------|-------|-----|-----|-----|--------|
+  | itsdangerous | 10 | hash | 0.800 | 0.800 | 0.900 | 0.800 | 0.700 | 0.560 | 0.820 |
+  | itsdangerous | 10 | **fastembed** | 0.800 | **0.900** | 0.900 | 0.800 | **0.767** | **0.720** | **0.867** |
+  | flask | 10 | hash | 0.400 | 0.500 | 0.600 | 0.400 | 0.367 | 0.280 | 0.470 |
+  | flask | 10 | **fastembed** | **0.800** | **0.900** | **0.900** | **0.800** | **0.667** | **0.520** | **0.861** |
+  | overall | 20 | hash | 0.600 | 0.650 | 0.750 | 0.600 | 0.533 | 0.420 | 0.645 |
+  | overall | 20 | **fastembed** | **0.800** | **0.900** | **0.900** | **0.800** | **0.717** | **0.620** | **0.864** |
+
+  Held-out overall: **hit@1 +0.200, hit@3 +0.250, hit@5 +0.150, MRR@10 +0.219.** Per question on the held-out split, **5 questions gained a hit@5 and 2 lost one** (net +3 of 20); by reciprocal rank, 7 improved, 2 got worse, 11 were unchanged. On dev, 4 gained and **0 lost**. Nearly all of the held-out gain is flask, where hash was weakest: `flask-10`, `flask-12`, `flask-14` and `flask-20` went from no relevant file in the top 10 to the right file at rank 1. The two regressions are `flask-16` (rank 1 → rank 9) and `itsd-12` (rank 5 → rank 6).
+
+  **Cost: hash indexed and scored a split in 4–5 s; fastembed took 256 s (dev) and 341 s (test)**, about 60x, for the same 1,864 records — which is why that provider gets batch size 1, a 3,000-character clip and a 900 s index timeout
+- Command: `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/eval_retrieval.py --split dev --json eval/results/dev.json` and the same for `--split test` and `--split all`; `CODEATLAS_EMBEDDING_PROVIDER=fastembed python scripts/eval_retrieval.py --split dev --json eval/results/fastembed/dev.json` and the same for `--split test`. No model key is used; retrieval only
+- Dataset/repo: https://github.com/pallets/itsdangerous at 672971d66a2ef9f85151e53283113f33d642dabd (15 files, 159 records); https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35 (83 files, 1705 records); the 40 questions in `eval/questions/*.json`, split as fixed before any of this was run
+- Date: 2026-10-06
+- Commit: f2a55dd (the results); measured at 97242ac
+- Notes: **nothing was tuned on the held-out split, and nothing was tuned at all.** Both providers ran on the settings already in `config.py`; no tuning flag was passed, and the test split was run once per provider after the dev run, not used to choose anything. The gain on held-out was not small or negative — it is larger than the gain on dev, which is the opposite of the usual worry and is itself a reason for caution: 20 questions per split is small, so a 0.200 difference in hit@1 is 4 questions.
+  **This is not a controlled embedder-only swap, and should not be read as one.** The fastembed run also clipped each document to 3,000 characters and embedded at batch size 1, because those are that provider's settings; hash embedded the full text. So what is compared is *the server running hash* against *the server running fastembed*, which is the decision actually on the table, not the embedder in isolation. The clip plausibly helps on flask's long files, and separating the two was not measured.
+  **The reranker limits how much the embedder can matter.** `rerank_weight` is 1.0, so the final order is keyword overlap with vector similarity only breaking ties; the embedder chooses the 20 candidates, not their order. A fair reading of these numbers is that fastembed puts the right file in the candidate pool far more often on flask, where hash's bag of words misses questions phrased in plain English.
+  **hash remains the default** and nothing in this entry changes that: fastembed is 60x slower to index, needs an extra install and a model download, and the deployment it would run on has not been sized for it. The retrieval gauges on `/metrics` still read the three hash files in `eval/results`; the fastembed results are in a subfolder the gauge loader does not glob, verified by loading them (3 files read, all labelled `hash`).
+  Four of the five eval runs report the commit as `97242ac-dirty`. The only modified files were the eval result JSON files the runs themselves had just written; no code differed between the five runs. `eval/results/all.json` was refreshed for hash at the same commit, for consistency within the folder; `all` is dev and test together and is not a third measurement
