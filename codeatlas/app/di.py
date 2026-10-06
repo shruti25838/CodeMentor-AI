@@ -13,6 +13,7 @@ from codeatlas.services.memory.conversation import ConversationStore
 from codeatlas.services.parsing.tree_sitter_parser import TreeSitterAstParser
 from codeatlas.services.qa.answer_service import AnswerService, RetrievalSettings
 from codeatlas.services.qa.explain_service import CodeExplainService
+from codeatlas.services.retrieval.embedding import EmbeddingService
 from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService
 from codeatlas.services.retrieval.indexing import CodeIndexService
@@ -20,7 +21,7 @@ from codeatlas.services.retrieval.sentence_transformer_embedder import (
     SentenceTransformerEmbeddingService,
 )
 from codeatlas.services.state.repo_state_store import RepoStateStore
-from codeatlas.utils.config import AppConfig, load_config
+from codeatlas.utils.config import AppConfig, load_config, unknown_provider_message
 
 
 @lru_cache
@@ -50,12 +51,22 @@ def get_code_retriever() -> FaissCodeRetriever:
     return FaissCodeRetriever(base_dir=config.index_dir)
 
 
-@lru_cache
-def get_embedder() -> SentenceTransformerEmbeddingService | HashEmbeddingService:
-    config = get_config()
+def build_embedder(config: AppConfig) -> EmbeddingService:
+    """The embedder named by config.embedding_provider.
+
+    Every known name is listed here. An unknown name raises rather than falling back to a
+    default: a typo must not quietly produce a different kind of vector than the one asked for.
+    """
     if config.embedding_provider == "hash":
         return HashEmbeddingService(lowercase=config.hash_lowercase, subtokens=config.hash_subtokens)
-    return SentenceTransformerEmbeddingService(model_name=config.embedding_model)
+    if config.embedding_provider == "sentence":
+        return SentenceTransformerEmbeddingService(model_name=config.embedding_model)
+    raise ValueError(unknown_provider_message(config.embedding_provider))
+
+
+@lru_cache
+def get_embedder() -> EmbeddingService:
+    return build_embedder(get_config())
 
 
 @lru_cache

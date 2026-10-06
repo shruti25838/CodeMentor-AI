@@ -9,6 +9,11 @@ from dataclasses import dataclass
 DEFAULT_LLM_MODEL = "openai/gpt-oss-20b"
 DEFAULT_LLM_MAX_TOKENS = 2048
 
+# Every embedding provider the app knows how to build. A name outside this list is a typo or a
+# provider that was never wired up, and either way it must not fall through to some default:
+# the vectors would silently be the wrong ones. See codeatlas/app/di.py:build_embedder.
+EMBEDDING_PROVIDERS = ("hash", "sentence")
+
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -55,10 +60,26 @@ class AppConfig:
     eval_results_dir: str = "eval/results"
 
 
+def unknown_provider_message(provider: str) -> str:
+    return (
+        f"Unknown embedding provider {provider!r}. "
+        f"Set CODEATLAS_EMBEDDING_PROVIDER to one of: {', '.join(EMBEDDING_PROVIDERS)}. "
+        f"'hash' is the default and needs no extra install."
+    )
+
+
+def validate_embedding_provider(provider: str) -> str:
+    """The provider name, normalized; a name that is not a known provider raises ValueError."""
+    normalized = provider.strip().lower()
+    if normalized not in EMBEDDING_PROVIDERS:
+        raise ValueError(unknown_provider_message(provider))
+    return normalized
+
+
 def load_config() -> AppConfig:
     max_repo_mb = int(os.getenv("CODEATLAS_MAX_REPO_MB", "100"))
     return AppConfig(
-        embedding_provider=os.getenv("CODEATLAS_EMBEDDING_PROVIDER", "hash"),
+        embedding_provider=validate_embedding_provider(os.getenv("CODEATLAS_EMBEDDING_PROVIDER", "hash")),
         embedding_model=os.getenv("CODEATLAS_EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
         index_dir=os.getenv("CODEATLAS_INDEX_DIR", ".codeatlas/indexes"),
         state_dir=os.getenv("CODEATLAS_STATE_DIR", ".codeatlas/state"),
