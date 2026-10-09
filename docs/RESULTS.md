@@ -602,3 +602,33 @@ Every number or claim here comes from a command that can be re-run.
   **The reranker limits how much the embedder can matter.** `rerank_weight` is 1.0, so the final order is keyword overlap with vector similarity only breaking ties; the embedder chooses the 20 candidates, not their order. A fair reading of these numbers is that fastembed puts the right file in the candidate pool far more often on flask, where hash's bag of words misses questions phrased in plain English.
   **hash remains the default** and nothing in this entry changes that: fastembed is 60x slower to index, needs an extra install and a model download, and the deployment it would run on has not been sized for it. The retrieval gauges on `/metrics` still read the three hash files in `eval/results`; the fastembed results are in a subfolder the gauge loader does not glob, verified by loading them (3 files read, all labelled `hash`).
   Four of the five eval runs report the commit as `97242ac-dirty`. The only modified files were the eval result JSON files the runs themselves had just written; no code differed between the five runs. `eval/results/all.json` was refreshed for hash at the same commit, for consistency within the folder; `all` is dev and test together and is not a third measurement
+
+### Check: what the Cloudflare Workers AI embeddings endpoint actually does, where the docs are silent
+- Value: nine calls answered the four questions that decide how the provider has to be written. **An array of 101 texts was accepted, so the widely repeated 100-item cap is not current. An 8,000-character text is accepted and silently truncated. `pooling: "cls"` is accepted over REST and is a genuinely different vector space. A bad token is an HTTP 401 with error code 10000.**
+
+  | call | texts | chars | result |
+  |------|-------|-------|--------|
+  | baseline | 1 | 56 | HTTP 200, success=True, shape=[1, 384], pooling=mean |
+  | array-50 | 50 | 2840 | HTTP 200, success=True, shape=[50, 384], pooling=mean |
+  | array-100 | 100 | 5690 | HTTP 200, success=True, shape=[100, 384], pooling=mean |
+  | array-101 | 101 | 5748 | HTTP 200, success=True, shape=[101, 384], pooling=mean |
+  | long-8000 | 1 | 8000 | HTTP 200, success=True, shape=[1, 384], pooling=mean |
+  | head-2400 | 1 | 2400 | HTTP 200, success=True, shape=[1, 384], pooling=mean |
+  | tail-2400 | 1 | 2400 | HTTP 200, success=True, shape=[1, 384], pooling=mean |
+  | pooling-cls | 1 | 56 | HTTP 200, success=True, shape=[1, 384], pooling=cls |
+  | invalid-token | 1 | 56 | HTTP 401, success=False, errors=[{"code": 10000, "message": "Authentication error"}] |
+
+  **Batch size: 101 works, and the real ceiling was not looked for.** The "maximum 100" that circulates comes from a LlamaIndex integration page marked as seen 2024-03-31 and from cloudflare-docs issue #11316, a user report from 2023. Neither matches the endpoint today. Finding the true edge would mean a binary search of calls against a free allowance to learn a number the provider does not need, so the probe stopped at 101 and the provider will batch at 50 - comfortably inside whatever the limit is, and small enough that one failed batch re-sends little.
+
+  **Over-length text is truncated, not refused, and the cut is at or before 2,400 characters.** The 8,000-character input was 2,400 characters on one subject followed by 5,600 on an unrelated one. Its vector against the first subject embedded alone: **cos = 1.0000**. Against the second subject alone: **cos = 0.5888**. Identical to the head to four decimal places means the tail contributed nothing at all. Since 2,400 characters is already about 600 tokens, this is consistent with the documented 512-token window and tells us the model's own cut sits below 2,400 characters. The planned 2,000-character clip is therefore a cost control that we choose, not a limit we are up against - but it also means **a document longer than roughly 2,000 characters is only ever embedded by its opening**, whatever we set, which is a retrieval limitation to carry into the evaluation rather than a bug to fix.
+
+  **cls and mean are different spaces, and not different enough to be safe.** The same text embedded both ways gives **cos = 0.9466**. That is the dangerous case: not orthogonal nonsense that any sanity check would catch, but a near-miss that would quietly degrade ranking if an index built under one pooling were searched under the other. It is the concrete reason pooling belongs in the embedder signature alongside the model name, where the existing `embedder_mismatch` guard will refuse the mismatch.
+
+  **A refusal is HTTP 401 with `success: false` and `errors: [{"code": 10000, "message": "Authentication error"}]`.** The body is JSON and carries no echo of the request. **What a spent-budget refusal looks like is still unknown** and cannot be learned without spending the day's allowance, so the fallback to hash will trigger on any non-2xx status and any transport failure, never on a particular code.
+- Command: `python scripts/cloudflare_probe.py --dry-run` then `python scripts/cloudflare_probe.py`
+- Dataset/repo: none. Every input is an invented string defined in the script - short filler sentences, and two unrelated paragraphs for the truncation test. No repository content, no question, and no credential is printed: the output is statuses, shapes, pooling and error codes only
+- Date: 2026-10-09
+- Commit: 83fff8c
+- Notes: **cost: 6,344 estimated input tokens, 11.68 estimated neurons** of the 10,000-per-day free allowance (0.12%), by the estimator the provider will use - `ceil(chars / 3)` per text, capped at 512 per text. The invalid-token call is excluded from the estimate because it never reached the model. This is an estimate from character counts, not a figure Cloudflare reported: the response carries no token or neuron count, so the only authoritative number is the account dashboard.
+  **The probe is capped at 10 calls in code** (`MAX_CALLS`), and `--dry-run` prints the plan and the estimate without sending anything, which is also how the tests exercise it - `tests/test_cloudflare_probe.py` asserts the plan stays inside the cap, that every input is small, that the whole run costs under 1% of the daily allowance, and that nothing printed contains an input text.
+  **Three things this run did not establish.** The true maximum array length (above 101, not looked for). Whether Cloudflare bills the truncated tail of an over-length text or only the 512 tokens it read - our estimator assumes the latter, which is the optimistic reading, so a dashboard figure above the estimate would mean documents must be clipped before sending rather than relying on the model's own cut. And the status and body of a budget-exhausted refusal
