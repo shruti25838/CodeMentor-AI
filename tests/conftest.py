@@ -3,6 +3,7 @@
 import pytest
 
 from codeatlas.observability import token_ledger
+from codeatlas.services.retrieval import neuron_ledger
 
 
 @pytest.fixture(autouse=True)
@@ -15,3 +16,14 @@ def _ledger_in_a_temp_file(tmp_path, monkeypatch):
     what they had really spent today would be wrong.
     """
     monkeypatch.setenv(token_ledger.ENV_PATH, str(tmp_path / "token-spend.json"))
+
+
+@pytest.fixture(autouse=True)
+def _neurons_in_a_temp_file(tmp_path, monkeypatch):
+    """Keep the estimated-neuron ledger out of the real one, for the same reason as above.
+
+    This one guards a budget rather than a count: a test that wrote invented spend into
+    `.codeatlas/cloudflare-neurons.json` could leave the provider believing the day's free
+    allowance was gone and silently falling back to hash.
+    """
+    monkeypatch.setenv(neuron_ledger.ENV_PATH, str(tmp_path / "cloudflare-neurons.json"))

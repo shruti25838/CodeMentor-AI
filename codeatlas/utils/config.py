@@ -3,6 +3,19 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from codeatlas.services.retrieval.cloudflare_embedder import (
+    DEFAULT_CLOUDFLARE_BATCH_SIZE,
+    DEFAULT_CLOUDFLARE_COOLDOWN_SECONDS,
+    DEFAULT_CLOUDFLARE_DAILY_NEURONS,
+    DEFAULT_CLOUDFLARE_FAILURE_THRESHOLD,
+    DEFAULT_CLOUDFLARE_MAX_CHARS,
+    DEFAULT_CLOUDFLARE_MAX_DOCUMENTS,
+    DEFAULT_CLOUDFLARE_MODEL,
+    DEFAULT_CLOUDFLARE_POOLING,
+    DEFAULT_CLOUDFLARE_RETRIES,
+    DEFAULT_CLOUDFLARE_TIMEOUT_SECONDS,
+    POOLINGS,
+)
 from codeatlas.services.retrieval.fastembed_embedder import (
     DEFAULT_FASTEMBED_BATCH_SIZE,
     DEFAULT_FASTEMBED_MODEL,
@@ -19,7 +32,7 @@ DEFAULT_LLM_MAX_TOKENS = 2048
 # Every embedding provider the app knows how to build. A name outside this list is a typo or a
 # provider that was never wired up, and either way it must not fall through to some default:
 # the vectors would silently be the wrong ones. See codeatlas/app/di.py:build_embedder.
-EMBEDDING_PROVIDERS = ("hash", "sentence", "fastembed")
+EMBEDDING_PROVIDERS = ("hash", "sentence", "fastembed", "cloudflare")
 
 
 CLOUDFLARE_ACCOUNT_ID_ENV = "CLOUDFLARE_ACCOUNT_ID"
@@ -107,8 +120,39 @@ class AppConfig:
     fastembed_batch_size: int = DEFAULT_FASTEMBED_BATCH_SIZE
     fastembed_max_chars: int = 3000
     fastembed_index_timeout_seconds: int = 900
+    # Settings below apply only when embedding_provider == "cloudflare". That provider calls a
+    # paid API on a free allowance, so besides the model and the pooling it has a per-document
+    # clip, a ceiling on documents per repository, a batch size, a daily budget in estimated
+    # neurons, and the timeout, retry and circuit-breaker settings that decide how quickly it
+    # gives up and falls back to the hash index. None of them touch any other provider.
+    cloudflare_model: str = DEFAULT_CLOUDFLARE_MODEL
+    cloudflare_pooling: str = DEFAULT_CLOUDFLARE_POOLING
+    cloudflare_max_chars: int = DEFAULT_CLOUDFLARE_MAX_CHARS
+    cloudflare_max_documents: int = DEFAULT_CLOUDFLARE_MAX_DOCUMENTS
+    cloudflare_batch_size: int = DEFAULT_CLOUDFLARE_BATCH_SIZE
+    cloudflare_daily_neurons: float = DEFAULT_CLOUDFLARE_DAILY_NEURONS
+    cloudflare_timeout_seconds: float = DEFAULT_CLOUDFLARE_TIMEOUT_SECONDS
+    cloudflare_retries: int = DEFAULT_CLOUDFLARE_RETRIES
+    cloudflare_failure_threshold: int = DEFAULT_CLOUDFLARE_FAILURE_THRESHOLD
+    cloudflare_cooldown_seconds: float = DEFAULT_CLOUDFLARE_COOLDOWN_SECONDS
+    cloudflare_index_dir: str = ".codeatlas/indexes-cloudflare"
     # Folder of scripts/eval_retrieval.py --json results; read at startup into the retrieval gauges.
     eval_results_dir: str = "eval/results"
+
+
+def unknown_pooling_message(pooling: str) -> str:
+    return (
+        f"Unknown pooling {pooling!r}. Set CODEATLAS_CLOUDFLARE_POOLING to one of: {', '.join(POOLINGS)}. "
+        f"'{DEFAULT_CLOUDFLARE_POOLING}' is the default; the two are not interchangeable, and an index "
+        f"built under one must not be searched under the other."
+    )
+
+
+def validate_pooling(pooling: str) -> str:
+    normalized = pooling.strip().lower()
+    if normalized not in POOLINGS:
+        raise ValueError(unknown_pooling_message(pooling))
+    return normalized
 
 
 def unknown_provider_message(provider: str) -> str:
@@ -162,4 +206,54 @@ def load_config() -> AppConfig:
         fastembed_batch_size=int(os.getenv("CODEATLAS_FASTEMBED_BATCH_SIZE", str(DEFAULT_FASTEMBED_BATCH_SIZE))),
         fastembed_max_chars=int(os.getenv("CODEATLAS_FASTEMBED_MAX_CHARS", "3000")),
         fastembed_index_timeout_seconds=int(os.getenv("CODEATLAS_FASTEMBED_INDEX_TIMEOUT_SECONDS", "900")),
+        cloudflare_model=os.getenv("CODEATLAS_CLOUDFLARE_MODEL", DEFAULT_CLOUDFLARE_MODEL),
+        cloudflare_pooling=validate_pooling(os.getenv("CODEATLAS_CLOUDFLARE_POOLING", DEFAULT_CLOUDFLARE_POOLING)),
+        cloudflare_max_chars=_positive_int("CODEATLAS_CLOUDFLARE_MAX_CHARS", DEFAULT_CLOUDFLARE_MAX_CHARS),
+        cloudflare_max_documents=_positive_int("CODEATLAS_CLOUDFLARE_MAX_DOCUMENTS", DEFAULT_CLOUDFLARE_MAX_DOCUMENTS),
+        cloudflare_batch_size=_positive_int("CODEATLAS_CLOUDFLARE_BATCH_SIZE", DEFAULT_CLOUDFLARE_BATCH_SIZE),
+        cloudflare_daily_neurons=_positive_float(
+            "CODEATLAS_CLOUDFLARE_DAILY_NEURONS", DEFAULT_CLOUDFLARE_DAILY_NEURONS
+        ),
+        cloudflare_timeout_seconds=_positive_float(
+            "CODEATLAS_CLOUDFLARE_TIMEOUT_SECONDS", DEFAULT_CLOUDFLARE_TIMEOUT_SECONDS
+        ),
+        cloudflare_retries=_non_negative_int("CODEATLAS_CLOUDFLARE_RETRIES", DEFAULT_CLOUDFLARE_RETRIES),
+        cloudflare_failure_threshold=_positive_int(
+            "CODEATLAS_CLOUDFLARE_FAILURE_THRESHOLD", DEFAULT_CLOUDFLARE_FAILURE_THRESHOLD
+        ),
+        cloudflare_cooldown_seconds=_positive_float(
+            "CODEATLAS_CLOUDFLARE_COOLDOWN_SECONDS", DEFAULT_CLOUDFLARE_COOLDOWN_SECONDS
+        ),
+        cloudflare_index_dir=os.getenv("CODEATLAS_CLOUDFLARE_INDEX_DIR", ".codeatlas/indexes-cloudflare"),
     )
+
+
+def _number(name: str, default: float, cast, minimum: float, bound: str):
+    """One numeric setting from the environment, rejected at startup rather than at first use.
+
+    A typo in a budget or a batch size is worth refusing to start over: the alternatives are a
+    crash in the middle of indexing, or a setting that silently reverts to its default and a
+    measurement that quietly describes something other than what was configured.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return cast(default)
+    try:
+        value = cast(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be {bound}, not {raw!r}") from None
+    if value < minimum:
+        raise ValueError(f"{name} must be {bound}, not {raw!r}")
+    return value
+
+
+def _positive_int(name: str, default: int) -> int:
+    return _number(name, default, int, 1, "a whole number of at least 1")
+
+
+def _non_negative_int(name: str, default: int) -> int:
+    return _number(name, default, int, 0, "a whole number of at least 0")
+
+
+def _positive_float(name: str, default: float) -> float:
+    return _number(name, default, float, 0.000001, "a number greater than 0")
