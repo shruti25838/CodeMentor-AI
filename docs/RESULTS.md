@@ -838,3 +838,51 @@ Every number or claim here comes from a command that can be re-run.
 - Commit: 60f5cf4
 - Notes: tested in both directions. `test_flipping_a_ranking_only_setting_leaves_the_signature_alone` flips each of `CODEATLAS_RERANK_SUBTOKENS`, `CODEATLAS_RERANK_WEIGHT`, `CODEATLAS_RETRIEVAL_CANDIDATES` and `CODEATLAS_SKIP_TESTS` and asserts the signature is byte-identical; `test_every_setting_that_changes_the_embedded_text_changes_the_signature` asserts the five that remain each change it. A third test reads the signature as a **list of field names** rather than as a string, so a setting appended later fails a test and has to be argued for.
   This supersedes the "a real cost worth knowing about" paragraph in the provider's entry above, which recorded the trade as accepted. It was not worth accepting
+
+### Check: three Cloudflare configurations on the dev split, three orderings each
+- Value: **recall@20 is 1.000 for every configuration and every ordering** - all three put the expected file in the candidate pool for all 20 dev questions, against **0.850 for hash**. No ordering change passed the keep rule in any configuration, and no configuration beat the default, so **the dev winner is the default: mean pooling, clip 2,000, keyword ordering.**
+
+  **Starting point: the account dashboard read 8.41 neurons before this run** (user-supplied, the probe's spend).
+
+  | config | ordering | n | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 |
+  |---|---|---|---|---|---|---|---|
+  | mean-2000 (default) | vector | 20 | 0.650 | 0.750 | 0.900 | 0.732 | 1.000 |
+  | mean-2000 (default) | **keyword** | 20 | 0.650 | 0.950 | **1.000** | **0.804** | 1.000 |
+  | mean-2000 (default) | rrf | 20 | 0.600 | 0.850 | 1.000 | 0.743 | 1.000 |
+  | mean-1500 | vector | 20 | 0.650 | 0.750 | 0.900 | 0.740 | 1.000 |
+  | mean-1500 | keyword | 20 | 0.600 | 0.950 | 1.000 | 0.771 | 1.000 |
+  | mean-1500 | rrf | 20 | 0.650 | 0.800 | 1.000 | 0.764 | 1.000 |
+  | cls-2000 | vector | 20 | 0.600 | 0.700 | 0.850 | 0.677 | 1.000 |
+  | cls-2000 | keyword | 20 | 0.650 | 0.900 | 0.950 | 0.779 | 1.000 |
+  | cls-2000 | rrf | 20 | 0.650 | 0.750 | 0.850 | 0.726 | 1.000 |
+
+  **The keep rule, applied, and every experiment it rejected.** Keep a change only if dev MRR rises and dev hit@5 does not fall. The baseline is the default configuration under the ordering the server uses today, mean-2000 / keyword: MRR 0.804, hit@5 1.000.
+
+  | experiment | MRR@10 | vs 0.804 | hit@5 | verdict |
+  |---|---|---|---|---|
+  | vector ordering (mean-2000) | 0.732 | -0.072 | 0.900 | **rejected**, MRR falls and hit@5 falls |
+  | rrf ordering (mean-2000) | 0.743 | -0.061 | 1.000 | **rejected**, MRR falls |
+  | clip 1,500 (keyword) | 0.771 | -0.033 | 1.000 | **rejected**, MRR falls |
+  | clip 1,500 + vector | 0.740 | -0.064 | 0.900 | **rejected** |
+  | clip 1,500 + rrf | 0.764 | -0.040 | 1.000 | **rejected** |
+  | cls pooling (keyword) | 0.779 | -0.025 | 0.950 | **rejected**, MRR falls and hit@5 falls |
+  | cls + vector | 0.677 | -0.127 | 0.850 | **rejected** |
+  | cls + rrf | 0.726 | -0.078 | 0.850 | **rejected** |
+
+  **Eight experiments, none kept.** That is the honest outcome: the settings chosen before any of them were run are the best of what was tried.
+
+  **Keyword ordering beats the embedder's own order, and fusion does not rescue it.** Under every configuration, ordering by keyword overlap beats ordering by vector similarity on MRR - by 0.072 at the default, 0.102 under cls. Reciprocal rank fusion lands between the two every single time (0.743, 0.764, 0.726 against keyword's 0.804, 0.771, 0.779), which is what fusion does when one input is simply worse than the other: it dilutes the better ranking rather than combining strengths. **No BM25 was tried, and that is not what these numbers argue against** - they argue against fusing *this* vector order into *this* keyword order.
+
+  **cls is worse than mean here, against Cloudflare's own advice.** Their documentation recommends cls "for better accuracy on larger inputs". On these 20 questions it was worse on both metrics (MRR 0.779 against 0.804, hit@5 0.950 against 1.000). The probe had already measured cos 0.9466 between the two spaces, so they were never going to be far apart; what this adds is that the difference, such as it is, runs the other way for code.
+
+  **A tighter clip is not free.** 1,500 characters loses 0.033 of MRR against 2,000 and raises the share of clipped flask file records from 54.2% to 56.6%, keeping 14.6% of their characters instead of 18.6%. There was no cost argument for it either: the full run came in at 18% of the budget.
+
+  **What dev cannot tell us.** recall@20 saturated at 1.000 for all three configurations, so **the dev split cannot discriminate between them on recall at all** - every difference above is a ranking difference over 20 questions, where one question is 0.05 of hit@5. The configuration choice rests on differences of 0.025 to 0.033 in MRR, which is two or three questions moving a rank or two. That is thin, and it is the reason the held-out run matters.
+- Command: `python scripts/eval_cloudflare.py --split dev --json eval/results/cloudflare/dev.json`
+- Dataset/repo: https://github.com/pallets/itsdangerous at 672971d66a2ef9f85151e53283113f33d642dabd (15 files, 159 records); https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35 (83 files, 1705 records); the 20 dev questions from `eval/questions/*.json`. **The held-out split was not run and not looked at**
+- Date: 2026-10-09
+- Commit: 149dac1
+- Notes: **cost: 1,464.37 estimated neurons over 177 calls, against a plan of 1,485.90**; 5,355 documents counted, 1,785 texts embedded per configuration. The small shortfall against the plan is duplicate texts, which the cache embeds once and the plan counted twice. Today's ledger stands at 1,464.37 of the 8,000 budget, 6,535.63 remaining. **The dashboard read 8.41 before this run**; the figure after it is the comparison worth making, since this is code being embedded rather than the probe's prose.
+  **Re-running the whole dev evaluation afterwards cost nothing**: 1,944 cache hits, 0 texts embedded, the ledger unmoved. That is the vector cache doing what it was built for, and it is why the held-out runs will be nearly free.
+  **The clipping limit from the note above applies to every number here.** These results were achieved with more than half of each repository's file records represented by their opening only, and for flask by 18.6% of their characters. The headroom above these figures is not all reranking.
+  **This is not a controlled embedder-only comparison with hash.** hash reads every record in full and has no clip at all; the Cloudflare configurations clip at 2,000 or 1,500 characters. What is being compared is the server running one provider against the server running the other, which is the decision actually on the table
