@@ -790,3 +790,32 @@ Every number or claim here comes from a command that can be re-run.
 - Commit: 7ed7016
 - Notes: **this is the estimate, not a measurement**, by the same `ceil(chars / 3)` capped at 512 that over-counted the probe by 1.39x against the dashboard. If that ratio holds, the real cost of the three configurations is nearer 1,070 neurons - but code tokenizes worse than the prose the ratio was measured on, so the true figure should sit somewhere between the two, and the estimate remains the one to plan against.
   **The run was stopped here deliberately**, before a single call, so the dashboard can be read before and after and the ledger compared against it at a scale where code rather than prose is being embedded. 838 tests pass, including 21 covering the cache and the orderings
+
+### Note: a record longer than the clip is embedded by its opening only
+- Value: **more than half of every file record in both evaluation repositories is longer than the 2,000-character clip, and flask's file records keep only 18.6% of their characters.** The probe established that the model ignores text past about 512 tokens, so this is not only a bandwidth choice - a longer document is represented by its opening however the clip is set.
+
+  | repo | clip | scope | records | over the clip | share | characters kept |
+  |---|---|---|---|---|---|---|
+  | itsdangerous | 2000 | file | 15 | 8 | 53.3% | 37.8% |
+  | itsdangerous | 2000 | function | 144 | 8 | 5.6% | 70.1% |
+  | itsdangerous | 1500 | file | 15 | 9 | 60.0% | 30.3% |
+  | itsdangerous | 1500 | function | 144 | 11 | 7.6% | 65.2% |
+  | flask | 2000 | file | 83 | 45 | 54.2% | 18.6% |
+  | flask | 2000 | function | 1622 | 52 | 3.2% | 72.8% |
+  | flask | 1500 | file | 83 | 47 | 56.6% | 14.6% |
+  | flask | 1500 | function | 1622 | 81 | 5.0% | 68.9% |
+
+  **The two scopes have completely different problems.** Function records are mostly intact: 3.2% of flask's 1,622 functions are clipped at all, and 72.8% of their characters survive. File records are not: **a flask file record is, on average, its first fifth**, and for the 54% that are clipped it is whatever the imports and the first definition happen to be. A question answered by matching a file record is therefore matching a header, not a file.
+
+  This is a limit on what the semantic numbers in the following entries can mean. Whatever recall@20 turns out to be, it was achieved with file records that are mostly openings, and the headroom above it is not all reranking.
+- Value (not built, deliberately): two candidates for a later batch, listed here so the reasoning is not lost and **neither is implemented in this one**:
+  1. **Header-style file records.** Instead of a file's first 2,000 characters, an assembled summary: the path, the imports, and the names and signatures of what it defines. That is what a file record is being used for - "which file is this question about" - and it would fit the window with room to spare rather than being a truncated prefix pretending to be a file.
+  2. **Windowed long functions.** Split a function longer than the clip into overlapping windows, embed each, and keep the best-scoring window for the record. This matters far less than the first: it would touch the 3-8% of functions that are clipped at all.
+
+  Both change what is in an index, so both mean re-embedding every repository, which for this provider costs neurons. Neither should be built on this evidence alone - the right order is to find out what the semantic numbers are first, and only then decide whether file records are worth rebuilding
+- Command: `CodeIndexService.clipped_counts` over both pinned checkouts at clips of 2,000 and 1,500; the same figures print under each repository in `python scripts/eval_retrieval.py` and `python scripts/eval_cloudflare.py`
+- Dataset/repo: https://github.com/pallets/itsdangerous at 672971d66a2ef9f85151e53283113f33d642dabd (15 files, 159 records); https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35 (83 files, 1705 records)
+- Date: 2026-10-09
+- Commit: 3c53c66
+- Notes: measured on the source text, before the path prefix is added, because that is the part the clip is deciding about. **No neurons were spent**: this counts characters and calls nothing.
+  **The hash provider has no clip at all** (`embed_max_chars` is unset), so it reads every record in full. That is one more way in which the hash and cloudflare comparisons in this file are not a controlled embedder-only swap, and it cuts against the semantic provider rather than for it
