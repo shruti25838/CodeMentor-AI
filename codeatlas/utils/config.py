@@ -1,6 +1,8 @@
 import os
 from dataclasses import dataclass
 
+from dotenv import load_dotenv
+
 from codeatlas.services.retrieval.fastembed_embedder import (
     DEFAULT_FASTEMBED_BATCH_SIZE,
     DEFAULT_FASTEMBED_MODEL,
@@ -18,6 +20,42 @@ DEFAULT_LLM_MAX_TOKENS = 2048
 # provider that was never wired up, and either way it must not fall through to some default:
 # the vectors would silently be the wrong ones. See codeatlas/app/di.py:build_embedder.
 EMBEDDING_PROVIDERS = ("hash", "sentence", "fastembed")
+
+
+CLOUDFLARE_ACCOUNT_ID_ENV = "CLOUDFLARE_ACCOUNT_ID"
+CLOUDFLARE_API_TOKEN_ENV = "CLOUDFLARE_API_TOKEN"
+
+
+@dataclass(frozen=True)
+class CloudflareCredentials:
+    """The two values a Workers AI call needs. Deliberately not fields on AppConfig.
+
+    AppConfig is the object anything can print while working out why a setting is what it is;
+    a token inside it would reach a log the first time someone did. Keeping credentials in a
+    separate object that nothing logs means that cannot happen by accident, and its repr is
+    overridden so that printing this one does not leak either.
+    """
+
+    account_id: str
+    api_token: str
+
+    def __repr__(self) -> str:
+        return "CloudflareCredentials(account_id=<set>, api_token=<redacted>)"
+
+
+def load_cloudflare_credentials() -> CloudflareCredentials | None:
+    """Both credentials from the environment, or None when either is missing.
+
+    .env is loaded here as well as in app/main.py, because a script has no create_app() to do
+    it. load_dotenv does not override a variable that is already set, so the environment still
+    wins over the file either way.
+    """
+    load_dotenv()
+    account_id = (os.getenv(CLOUDFLARE_ACCOUNT_ID_ENV) or "").strip()
+    api_token = (os.getenv(CLOUDFLARE_API_TOKEN_ENV) or "").strip()
+    if not account_id or not api_token:
+        return None
+    return CloudflareCredentials(account_id=account_id, api_token=api_token)
 
 
 @dataclass(frozen=True)
