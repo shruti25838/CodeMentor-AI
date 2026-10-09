@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING
 
 from codeatlas.services.http.json_client import JsonClientError, JsonResponse, post_json
 from codeatlas.services.retrieval import neuron_ledger
-from codeatlas.services.retrieval.embedding import EmbeddingService
+from codeatlas.services.retrieval.embedding import EmbeddingService, EmbeddingUnavailableError
 
 if TYPE_CHECKING:  # config imports this module's defaults, so the credentials type is a hint only
     from codeatlas.utils.config import CloudflareCredentials
@@ -77,26 +77,13 @@ NO_CREDENTIALS = (
 RETRYABLE_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 
 
-class CloudflareUnavailableError(Exception):
-    """The API could not be used. `reason` is one of REASONS and decides what the visitor is told."""
+class CloudflareUnavailableError(EmbeddingUnavailableError):
+    """The API could not be used, for one of the reasons in embedding.REASONS.
 
-    def __init__(self, reason: str, detail: str = "") -> None:
-        super().__init__(detail or reason)
-        self.reason = reason
-
-
-# Each reason's note is one sentence, written for a visitor who did not ask about any of this.
-REASONS = {
-    "budget": "Today's semantic search allowance is used up, so this answer used keyword search.",
-    "circuit": "Semantic search is briefly unavailable, so this answer used keyword search.",
-    "api": "Semantic search did not respond, so this answer used keyword search.",
-    "cap": "This repository is too large for semantic search, so this answer used keyword search.",
-}
-DEFAULT_NOTE = REASONS["api"]
-
-
-def fallback_note(reason: str) -> str:
-    return REASONS.get(reason, DEFAULT_NOTE)
+    A subclass of the provider-agnostic error on purpose: AnswerService falls back on the base
+    class, so it needs to know nothing about Cloudflare, and a later provider that can fail the
+    same way gets the same fallback without touching the question path.
+    """
 
 
 @dataclass(frozen=True)

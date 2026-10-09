@@ -20,12 +20,11 @@ from codeatlas.services.retrieval.cloudflare_embedder import (
     DEFAULT_CLOUDFLARE_MODEL,
     EXPECTED_DIMENSIONS,
     NO_CREDENTIALS,
-    REASONS,
     CloudflareEmbeddingService,
     CloudflareSettings,
     CloudflareUnavailableError,
-    fallback_note,
 )
+from codeatlas.services.retrieval.embedding import REASONS, fallback_note
 from codeatlas.services.retrieval.fastembed_embedder import FastEmbedEmbeddingService
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService
 from codeatlas.utils.config import CloudflareCredentials, load_config

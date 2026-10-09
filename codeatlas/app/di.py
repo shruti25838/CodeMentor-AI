@@ -1,3 +1,4 @@
+from dataclasses import replace
 from functools import lru_cache
 
 from codeatlas.services.agents.coding_mentor_agent import CodingMentorAgent
@@ -14,6 +15,7 @@ from codeatlas.services.parsing.tree_sitter_parser import TreeSitterAstParser
 from codeatlas.services.qa.answer_service import AnswerService, RetrievalSettings
 from codeatlas.services.qa.explain_service import CodeExplainService
 from codeatlas.services.retrieval.cloudflare_embedder import CloudflareEmbeddingService, CloudflareSettings
+from codeatlas.services.retrieval.dual_index import FALLBACK_NAME, DualIndexService
 from codeatlas.services.retrieval.embedding import EmbeddingService
 from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever
 from codeatlas.services.retrieval.fastembed_embedder import FastEmbedEmbeddingService
@@ -49,8 +51,39 @@ def get_dependency_graph_builder() -> ImportGraphBuilder:
 
 @lru_cache
 def get_code_retriever() -> FaissCodeRetriever:
+    """The index the selected provider writes and reads.
+
+    Each provider's vectors live in their own folder, because they are not comparable and a
+    folder is the cheapest way to be sure they never meet. "cloudflare" therefore gets
+    CODEATLAS_CLOUDFLARE_INDEX_DIR, and every other provider keeps CODEATLAS_INDEX_DIR, where
+    the hash indexes already are.
+    """
     config = get_config()
+    if config.embedding_provider == "cloudflare":
+        return FaissCodeRetriever(base_dir=config.cloudflare_index_dir)
     return FaissCodeRetriever(base_dir=config.index_dir)
+
+
+@lru_cache
+def get_fallback_retriever() -> FaissCodeRetriever | None:
+    """The hash index that answers when the semantic one cannot, or None when there is no need.
+
+    Only a provider that can fail has one. For hash itself this is None, and every question
+    path behaves exactly as it did before any of this existed.
+    """
+    config = get_config()
+    if config.embedding_provider != "cloudflare":
+        return None
+    return FaissCodeRetriever(base_dir=config.index_dir)
+
+
+@lru_cache
+def get_fallback_embedder() -> EmbeddingService | None:
+    """The embedder that built the fallback index. An index and its embedder are one thing."""
+    config = get_config()
+    if config.embedding_provider != "cloudflare":
+        return None
+    return build_embedder(replace(config, embedding_provider=FALLBACK_NAME))
 
 
 def build_embedder(config: AppConfig) -> EmbeddingService:
@@ -138,8 +171,39 @@ def index_options(config: AppConfig) -> dict:
 
 
 @lru_cache
-def get_index_service() -> CodeIndexService:
-    return CodeIndexService(embedder=get_embedder(), retriever=get_code_retriever(), **index_options(get_config()))
+def get_index_service() -> CodeIndexService | DualIndexService:
+    """What /analyze-repo builds a repository's index with.
+
+    For every provider but "cloudflare" this is one index, as it always was. For "cloudflare"
+    it is two: the hash index as well, built from the same records, so that a question still
+    has something to search when the API cannot be reached, the budget is gone, or the
+    repository was too large to embed in the first place.
+    """
+    config = get_config()
+    primary = CodeIndexService(
+        embedder=get_embedder(),
+        retriever=get_code_retriever(),
+        name=config.embedding_provider,
+        **index_options(config),
+    )
+    fallback_embedder = get_fallback_embedder()
+    fallback_retriever = get_fallback_retriever()
+    if fallback_embedder is None or fallback_retriever is None:
+        return primary
+
+    hash_config = replace(config, embedding_provider=FALLBACK_NAME)
+    fallback = CodeIndexService(
+        embedder=fallback_embedder,
+        retriever=fallback_retriever,
+        name=FALLBACK_NAME,
+        **index_options(hash_config),
+    )
+    return DualIndexService(
+        semantic=primary,
+        fallback=fallback,
+        semantic_name=config.embedding_provider,
+        max_documents=config.cloudflare_max_documents,
+    )
 
 
 @lru_cache
@@ -161,6 +225,8 @@ def get_answer_service() -> AnswerService:
         embedder=get_embedder(),
         llm=get_llm_provider().get_chat_model(),
         settings=get_retrieval_settings(),
+        fallback_retriever=get_fallback_retriever(),
+        fallback_embedder=get_fallback_embedder(),
     )
 
 

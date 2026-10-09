@@ -42,6 +42,9 @@ class OrchestratorState(TypedDict):
     agents_ran: list[str]
     # The code retrieval actually read, carried so later steps need not search again.
     snippets: list[Snippet]
+    # Retrieval's note for the visitor, when the fallback index answered. Carried through the
+    # graph rather than logged, because it is the one part of a fallback they should see.
+    retrieval_note: str
 
 
 class AgentOrchestrator:
@@ -79,6 +82,7 @@ class AgentOrchestrator:
             "citations": [],
             "snippets": [],
             "agents_ran": [],
+            "retrieval_note": "",
         }
 
     def handle_question(
@@ -131,6 +135,7 @@ class AgentOrchestrator:
             citations=final_state.get("citations", []),
             reasoning_steps=reasoning,
             agents_used=agents_ran,
+            note=final_state.get("retrieval_note", ""),
         )
 
     def handle_question_fast(
@@ -173,6 +178,7 @@ class AgentOrchestrator:
                 f"Agents that ran: {' -> '.join(agents_ran)}.",
             ],
             agents_used=agents_ran,
+            note=retrieved.note,
         )
 
     def handle_generation(self, prompt: str, repo_id: str) -> GenerateResult:
@@ -335,6 +341,9 @@ class AgentOrchestrator:
             "current_step_index": idx + 1,
             "citations": _merge_citations(state.get("citations", []), retrieved.citations),
             "snippets": _merge_snippets(state.get("snippets", []), retrieved.snippets),
+            # A later retrieval step that succeeded does not erase an earlier fallback: if any
+            # search in this answer used the fallback index, the visitor is told so.
+            "retrieval_note": state.get("retrieval_note", "") or retrieved.note,
             "final_agent": "retrieval",
             "agents_ran": [*state["agents_ran"], "retrieval"],
         }

@@ -20,6 +20,10 @@ class RepoState:
     commit: str = ""
     # CodeIndexService.index_format when the index was built; empty in state saved before it existed.
     index_format: str = ""
+    # Which indexes this repository actually has, by provider name - ("cloudflare", "hash") when
+    # both were built, ("hash",) when the semantic one was skipped or failed. Empty in state
+    # saved before this was recorded, which is not the same as "none" and must not be read as it.
+    indexes: tuple[str, ...] = ()
 
 
 class RepoStateStore:
@@ -54,6 +58,7 @@ class RepoStateStore:
             "url": state.url,
             "commit": state.commit,
             "index_format": state.index_format,
+            "indexes": list(state.indexes),
             "files": [
                 {
                     "path": source.path,
@@ -128,5 +133,6 @@ class RepoStateStore:
                 url=payload.get("url", ""),
                 commit=payload.get("commit", ""),
                 index_format=payload.get("index_format", ""),
+                indexes=tuple(payload.get("indexes") or ()),
             )
             self._logger.info("Loaded repo state for %s", repo_id)

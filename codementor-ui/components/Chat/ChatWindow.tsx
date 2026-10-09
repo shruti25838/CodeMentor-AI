@@ -15,6 +15,8 @@ interface Message {
     content: string;
     reasoningSteps?: string[];
     citations?: string[];
+    /** Set when keyword search answered instead of semantic search. */
+    retrievalNote?: string;
     agentSteps?: AgentStep[];
 }
 
@@ -161,6 +163,7 @@ export default function ChatWindow() {
                                 content: streamedContent,
                                 citations: data.citations || [],
                                 reasoningSteps: data.reasoning_steps || [],
+                                retrievalNote: data.retrieval_note || "",
                             };
                         }
                         return updated;
@@ -261,6 +264,7 @@ export default function ChatWindow() {
                         content={msg.content}
                         reasoningSteps={msg.reasoningSteps}
                         citations={msg.citations}
+                        retrievalNote={msg.retrievalNote}
                         agentSteps={msg.agentSteps}
                     />
                 ))}

@@ -41,6 +41,7 @@ class CodeIndexService:
         clock: Callable[[], float] = time.monotonic,
         max_chars: int | None = None,
         prefix_metadata: bool = False,
+        name: str = "",
     ) -> None:
         self._embedder = embedder
         self._retriever = retriever
@@ -51,6 +52,9 @@ class CodeIndexService:
         self._max_chars = max_chars
         # Start each embedded text with the file path (and function name), so they can match too.
         self._prefix_metadata = prefix_metadata
+        # What this index is called where a repository records which indexes it has; the
+        # embedding provider's name. Empty means the index is not recorded under any name.
+        self._name = name
         self._logger = logging.getLogger(__name__)
 
     @property
@@ -68,7 +72,12 @@ class CodeIndexService:
         """Remove any stored index for a repo (used to clean up after a failed analysis)."""
         self._retriever.remove(repo_id)
 
-    def index_repository(self, repository: Repository, parsed_repo: ParsedRepository) -> None:
+    @property
+    def index_names(self) -> tuple[str, ...]:
+        return (self._name,) if self._name else ()
+
+    def index_repository(self, repository: Repository, parsed_repo: ParsedRepository) -> tuple[str, ...]:
+        """Build this repository's index. Returns the names of the indexes that exist afterwards."""
         self._logger.info("Indexing repository %s", repository.repo_id)
         deadline = None if self._timeout_seconds is None else self._clock() + self._timeout_seconds
 
@@ -102,6 +111,7 @@ class CodeIndexService:
         with stage("index_write"):
             self._retriever.index(repository.repo_id, indexed_records, self._embedder.signature())
         self._logger.info("Indexed %s records for repo %s", len(indexed_records), repository.repo_id)
+        return self.index_names
 
     def _prepare(self, document: str, record: EmbeddingRecord, root: Path) -> str:
         if self._max_chars is not None:
