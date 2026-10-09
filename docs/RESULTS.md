@@ -632,3 +632,28 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **cost: 6,344 estimated input tokens, 11.68 estimated neurons** of the 10,000-per-day free allowance (0.12%), by the estimator the provider will use - `ceil(chars / 3)` per text, capped at 512 per text. The invalid-token call is excluded from the estimate because it never reached the model. This is an estimate from character counts, not a figure Cloudflare reported: the response carries no token or neuron count, so the only authoritative number is the account dashboard.
   **The probe is capped at 10 calls in code** (`MAX_CALLS`), and `--dry-run` prints the plan and the estimate without sending anything, which is also how the tests exercise it - `tests/test_cloudflare_probe.py` asserts the plan stays inside the cap, that every input is small, that the whole run costs under 1% of the daily allowance, and that nothing printed contains an input text.
   **Three things this run did not establish.** The true maximum array length (above 101, not looked for). Whether Cloudflare bills the truncated tail of an over-length text or only the 512 tokens it read - our estimator assumes the latter, which is the optimistic reading, so a dashboard figure above the estimate would mean documents must be clipped before sending rather than relying on the model's own cut. And the status and body of a budget-exhausted refusal
+
+### Check: the neuron estimator against the account dashboard, after the probe
+- Value: **the dashboard read 8.41 neurons for the probe run; the estimator said 11.68.** The estimator over-counts by **1.39x**, which is the direction it was built to err in, and the gap is explained entirely by its deliberately pessimistic 3 characters per token.
+
+  | | input tokens | neurons |
+  |---|---|---|
+  | `estimated_neurons`, `ceil(chars / 3)` capped at 512 per text | 6,344 | 11.68 |
+  | implied by the dashboard, at 1,841 neurons per million input tokens | 4,568 | **8.41** |
+
+  **Where the 1.39x comes from, and a second thing it tells us.** The probe billed 27,190 characters across eight successful calls, 8,000 of them in the single over-length text. Solving for the real characters-per-token under each assumption about how that long text was billed:
+
+  | assumption about the 8,000-character text | characters per token the rest implies |
+  |---|---|
+  | billed the 512 tokens it actually read | **4.73** |
+  | billed its full length, about 1,700 tokens | 6.69 |
+  | billed more still | 10.09 |
+
+  Only 4.73 is a real number for English prose; 6.69 and 10.09 are not figures any tokenizer produces. So **the truncated tail was not billed** - Cloudflare charged for the 512 tokens the model read, not the 8,000 characters sent. That answers one of the three questions the probe left open, and it means the per-document clip is a bandwidth and latency choice rather than a cost one. The clip stays at 2,000 characters anyway: it is below the model's own cut, so it changes nothing about what is embedded, and sending less is still better.
+- Value (kept deliberately): the estimator stays `ceil(chars / 3)` capped at 512 tokens per document. Against real code, which tokenizes worse than prose, the margin will be smaller than 1.39x, and an estimate that stops early is the one that protects a free allowance. **The ledger is therefore a ceiling on spend, never a measurement of it.**
+- Command: `python scripts/cloudflare_probe.py` (the run recorded in the entry above), then the account dashboard read by hand
+- Dataset/repo: none; the probe's own invented inputs
+- Date: 2026-10-09
+- Commit: 83b2284 (the probe results this calibrates)
+- Notes: **the 8.41 figure is user-supplied, read from the Cloudflare dashboard by the account holder, not obtained by this project.** Nothing in the codebase can read it: the embeddings response carries no token or neuron count, which is the whole reason the ledger exists. It is also rounded to two decimals at an unknown precision, and may include overheads this arithmetic cannot see, so the 4.73 characters per token derived from it is an inference from one data point and not a constant to build on.
+  The comparison to repeat after the first real evaluation build is this same one at a scale where code, not prose, is being embedded
