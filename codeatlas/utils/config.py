@@ -202,6 +202,16 @@ def load_config() -> AppConfig:
         chat_session_ttl_seconds=int(os.getenv("CODEATLAS_CHAT_SESSION_TTL_SECONDS", "1800")),
         chat_max_sessions=int(os.getenv("CODEATLAS_CHAT_MAX_SESSIONS", "1000")),
         eval_results_dir=os.getenv("CODEATLAS_EVAL_RESULTS_DIR", "eval/results"),
+        # Retrieval and indexing, all seven with the defaults that docs/RESULTS.md measured.
+        # Changing one of the last two means earlier indexes are not reused by the index cache.
+        retrieval_candidates=_positive_int("CODEATLAS_RETRIEVAL_CANDIDATES", 20),
+        rerank_weight=_weight("CODEATLAS_RERANK_WEIGHT", 1.0),
+        rerank_subtokens=_flag("CODEATLAS_RERANK_SUBTOKENS", False),
+        drop_stopwords=_flag("CODEATLAS_DROP_STOPWORDS", True),
+        skip_tests=_flag("CODEATLAS_SKIP_TESTS", False),
+        # 0 means no limit, which is what None is inside the app.
+        embed_max_chars=_non_negative_int("CODEATLAS_EMBED_MAX_CHARS", 0) or None,
+        embed_prefix_metadata=_flag("CODEATLAS_EMBED_PREFIX_METADATA", True),
         fastembed_model=os.getenv("CODEATLAS_FASTEMBED_MODEL", DEFAULT_FASTEMBED_MODEL),
         fastembed_batch_size=int(os.getenv("CODEATLAS_FASTEMBED_BATCH_SIZE", str(DEFAULT_FASTEMBED_BATCH_SIZE))),
         fastembed_max_chars=int(os.getenv("CODEATLAS_FASTEMBED_MAX_CHARS", "3000")),
@@ -226,6 +236,43 @@ def load_config() -> AppConfig:
         ),
         cloudflare_index_dir=os.getenv("CODEATLAS_CLOUDFLARE_INDEX_DIR", ".codeatlas/indexes-cloudflare"),
     )
+
+
+TRUE_WORDS = ("true", "1", "yes", "on")
+FALSE_WORDS = ("false", "0", "no", "off")
+
+
+def _flag(name: str, default: bool) -> bool:
+    """One on/off setting, where anything that is neither stops the app starting.
+
+    Deliberately stricter than the older settings in this file, which read `== "true"` and so
+    quietly treat a typo as off. A retrieval setting that silently reverts is worse than most:
+    the app runs, the answers change, and a measurement describes something other than what was
+    configured.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    value = raw.strip().lower()
+    if value in TRUE_WORDS:
+        return True
+    if value in FALSE_WORDS:
+        return False
+    raise ValueError(f"{name} must be one of {', '.join((*TRUE_WORDS, *FALSE_WORDS))}, not {raw!r}")
+
+
+def _weight(name: str, default: float) -> float:
+    """A rerank weight: 1.0 is keyword overlap alone, 0.0 is vector order alone, nothing else is meaningful."""
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a number between 0 and 1, not {raw!r}") from None
+    if not 0.0 <= value <= 1.0:
+        raise ValueError(f"{name} must be a number between 0 and 1, not {raw!r}")
+    return value
 
 
 def _number(name: str, default: float, cast, minimum: float, bound: str):
