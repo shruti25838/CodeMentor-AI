@@ -107,13 +107,15 @@ def build_embedder(config: AppConfig) -> EmbeddingService:
 
 
 def cloudflare_settings(config: AppConfig) -> CloudflareSettings:
-    """The provider's settings, including the three that belong to other layers.
+    """The provider's settings, including the two that belong to other layers.
 
-    prefix_metadata, subtokens and drop_stopwords are carried into the embedder only so that
-    its signature covers them, which is what makes the index guard refuse an index built under
-    a different retrieval configuration. Changing one of them means the repository has to be
-    indexed again, and for this provider that costs neurons - a real price for a real
-    guarantee, and the reason the eval's vector cache is keyed on the text instead.
+    prefix_metadata and drop_stopwords are carried into the embedder so that its signature
+    covers them: the first changes the text of every document, the second the text of every
+    question, so an index built under one value must not be searched under the other.
+
+    Settings that only reorder results are deliberately not passed here. Changing one of them
+    would otherwise invalidate every index built under the old value, and for this provider
+    that means paying to embed the same documents again for identical vectors.
     """
     return CloudflareSettings(
         model=config.cloudflare_model,
@@ -127,7 +129,6 @@ def cloudflare_settings(config: AppConfig) -> CloudflareSettings:
         failure_threshold=config.cloudflare_failure_threshold,
         cooldown_seconds=config.cloudflare_cooldown_seconds,
         prefix_metadata=config.embed_prefix_metadata,
-        subtokens=config.rerank_subtokens,
         drop_stopwords=config.drop_stopwords,
     )
 

@@ -90,10 +90,10 @@ class CloudflareUnavailableError(EmbeddingUnavailableError):
 class CloudflareSettings:
     """Everything configurable about the provider.
 
-    The last three are not this class's own business - prefix_metadata belongs to indexing,
-    subtokens and drop_stopwords to reranking and the query - but they are carried here so the
-    signature can include them. An index is then only ever searched under the exact retrieval
-    configuration it was built and measured with.
+    The last two are not this class's own business - prefix_metadata belongs to indexing and
+    drop_stopwords to the query - but each of them changes the text that gets embedded, so both
+    are carried here for the signature to include. Nothing that merely reorders results belongs
+    in this class: see signature().
     """
 
     model: str = DEFAULT_CLOUDFLARE_MODEL
@@ -107,7 +107,6 @@ class CloudflareSettings:
     failure_threshold: int = DEFAULT_CLOUDFLARE_FAILURE_THRESHOLD
     cooldown_seconds: float = DEFAULT_CLOUDFLARE_COOLDOWN_SECONDS
     prefix_metadata: bool = True
-    subtokens: bool = False
     drop_stopwords: bool = True
 
 
@@ -138,17 +137,27 @@ class CloudflareEmbeddingService(EmbeddingService):
         return self._settings
 
     def signature(self) -> str:
-        """Everything that decides the vectors, so the index guard can refuse a mismatch.
+        """Everything that decides the vectors, and nothing else, so the index guard can refuse a mismatch.
 
-        Pooling is in here because it has to be: the probe measured cos = 0.9466 between the
-        same text under cls and under mean. That is the dangerous kind of incompatible - near
-        enough to look like it is working, far enough to rank worse - and no check downstream
-        would catch it.
+        In it: the model, the pooling, the per-document clip, whether each document is prefixed
+        with its path and name, and whether stopwords are dropped from the question before it is
+        embedded. Each of those changes a vector or the text a vector is made from.
+
+        Pooling is in here because it has to be: the probe measured cos = 0.9466 between the same
+        text under cls and under mean. That is the dangerous kind of incompatible - near enough
+        to look like it is working, far enough to rank worse - and no check downstream would
+        catch it.
+
+        **Out of it: everything that only reorders what has already been embedded** - the rerank
+        weight, identifier splitting in the reranker, the candidate count, test-file filtering.
+        Including one of those would make changing it invalidate every index built under the old
+        value, and for this provider invalidating an index means paying to build it again, for
+        vectors that would have come back identical.
         """
         s = self._settings
         return (
             f"cloudflare:{s.model}:pooling={s.pooling}:max_chars={s.max_chars}"
-            f":prefix={int(s.prefix_metadata)}:subtokens={int(s.subtokens)}:stopwords={int(s.drop_stopwords)}"
+            f":prefix={int(s.prefix_metadata)}:stopwords={int(s.drop_stopwords)}"
         )
 
     def estimated_neurons(self, texts: list[str]) -> float:

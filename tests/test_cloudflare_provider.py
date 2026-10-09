@@ -142,7 +142,6 @@ def test_the_signature_names_the_model_the_pooling_and_the_clip(tmp_path) -> Non
         ("pooling", "cls"),
         ("max_chars", 1500),
         ("prefix_metadata", False),
-        ("subtokens", True),
         ("drop_stopwords", False),
     ],
 )
@@ -154,6 +153,44 @@ def test_every_setting_that_changes_the_embedded_text_changes_the_signature(tmp_
 def test_settings_that_do_not_change_a_vector_stay_out_of_the_signature(tmp_path, field) -> None:
     """Otherwise raising a budget or a batch size would invalidate every index that had been paid for."""
     assert service(tmp_path).signature() == service(tmp_path, **{field: 3}).signature()
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("CODEATLAS_RERANK_SUBTOKENS", "true"),
+        ("CODEATLAS_RERANK_WEIGHT", "0.0"),
+        ("CODEATLAS_RETRIEVAL_CANDIDATES", "50"),
+        ("CODEATLAS_SKIP_TESTS", "true"),
+    ],
+)
+def test_flipping_a_ranking_only_setting_leaves_the_signature_alone(monkeypatch, name, value) -> None:
+    """A setting that reorders what is already embedded must not invalidate a paid-for index.
+
+    rerank_subtokens was in the signature when the provider was first written, and it should not
+    have been: it splits identifiers while *reranking*, long after the vectors exist. Changing it
+    would have made every repository pay to be embedded again for vectors that came back
+    identical. The same reasoning covers the other three here.
+    """
+    for setting in (
+        "CODEATLAS_RERANK_SUBTOKENS",
+        "CODEATLAS_RERANK_WEIGHT",
+        "CODEATLAS_RETRIEVAL_CANDIDATES",
+        "CODEATLAS_SKIP_TESTS",
+    ):
+        monkeypatch.delenv(setting, raising=False)
+    before = build_embedder(_config("cloudflare")).signature()
+    monkeypatch.setenv(name, value)
+    assert build_embedder(_config("cloudflare")).signature() == before
+
+
+def test_the_signature_names_only_what_makes_a_vector(tmp_path) -> None:
+    """Read as a list rather than as a string, so a setting added later has to be thought about."""
+    signature = service(tmp_path).signature()
+    head, *parts = signature.split(":")
+    assert head == "cloudflare"
+    assert [part.split("=")[0] for part in parts[1:]] == ["pooling", "max_chars", "prefix", "stopwords"]
+    assert "subtokens" not in signature
 
 
 def test_cloudflare_does_not_share_a_signature_with_any_other_provider(tmp_path) -> None:
