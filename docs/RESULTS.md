@@ -764,3 +764,29 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **no neurons were spent on this**: hash runs entirely locally, and both splits took about three seconds each.
   The commit reports as `9256a77-dirty` in the run output because the eval was run before the commit that contains it; no code differed between the two runs other than being uncommitted.
   **recall@20 is capped by the pool, not by the index.** A file at rank 21 counts as not recalled, which is correct for this pipeline - the reranker would never see it - but means the figure describes retrieval as configured, not the embedding in the abstract. Raising `CODEATLAS_RETRIEVAL_CANDIDATES` would change it
+
+### Check: what the Cloudflare evaluation will cost, before any of it is spent
+- Value: the three dev configurations together are **1,485.90 estimated neurons**, 18.6% of the 8,000 budget and 14.9% of the 10,000 daily allowance. Nothing was sent to produce this figure.
+
+  ```
+  split: dev
+  configurations: cls-2000, mean-1500, mean-2000
+  ledger: 0.00 estimated neurons spent today (UTC 2026-10-09)
+  budget: 8000, remaining 8000.00
+    cls-2000      1864 documents   1884 not yet cached    495.47 estimated neurons
+    mean-1500     1864 documents   1884 not yet cached    494.96 estimated neurons
+    mean-2000     1864 documents   1884 not yet cached    495.47 estimated neurons
+    total                              1485.90 estimated neurons
+  ```
+
+  **Far cheaper than the worst case, and the reason is the corpus.** A pessimistic estimate - every one of the 1,864 records filling the 2,000-character clip - would be about 1,757 neurons per configuration and over 5,200 for the three. The real figure is 495 per configuration, because most records are single functions of a few hundred characters and only a handful reach the clip at all. **The 600-document cap would have been the binding constraint, not the budget**, which is exactly why the evaluation does not apply it: capping the corpus at 600 of 1,864 records would have measured a third of flask and called it flask.
+
+  **1,884 texts, not 1,864**: the twenty dev questions are embedded too, and are cached the same way. A question costs neurons like any other text.
+
+  **The held-out runs are nearly free.** Both splits ask questions of the same repositories, so after the dev runs every document vector is already cached; a held-out run pays only for its own twenty questions, a fraction of a neuron. The same is true of a rerun. This is the whole reason the cache exists, and it is what makes "run held-out once for the default and once for the dev winner" cost almost nothing on top of the figure above.
+- Command: `python scripts/eval_cloudflare.py --split dev --plan-only`
+- Dataset/repo: https://github.com/pallets/itsdangerous at 672971d66a2ef9f85151e53283113f33d642dabd and https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35, 1,864 records between them; the 20 dev questions from `eval/questions/*.json`
+- Date: 2026-10-09
+- Commit: 7ed7016
+- Notes: **this is the estimate, not a measurement**, by the same `ceil(chars / 3)` capped at 512 that over-counted the probe by 1.39x against the dashboard. If that ratio holds, the real cost of the three configurations is nearer 1,070 neurons - but code tokenizes worse than the prose the ratio was measured on, so the true figure should sit somewhere between the two, and the estimate remains the one to plan against.
+  **The run was stopped here deliberately**, before a single call, so the dashboard can be read before and after and the ledger compared against it at a scale where code rather than prose is being embedded. 838 tests pass, including 21 covering the cache and the orderings
