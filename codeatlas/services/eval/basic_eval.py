@@ -63,22 +63,42 @@ def reciprocal_rank(ranked: Sequence[str], expected: set[str]) -> float:
     return 0.0
 
 
+# The candidate pool a question is reranked from, and so the depth recall is measured at.
+# Recall at this depth asks "did the embedder find the right file at all", with the reranker's
+# opinion taken out of it: the reranker can only reorder what the pool already contains.
+RECALL_DEPTH = 20
+
+
 @dataclass(frozen=True)
 class RankingMetrics:
     questions: int
     hit_rate: dict[int, float]
     precision: dict[int, float]
     mrr: float
+    # Share of questions whose expected file is anywhere in the candidate pool.
+    recall: float = 0.0
 
 
-def ranking_metrics(results: Sequence[tuple[Sequence[str], set[str]]], ks: Sequence[int] = (1, 3, 5)) -> RankingMetrics:
-    """Average hit@k, precision@k and reciprocal rank over (ranked paths, expected paths) pairs."""
+def ranking_metrics(
+    results: Sequence[tuple[Sequence[str], set[str]]],
+    ks: Sequence[int] = (1, 3, 5),
+    candidates: Sequence[tuple[Sequence[str], set[str]]] | None = None,
+) -> RankingMetrics:
+    """Average hit@k, precision@k and reciprocal rank over (ranked paths, expected paths) pairs.
+
+    `candidates` is the same questions ranked to the full pool depth, and **only recall is taken
+    from it**. It is a separate argument rather than a deeper `results` on purpose: the hit
+    rates and MRR are defined over the ranked answer the pipeline actually returns, and handing
+    them a longer list would quietly change every number this file has ever reported.
+    """
     n = len(results)
     if n == 0:
         return RankingMetrics(questions=0, hit_rate=dict.fromkeys(ks, 0.0), precision=dict.fromkeys(ks, 0.0), mrr=0.0)
+    pool = candidates if candidates is not None else results
     return RankingMetrics(
         questions=n,
         hit_rate={k: sum(hit_at_k(r, e, k) for r, e in results) / n for k in ks},
         precision={k: sum(precision_at_k(r, e, k) for r, e in results) / n for k in ks},
         mrr=sum(reciprocal_rank(r, e) for r, e in results) / n,
+        recall=sum(hit_at_k(r, e, RECALL_DEPTH) for r, e in pool) / len(pool) if pool else 0.0,
     )

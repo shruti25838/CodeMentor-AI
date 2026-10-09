@@ -86,9 +86,7 @@ class CodeIndexService:
                 raise IndexingTimeoutError(f"Indexing took longer than {self._timeout_seconds:g} seconds.")
 
         with stage("read_files"):
-            documents, records = self._collect(parsed_repo, check_deadline)
-            root = Path(repository.root_path)
-            documents = [self._prepare(doc, record, root) for doc, record in zip(documents, records)]
+            documents, records = self.documents(repository, parsed_repo, check_deadline)
 
         # Embed in batches so the time limit is checked while embedding, not only before and after.
         embeddings: list[list[float]] = []
@@ -112,6 +110,40 @@ class CodeIndexService:
             self._retriever.index(repository.repo_id, indexed_records, self._embedder.signature())
         self._logger.info("Indexed %s records for repo %s", len(indexed_records), repository.repo_id)
         return self.index_names
+
+    def documents(
+        self,
+        repository: Repository,
+        parsed_repo: ParsedRepository,
+        check_deadline: Callable[[], None] = lambda: None,
+    ) -> tuple[list[str], list[EmbeddingRecord]]:
+        """Exactly the texts this service would embed, with the record each belongs to.
+
+        Public because working out what a run will cost, or what the clip throws away, should
+        not mean reaching into a private method or reimplementing the preparation and hoping it
+        still matches.
+        """
+        documents, records = self._collect(parsed_repo, check_deadline)
+        root = Path(repository.root_path)
+        return [self._prepare(doc, record, root) for doc, record in zip(documents, records)], records
+
+    def clipped_counts(self, parsed_repo: ParsedRepository) -> dict[str, dict[str, int]]:
+        """Per scope ("file"/"function"): how many records there are, how many the clip cuts, and how much text.
+
+        Measured on the source text, before the path prefix is added, because that is the part
+        the clip is deciding about. With no clip set, nothing is cut and every count is zero.
+        """
+        documents, records = self._collect(parsed_repo, lambda: None)
+        counts: dict[str, dict[str, int]] = {}
+        for document, record in zip(documents, records):
+            entry = counts.setdefault(record.scope, {"records": 0, "clipped": 0, "chars": 0, "chars_kept": 0})
+            entry["records"] += 1
+            entry["chars"] += len(document)
+            kept = len(document) if self._max_chars is None else min(len(document), self._max_chars)
+            entry["chars_kept"] += kept
+            if self._max_chars is not None and len(document) > self._max_chars:
+                entry["clipped"] += 1
+        return counts
 
     def _prepare(self, document: str, record: EmbeddingRecord, root: Path) -> str:
         if self._max_chars is not None:
