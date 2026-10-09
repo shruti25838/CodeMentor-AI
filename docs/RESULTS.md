@@ -819,3 +819,22 @@ Every number or claim here comes from a command that can be re-run.
 - Commit: 3c53c66
 - Notes: measured on the source text, before the path prefix is added, because that is the part the clip is deciding about. **No neurons were spent**: this counts characters and calls nothing.
   **The hash provider has no clip at all** (`embed_max_chars` is unset), so it reads every record in full. That is one more way in which the hash and cloudflare comparisons in this file are not a controlled embedder-only swap, and it cuts against the semantic provider rather than for it
+
+### Fix: the Cloudflare embedder signature holds only what decides a vector
+- Value: `rerank_subtokens` is out of the signature. It splits identifiers **while reranking**, long after the vectors exist, so an index built with it off and searched with it on would have returned exactly the same vectors - but the guard would have refused the index, and for this provider refusing an index means paying to embed every document again.
+
+  | | before | after |
+  |---|---|---|
+  | signature | `cloudflare:<model>:pooling=mean:max_chars=2000:prefix=1:subtokens=0:stopwords=1` | `cloudflare:<model>:pooling=mean:max_chars=2000:prefix=1:stopwords=1` |
+
+  **What is in it, and why each one earns its place.** The model and the pooling decide the vector outright - the probe measured cos 0.9466 between the same text under `cls` and under `mean`, close enough to look like it is working and far enough to rank worse. The clip decides how much of a document is seen. `prefix` decides the text of every document; `stopwords` decides the text of every question before it is embedded. Those five, and nothing else.
+
+  **What is out, and why that is not laxity.** The rerank weight, reranker identifier splitting, the candidate count and test-file filtering all reorder records that have already been embedded. A signature that included them would be a guard against a mismatch that cannot happen, paid for in re-embedded documents.
+
+  **The cost of getting this wrong was asymmetric, which is why it was worth fixing first.** Too little in the signature means confident nonsense from mismatched vectors. Too much means an unnecessary bill. But no Cloudflare index exists yet, so correcting it now costs nothing at all, while correcting it after the evaluation had built three indexes would have meant either re-embedding them or carrying the wrong signature forward.
+- Command: `python -m pytest tests/test_cloudflare_provider.py -q` (82 tests), then `python -m pytest tests/ -q` -> 842 passed, 1 skipped
+- Dataset/repo: none; the signature is a pure function of settings
+- Date: 2026-10-09
+- Commit: 60f5cf4
+- Notes: tested in both directions. `test_flipping_a_ranking_only_setting_leaves_the_signature_alone` flips each of `CODEATLAS_RERANK_SUBTOKENS`, `CODEATLAS_RERANK_WEIGHT`, `CODEATLAS_RETRIEVAL_CANDIDATES` and `CODEATLAS_SKIP_TESTS` and asserts the signature is byte-identical; `test_every_setting_that_changes_the_embedded_text_changes_the_signature` asserts the five that remain each change it. A third test reads the signature as a **list of field names** rather than as a string, so a setting appended later fails a test and has to be argued for.
+  This supersedes the "a real cost worth knowing about" paragraph in the provider's entry above, which recorded the trade as accepted. It was not worth accepting
