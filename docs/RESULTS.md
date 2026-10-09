@@ -683,3 +683,36 @@ Every number or claim here comes from a command that can be re-run.
   **A real cost worth knowing about: `rerank_subtokens` is in the signature although it does not change any vector.** It was included because an index should only be searched under the retrieval configuration it was measured with. The price is that flipping that one rerank setting invalidates every Cloudflare index and makes the repositories pay to be embedded again, for vectors that would have been identical. The eval's vector cache is keyed on the text rather than the signature, so experiments do not pay it; a deployment that flips the setting would. Dropping it from the signature is a one-line change if that trade turns out to be the wrong way round.
   **Spend is counted only after a call that worked.** A refused call is not billed, and a call that vanished in transit cannot be counted without inventing the number - so a timeout that Cloudflare did in fact process goes uncounted, and the ledger reads low by that much. The 2,000-neuron cushion between the 8,000 budget and the 10,000 allowance is what covers that.
   **The index time limit is the shared `CODEATLAS_INDEX_TIMEOUT_SECONDS`**, not a new one. A repository at the 600-document cap is twelve calls of fifty, so the 120 s default has room; raising the cap means raising the limit too, and a timeout throws the index away while the neurons stay spent
+
+### Feature: every semantic repository also gets a hash index, and questions fall back to it with a note
+- Value: with `CODEATLAS_EMBEDDING_PROVIDER=cloudflare` a repository is indexed twice from the same records. **The hash index is built first and always**, so a repository is never left holding only the index that might not be there when a question arrives. 30 tests in `tests/test_dual_index.py` cover it; 781 pass overall.
+
+  **Where each index lives, and why that is not a detail.** The hash index stays in `CODEATLAS_INDEX_DIR`, exactly where existing hash indexes already are - nothing was moved or rebuilt. The semantic index gets `CODEATLAS_CLOUDFLARE_INDEX_DIR` (`.codeatlas/indexes-cloudflare`). Two embedders' vectors are not comparable and a FAISS index cannot tell you so: both are 384 wide, so a mismatched query returns confident nonsense. Separate folders are the cheapest way to be certain they never meet, and the embedder signature check is the second line, not the first.
+
+  **Two kinds of failure, so the routing happens in two stages.**
+
+  | stage | what is known | what happens |
+  |---|---|---|
+  | before calling anything | what is on disk: whether a usable semantic index exists for this repository | an over-cap repository, or one whose semantic index was built by a different embedder, goes straight to hash with the `unindexed` note |
+  | while calling | whether the embedder actually works | `EmbeddingUnavailableError` from `embed_query` is caught, the same question is asked again against the hash index, and the note is the reason's |
+
+  The second stage is the one that matters: a visitor is already waiting when it happens. `test_a_failure_at_question_time_falls_back_and_tells_the_visitor` indexes with an embedder that works and then asks with one that does not, because that is the real sequence and a test that fails at index time would prove something else entirely.
+
+  **The visitor is told, above the answer.** One sentence, in a small bordered line over the answer text rather than inside the "Reasoning" dropdown: an answer built from the weaker search should say so where the answer is, not where someone would have to go looking. The note travels `GroundedAnswer.note` -> `AnswerResult.note` -> `AskResponse.retrieval_note` and the `done` event -> `MessageBubble`. In the agent graph a later successful retrieval does **not** erase an earlier fallback, so if any search behind an answer used the hash index the visitor hears about it.
+
+  | reason | sentence |
+  |---|---|
+  | `budget` | Today's semantic search allowance is used up, so this answer used keyword search. |
+  | `circuit` | Semantic search is briefly unavailable, so this answer used keyword search. |
+  | `api` | Semantic search did not respond, so this answer used keyword search. |
+  | `unindexed`, `cap` | Semantic search is not available for this repository, so this answer used keyword search. |
+
+- Command: `python -m pytest tests/test_dual_index.py -q` (30 tests), `python -m pytest tests/ -q` -> 781 passed, 1 skipped; `npm run lint`, `npm run test`, `npm run build` in `codementor-ui`
+- Dataset/repo: none. Repositories are built in pytest temp directories and the failing provider is a fake that raises the real exception type; nothing reaches the network
+- Date: 2026-10-09
+- Commit: c7f51cd
+- Notes: **a correction to the previous entry's wording.** That entry listed the `cap` note as "This repository is too large for semantic search". It now reads "Semantic search is not available for this repository", because at question time an over-cap repository and one whose semantic index was built by a different embedder are indistinguishable from the index on disk, and telling a visitor their repository is too large when in fact the index is stale would be worse than saying less. The `cap` key is still what indexing logs when it skips a repository for size.
+  **The error lives on the embedding interface, not on the provider.** `EmbeddingUnavailableError` is defined in `embedding.py` and `CloudflareUnavailableError` subclasses it, so `AnswerService` catches the general case and the question path contains no mention of Cloudflare. A later provider that can fail the same way gets the fallback without the question path being touched.
+  **For hash, the default, none of this exists.** `get_fallback_retriever()` and `get_fallback_embedder()` return `None` for every provider but cloudflare, `get_index_service()` returns the single `CodeIndexService` it always did, and `test_without_a_fallback_nothing_changes` pins that a mismatched index still returns nothing rather than quietly falling back to something.
+  **A fix that came with this, not asked for but needed:** `/search` used to read `CODEATLAS_INDEX_DIR` whatever the provider was, so with a semantic provider selected it would have embedded the query with one embedder and searched the other embedder's index - the exact failure the signature guard exists to prevent, on the one endpoint that bypasses the guard. It now reads the selected provider's own index. Its behaviour is otherwise untouched.
+  **What is not covered.** The two indexes are written in sequence with no transaction: a crash between them leaves a hash index and no semantic one, which is the safe direction but means `indexes` in the repository state can be optimistic if the process dies mid-write. An index built before this change records `indexes: ()`, which means "not recorded" and must not be read as "has no indexes"
