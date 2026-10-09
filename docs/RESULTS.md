@@ -716,3 +716,25 @@ Every number or claim here comes from a command that can be re-run.
   **For hash, the default, none of this exists.** `get_fallback_retriever()` and `get_fallback_embedder()` return `None` for every provider but cloudflare, `get_index_service()` returns the single `CodeIndexService` it always did, and `test_without_a_fallback_nothing_changes` pins that a mismatched index still returns nothing rather than quietly falling back to something.
   **A fix that came with this, not asked for but needed:** `/search` used to read `CODEATLAS_INDEX_DIR` whatever the provider was, so with a semantic provider selected it would have embedded the query with one embedder and searched the other embedder's index - the exact failure the signature guard exists to prevent, on the one endpoint that bypasses the guard. It now reads the selected provider's own index. Its behaviour is otherwise untouched.
   **What is not covered.** The two indexes are written in sequence with no transaction: a crash between them leaves a hash index and no semantic one, which is the safe direction but means `indexes` in the repository state can be optimistic if the process dies mid-write. An index built before this change records `indexes: ()`, which means "not recorded" and must not be read as "has no indexes"
+
+### Feature: the seven retrieval settings are configurable by environment variable, with the measured defaults
+- Value: `candidates`, `rerank_weight`, `rerank_subtokens`, `drop_stopwords`, `skip_tests`, `embed_max_chars` and `embed_prefix_metadata` now read from the environment. **Every default is unchanged** and `test_every_default_is_the_one_that_was_measured` checks all seven against the figures the earlier entries in this file measured.
+
+  | variable | default | what it does |
+  |---|---|---|
+  | `CODEATLAS_RETRIEVAL_CANDIDATES` | 20 | records taken from vector search before reranking |
+  | `CODEATLAS_RERANK_WEIGHT` | 1.0 | 1.0 keyword overlap only, 0.0 vector order only |
+  | `CODEATLAS_RERANK_SUBTOKENS` | false | match the parts of identifiers too |
+  | `CODEATLAS_DROP_STOPWORDS` | true | leave common English words out of the question |
+  | `CODEATLAS_SKIP_TESTS` | false | drop records from test files |
+  | `CODEATLAS_EMBED_MAX_CHARS` | 0 (no limit) | embed only the first N characters of a document |
+  | `CODEATLAS_EMBED_PREFIX_METADATA` | true | start each document with its path and name |
+
+  **A wrong value stops the app rather than becoming a setting.** `CODEATLAS_RETRIEVAL_CANDIDATES=twenty`, `CODEATLAS_RERANK_WEIGHT=1.5` and `CODEATLAS_DROP_STOPWORDS=flase` are all startup failures naming the variable. This is **stricter than the older flags in the same file**, which read `== "true"` and so take a typo as off, and it is stricter deliberately: the failure being guarded against is not a crash, it is an app that starts, answers differently, and tells nobody - after which a number in this file would describe a configuration that was never running. An empty variable is the single exception and means the default, because that is how a deployment unsets a value.
+- Command: `python -m pytest tests/test_retrieval_settings_from_env.py -q` (31 tests), then `python -m pytest tests/ -q` -> 812 passed, 1 skipped
+- Dataset/repo: none; environment variables and config defaults
+- Date: 2026-10-09
+- Commit: 68d0ae9
+- Notes: **provider-specific defaults still win where a provider has one.** `CODEATLAS_EMBED_MAX_CHARS` is the shared setting; the cloudflare provider clips at `CODEATLAS_CLOUDFLARE_MAX_CHARS` (2,000) whatever the shared one says, and fastembed at its own 3,000, exactly as before. `test_a_provider_may_still_have_its_own_defaults` pins that.
+  **`POST /search` does not go through any of this, and now says so** in `.env.example` and in its own module docstring. It embeds the query and returns what the index gives back: no reranking, no stopword dropping, no test filtering, no fallback to hash. Its results are therefore not what a visitor would see for the same words, and it is not the endpoint to measure retrieval with - `scripts/eval_retrieval.py` goes through `AnswerService`, which is the pipeline. Its behaviour is unchanged by this batch apart from following the selected provider's index.
+  **The two indexing settings are not free to change.** `embed_max_chars` and `embed_prefix_metadata` are part of `index_format`, so changing either means the index cache stops reusing existing indexes and every repository is indexed again - which for the cloudflare provider costs neurons
