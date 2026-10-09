@@ -738,3 +738,29 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **provider-specific defaults still win where a provider has one.** `CODEATLAS_EMBED_MAX_CHARS` is the shared setting; the cloudflare provider clips at `CODEATLAS_CLOUDFLARE_MAX_CHARS` (2,000) whatever the shared one says, and fastembed at its own 3,000, exactly as before. `test_a_provider_may_still_have_its_own_defaults` pins that.
   **`POST /search` does not go through any of this, and now says so** in `.env.example` and in its own module docstring. It embeds the query and returns what the index gives back: no reranking, no stopword dropping, no test filtering, no fallback to hash. Its results are therefore not what a visitor would see for the same words, and it is not the endpoint to measure retrieval with - `scripts/eval_retrieval.py` goes through `AnswerService`, which is the pipeline. Its behaviour is unchanged by this batch apart from following the selected provider's index.
   **The two indexing settings are not free to change.** `embed_max_chars` and `embed_prefix_metadata` are part of `index_format`, so changing either means the index cache stops reusing existing indexes and every repository is indexed again - which for the cloudflare provider costs neurons
+
+### Check: recall@20 added to the retrieval eval, and the existing numbers are unchanged
+- Value: **hash on the held-out split still prints hit@5 0.750 and MRR@10 0.645**, the figures recorded before this change, and now also prints recall@20.
+
+  | split | repo | n | hit@1 | hit@3 | hit@5 | P@1 | P@3 | P@5 | MRR@10 | **recall@20** |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | dev | itsdangerous | 10 | 0.600 | 0.700 | 0.800 | 0.600 | 0.500 | 0.400 | 0.692 | **0.900** |
+  | dev | flask | 10 | 0.600 | 0.700 | 0.700 | 0.600 | 0.467 | 0.360 | 0.633 | **0.800** |
+  | dev | overall | 20 | 0.600 | 0.700 | 0.750 | 0.600 | 0.483 | 0.380 | 0.662 | **0.850** |
+  | test | itsdangerous | 10 | 0.800 | 0.800 | 0.900 | 0.800 | 0.700 | 0.560 | 0.820 | **1.000** |
+  | test | flask | 10 | 0.400 | 0.500 | 0.600 | 0.400 | 0.367 | 0.280 | 0.470 | **0.600** |
+  | test | overall | 20 | 0.600 | 0.650 | 0.750 | 0.600 | 0.533 | 0.420 | 0.645 | **0.800** |
+
+  **What recall@20 is for.** It is the share of questions whose expected file is anywhere in the 20 candidates the reranker chooses from - the embedder's own score, with the reranker's opinion removed. `rerank_weight` is 1.0, so the final order is keyword overlap; the embedder decides *which* 20 records are available and nothing else. A question whose file never reaches the pool cannot be answered well however the ordering is tuned, so this is the number that moves when the embedder changes.
+
+  **It already says something about hash.** On held-out flask, hash has recall@20 **0.600** against hit@5 0.600 - every question whose file is in the pool is already ranked into the top five, so **reranking is not what is losing those four questions; the bag-of-words embedding never found the file at all.** On itsdangerous, recall@20 is 1.000 while hit@5 is 0.900: there, one question is in the pool and mis-ranked, which is the kind of loss an ordering change could recover. The two repositories therefore have different problems, and only one of them is an ordering problem.
+
+  **How the old numbers were kept old.** Retrieval runs once to the pool depth and is read twice: the ranked answer is still its first ten, and recall is computed over the full pool through a separate `candidates` argument to `ranking_metrics`. Deepening the list the existing metrics see would have raised MRR@10 for every question with a hit at rank 11 to 20 and silently invalidated every earlier entry in this file.
+- Value (also added): under each repository's line, how many file records and function records are longer than the per-document clip, and what share of their characters survives it. For hash there is no clip, so both read 0.0% over the clip and 100.0% of characters kept
+- Command: `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/eval_retrieval.py --split dev` and `--split test`; `python -m pytest tests/ -q` -> 817 passed, 1 skipped
+- Dataset/repo: https://github.com/pallets/itsdangerous at 672971d66a2ef9f85151e53283113f33d642dabd (15 files, 159 records); https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35 (83 files, 1705 records); the same 40 questions in `eval/questions/*.json`, split as fixed before any of this
+- Date: 2026-10-09
+- Commit: fa0db11
+- Notes: **no neurons were spent on this**: hash runs entirely locally, and both splits took about three seconds each.
+  The commit reports as `9256a77-dirty` in the run output because the eval was run before the commit that contains it; no code differed between the two runs other than being uncommitted.
+  **recall@20 is capped by the pool, not by the index.** A file at rank 21 counts as not recalled, which is correct for this pipeline - the reranker would never see it - but means the figure describes retrieval as configured, not the embedding in the abstract. Raising `CODEATLAS_RETRIEVAL_CANDIDATES` would change it
