@@ -143,7 +143,7 @@ def plan_for(config: Config, question_files, split: str, app_config, cache_dir: 
         "uncached_texts": len(unpaid),
         "estimated_neurons": round(neuron_ledger.estimated_neurons(unpaid), 2),
         "repos": per_repo,
-        "cache_file": str(embedder.path),
+        "cache_file": embedder.path.name,
     }
 
 
@@ -210,7 +210,9 @@ def evaluate(config: Config, question_files, split: str, app_config, cache_dir: 
         "repos": repos,
         "overall": {ordering: _metrics(pairs[ordering], pools[ordering]) for ordering in ORDERINGS},
         "per_question": per_question,
-        "cache": {"hits": embedder.hits, "misses": embedder.misses, "file": str(embedder.path)},
+        # The cache file by name only: the full path is a developer's home directory, which has
+        # no place in a results file that gets committed.
+        "cache": {"hits": embedder.hits, "misses": embedder.misses, "file": embedder.path.name},
     }
 
 
