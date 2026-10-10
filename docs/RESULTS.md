@@ -989,3 +989,38 @@ Every number or claim here comes from a command that can be re-run.
   **Nothing in the index changed.** `test_sorting_changes_neither_the_signature_nor_the_index_format` pins both strings, because if either had moved, every existing index would have been invalidated by what is purely a billing optimisation. The vectors are returned in the order their documents arrived, so a record keeps its own vector, and `test_an_indexed_repository_is_the_same_either_way` checks that end to end by indexing a repository both ways and comparing every record and vector.
   **It is on for every provider, not only Cloudflare.** For hash it provably cannot matter - the vector is a pure function of the text - and for fastembed the batch size is 1, so there is nothing to sort. The check that justifies it was made against Cloudflare's bge-small; a future provider whose vectors did depend on batch composition would need checking again before trusting this.
   **Two existing tests were changed**, from asserting which text the embedder saw *first* to asserting which texts it saw. The order is now a billing detail, not a contract, and a test that pins it would fail the next time the batching is tuned
+
+### Proposal: Render settings for the semantic provider, and what happens when the allowance runs out
+- Value: a complete deployment configuration, **proposed and not applied**. Nothing in this entry has been set anywhere; no default was changed.
+
+  | variable | proposed | why |
+  |---|---|---|
+  | `CODEATLAS_EMBEDDING_PROVIDER` | `cloudflare` | held-out MRR@10 0.854 against hash's 0.645, recall@20 1.000 against 0.800 |
+  | `CODEATLAS_CLOUDFLARE_MODEL` | `@cf/baai/bge-small-en-v1.5` | the measured model; 384 dims, free tier |
+  | `CODEATLAS_CLOUDFLARE_POOLING` | `mean` | cls was worse on dev (MRR 0.779 against 0.804) and the two are not interchangeable |
+  | `CODEATLAS_CLOUDFLARE_MAX_CHARS` | `2000` | 1,500 lost MRR and saved 0.1 neurons in 562 |
+  | `CODEATLAS_CLOUDFLARE_MAX_DOCUMENTS` | `600` | 276 neurons per repository with length-sorted batching |
+  | `CODEATLAS_CLOUDFLARE_DAILY_NEURONS` | **`2500`**, not 8000 | see the ledger problem below |
+  | `CODEATLAS_CLOUDFLARE_BATCH_SIZE` | `50` | unchanged |
+  | `CODEATLAS_NEURON_LEDGER` | `/var/data/cloudflare-neurons.json` | only if a disk is mounted; otherwise leave unset |
+  | `CODEATLAS_INDEX_DIR` | `/var/data/indexes` | the hash index, which every question can fall back to |
+  | `CODEATLAS_CLOUDFLARE_INDEX_DIR` | `/var/data/indexes-cloudflare` | the semantic index, which must never share a folder |
+  | `CLOUDFLARE_ACCOUNT_ID` | the account id | **as an environment variable in the Render dashboard**, never in the repository |
+  | `CLOUDFLARE_API_TOKEN` | the API token | the same, and marked secret |
+
+  **What a visitor sees when the allowance is gone.** They get an answer. The question is embedded, the call is refused, the hash index answers instead, and one sentence appears above the answer: *"Today's semantic search allowance is used up, so this answer used keyword search."* Citations, snippets and the rest are unchanged - the answer is built from the same pipeline, searched with a weaker embedder. Analysing a new repository also still works: the hash index is built first and always, so an analysis never fails for want of neurons; only the semantic half is skipped, and the next question on that repository says *"Semantic search is not available for this repository"*.
+
+  **The ledger problem, which is the real reason for the lower budget.** The ledger lives in `.codeatlas/cloudflare-neurons.json`, under the gitignored working directory. **On Render's free plan there is no persistent disk, so every restart wipes it** - and a free service spins down when idle and restarts on the next request, which for a demo may be several times a day. After each restart the budget guard believes nothing has been spent today and will allow a further full budget.
+
+  So with the budget at 8,000, four restarts in one UTC day could authorise 32,000 neurons against a 10,000 allowance. **2,500 is proposed instead: four restart-cycles still fit inside the free allowance**, and 2,500 is nine capped repository analyses, which is a reasonable day for a demo. If a disk is ever mounted, `CODEATLAS_NEURON_LEDGER` should point at it and the budget can go back up.
+
+  **The honest framing: the budget guard is a courtesy, not the protection.** It exists to stop *this project* spending more than it meant to. The protection against actually exceeding the allowance is that **Cloudflare refuses the call and every refusal falls back to hash with a note** - which is tested, and which works whether or not the ledger survived the restart. A wiped ledger means the day's allowance may really run out; it does not mean anything breaks.
+
+  **A larger cost driver than the ledger, and the reason to mount a disk if anything is paid for.** Without a persistent disk the *indexes* are wiped too. Every restart means every repository is analysed again, and under the cloudflare provider each re-analysis is a real 276 neurons. The index cache and the repository state are both under `.codeatlas` by default for the same reason. On a free plan with no disk, the practical ceiling is not the budget but how often the service restarts.
+- Command: none; nothing was run and nothing was applied. The figures come from the entries above
+- Dataset/repo: none
+- Date: 2026-10-10
+- Commit: b157fe5 (the state this proposal describes)
+- Notes: **approval required before any of this is set.** The defaults in the repository are unchanged: provider `hash`, budget 8,000, cap 600, clip 2,000, batch size 50.
+  **The credentials belong only in Render's own environment settings.** They are read straight from the environment into an object with a redacting repr and are never part of the app config, so no config dump or log line can print them; `.env.example` carries the names with empty values and `.env` is gitignored.
+  **One thing this proposal cannot answer:** whether a free Render instance's latency to `api.cloudflare.com` keeps a 600-document index inside `CODEATLAS_INDEX_TIMEOUT_SECONDS` (120 s). Length-sorted batching makes it twelve calls, which should be ample, but it has not been measured from Render and a timeout throws the index away while the neurons stay spent
