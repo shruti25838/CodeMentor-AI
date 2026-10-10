@@ -213,7 +213,7 @@ def evaluate(
             "records_indexed": len(parsed.files) + len(parsed.functions),
             "questions": len(questions),
             "clipped": indexer.clipped_counts(parsed),
-            "orderings": {ordering: _metrics(repo_pairs[ordering], repo_pools[ordering]) for ordering in ORDERINGS},
+            "orderings": {ordering: _metrics(repo_pairs[ordering], repo_pools[ordering]) for ordering in orderings},
         }
 
     return {

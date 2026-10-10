@@ -1,0 +1,206 @@
+{
+  "split": "test",
+  "orderings": [
+    "keyword"
+  ],
+  "configs": [
+    "mean-2000"
+  ],
+  "results": [
+    {
+      "config": "mean-2000",
+      "pooling": "mean",
+      "max_chars": 2000,
+      "split": "test",
+      "repos": {
+        "itsdangerous": {
+          "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
+          "files_indexed": 15,
+          "records_indexed": 159,
+          "questions": 10,
+          "clipped": {
+            "file": {
+              "records": 15,
+              "clipped": 8,
+              "chars": 59558,
+              "chars_kept": 22487
+            },
+            "function": {
+              "records": 144,
+              "clipped": 8,
+              "chars": 90647,
+              "chars_kept": 63547
+            }
+          },
+          "orderings": {
+            "keyword": {
+              "questions": 10,
+              "hit@1": 0.8,
+              "hit@3": 0.9,
+              "hit@5": 0.9,
+              "p@3": 0.7667,
+              "mrr@10": 0.8643,
+              "recall@20": 1.0
+            }
+          }
+        },
+        "flask": {
+          "commit": "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35",
+          "files_indexed": 83,
+          "records_indexed": 1705,
+          "questions": 10,
+          "clipped": {
+            "file": {
+              "records": 83,
+              "clipped": 45,
+              "chars": 589406,
+              "chars_kept": 109728
+            },
+            "function": {
+              "records": 1622,
+              "clipped": 52,
+              "chars": 824235,
+              "chars_kept": 600406
+            }
+          },
+          "orderings": {
+            "keyword": {
+              "questions": 10,
+              "hit@1": 0.8,
+              "hit@3": 0.9,
+              "hit@5": 0.9,
+              "p@3": 0.6667,
+              "mrr@10": 0.8433,
+              "recall@20": 1.0
+            }
+          }
+        }
+      },
+      "overall": {
+        "keyword": {
+          "questions": 20,
+          "hit@1": 0.8,
+          "hit@3": 0.9,
+          "hit@5": 0.9,
+          "p@3": 0.7167,
+          "mrr@10": 0.8538,
+          "recall@20": 1.0
+        }
+      },
+      "per_question": {
+        "keyword": {
+          "itsd-02": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-04": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-06": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-08": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-10": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-12": {
+            "hit@5": 0.0,
+            "rr": 0.1429,
+            "recall@20": 1.0
+          },
+          "itsd-14": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-16": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-18": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-20": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-02": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-04": {
+            "hit@5": 1.0,
+            "rr": 0.3333,
+            "recall@20": 1.0
+          },
+          "flask-06": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-08": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-10": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-12": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-14": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-16": {
+            "hit@5": 0.0,
+            "rr": 0.1,
+            "recall@20": 1.0
+          },
+          "flask-18": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-20": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          }
+        }
+      },
+      "cache": {
+        "hits": 1874,
+        "misses": 10,
+        "file": "98332e737349d50a.json"
+      }
+    }
+  ],
+  "ledger_after": {
+    "estimated_neurons": 0.5526,
+    "calls": 20,
+    "day": "2026-10-10"
+  }
+}
