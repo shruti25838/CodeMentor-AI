@@ -930,3 +930,29 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **the dashboard figures are user-supplied** and read by hand: 8.41 before, about 4.41k over 24 hours after. The embeddings response carries no usage at all, which is why the ledger exists and why it had to be calibrated against a figure this project cannot read. Both readings are rounded, so "about 4,392" carries real uncertainty - but not enough to explain a factor of three.
   **The probe script keeps its own old estimator** and its recorded numbers are left alone. It is a record of a run that happened, not a tool to be re-run, and its inputs were nine calls of one or two texts where padding barely applies.
   **No default was changed by this commit.** The budget stays 8,000, the cap 600, the clip 2,000, the batch size 50. What changed is that the stop now fires where it was meant to - and at the new prices it will fire about three times sooner than it used to
+
+### Check: the held-out split, run once, for the default configuration
+- Value: **held-out overall MRR@10 0.854 against hash's 0.645, and recall@20 1.000 against 0.800.** Run once, for mean pooling at clip 2,000 with keyword ordering - the default, and also the dev winner, so there was one run to make. No other configuration and no other ordering was scored on this split.
+
+  | repo | embedder | hit@1 | hit@3 | hit@5 | P@3 | MRR@10 | R@20 |
+  |---|---|---|---|---|---|---|---|
+  | itsdangerous | hash | 0.800 | 0.800 | 0.900 | 0.700 | 0.820 | 1.000 |
+  | itsdangerous | **cloudflare** | 0.800 | **0.900** | 0.900 | **0.767** | **0.864** | 1.000 |
+  | flask | hash | 0.400 | 0.500 | 0.600 | 0.367 | 0.470 | 0.600 |
+  | flask | **cloudflare** | **0.800** | **0.900** | **0.900** | **0.667** | **0.843** | **1.000** |
+  | overall | hash | 0.600 | 0.650 | 0.750 | 0.533 | 0.645 | 0.800 |
+  | overall | **cloudflare** | **0.800** | **0.900** | **0.900** | **0.717** | **0.854** | **1.000** |
+
+  **Overall gain: hit@1 +0.200, hit@3 +0.250, hit@5 +0.150, P@3 +0.184, MRR@10 +0.209, recall@20 +0.200.** The gain on held-out is larger than on dev, which is the opposite of the usual worry and is itself a reason for caution: 20 questions per split is small, and 0.200 of hit@1 is four questions.
+
+  **Nearly all of it is flask, and recall@20 says why.** On itsdangerous both embedders already had recall@20 1.000 - the right file was always in the pool - so the only available gain was in ordering, and it came to +0.044 of MRR. On flask hash had recall@20 0.600: **four of ten questions never had their file in the pool at all**, and no reranking could have recovered them. Cloudflare takes that to 1.000, and the ranking metrics follow: hit@1 0.400 to 0.800, MRR 0.470 to 0.843. This is the clearest statement yet of what the semantic embedder buys - not better ordering, but finding the file in the first place.
+
+  **A consistency check that was not planned and is worth keeping.** The fastembed entry earlier in this file measured held-out overall hit@1 0.800, hit@3 0.900, hit@5 0.900, P@3 0.717, MRR@10 0.864. This run: 0.800, 0.900, 0.900, 0.717, **0.854**. Those are two independent implementations of the same model - bge-small-en-v1.5 under ONNX locally, and the same model behind Cloudflare's API - agreeing to **0.010 of MRR and exactly on everything else**, despite different clips (3,000 against 2,000) and different batch sizes. Neither number is validating the other by construction, so the agreement is real evidence that both are measuring the model rather than their own plumbing.
+- Command: `python scripts/eval_cloudflare.py --split test --config mean-2000 --ordering keyword --json eval/results/cloudflare/test.json`; the hash column is the `--split test` run recorded earlier in this file
+- Dataset/repo: https://github.com/pallets/itsdangerous at 672971d66a2ef9f85151e53283113f33d642dabd (15 files, 159 records); https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35 (83 files, 1705 records); the 20 held-out questions from `eval/questions/*.json`, split as fixed before any of this work began
+- Date: 2026-10-10
+- Commit: b1bbfd4
+- Notes: **cost: 1.25 estimated neurons planned, 0.55 recorded across 20 calls** - the twenty held-out questions and nothing else. All 1,864 document vectors were already in the cache from the dev run, which is exactly what the cache was built for: 1,874 hits and 10 texts embedded on the run that completed.
+  **The first attempt crashed after embedding ten of the questions**, on a reference left pointing at every ordering rather than the chosen ones. It cost 0.24 estimated neurons and no numbers were produced or looked at; the retry paid only for the remaining ten. Both halves are in today's ledger.
+  **Nothing was tuned on this split.** The configuration and the ordering were both chosen on dev before this was run, and `--ordering keyword` was passed so that the alternatives were not even computed - they would have cost nothing, which is precisely why not computing them had to be deliberate.
+  **The clipping limit still stands over these numbers.** 54.2% of flask's file records are over the clip and keep 18.6% of their characters, so this result was achieved with most file records represented by their opening alone
