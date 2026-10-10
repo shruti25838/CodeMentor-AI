@@ -956,3 +956,36 @@ Every number or claim here comes from a command that can be re-run.
   **The first attempt crashed after embedding ten of the questions**, on a reference left pointing at every ordering rather than the chosen ones. It cost 0.24 estimated neurons and no numbers were produced or looked at; the retry paid only for the remaining ten. Both halves are in today's ledger.
   **Nothing was tuned on this split.** The configuration and the ordering were both chosen on dev before this was run, and `--ordering keyword` was passed so that the alternatives were not even computed - they would have cost nothing, which is precisely why not computing them had to be deliberate.
   **The clipping limit still stands over these numbers.** 54.2% of flask's file records are over the clip and keep 18.6% of their characters, so this result was achieved with most file records represented by their opening alone
+
+### Check: length-sorted batching halves the cost of an index, and changes no vector
+- Value: **600 flask documents cost 276.06 estimated neurons sorted against 561.87 in file order** - a 50.9% saving, confirmed by the ledger, for **identical** vectors.
+
+  | | estimated neurons |
+  |---|---|
+  | 600 documents, file order, batch 50 | 561.87 |
+  | 600 documents, **length order**, batch 50 | **276.06** |
+  | ledger delta for the real sorted index | **276.06** |
+
+  **The safety check came first, and it is the only reason this was applied.** The same 50 flask documents were embedded twice through the real API, once in file order and once in length order, and the smallest cosine between the two vectors of the same document was measured:
+
+  ```
+  documents: 50, clip 2000, batch size 50
+  estimate for both calls: 94.26 estimated neurons
+  minimum cosine between the two vectors of the same document: 1.000000
+  required: 0.9999
+  PASS: batching order does not change a vector
+  ```
+
+  **1.000000, not 0.9999-something.** Had it come back lower, an index would have depended on the order its files happened to be read in - two analyses of the same repository giving different vectors - and no saving would have been worth that. The check cost 94.26 estimated neurons and is reproducible: `python scripts/index_cost_check.py --check-order`.
+
+  **Why it works.** A call is billed at the length of its longest text. In file order a batch of fifty holds whatever fifty records came next, and about one record in twenty is long enough to reach the clip, so nearly every batch paid the long rate for all fifty. In length order the long records are together in their own few batches and the short ones pay short-record prices.
+
+  **What this is worth in practice.** A 600-document repository falls from 562 to 276 neurons, so the 8,000 budget covers about **29 analyses a day instead of 14**, and the 10,000 free allowance about 36 instead of 17 - without touching the clip, the cap, the batch size or anything a visitor sees.
+- Command: `python scripts/index_cost_check.py --check-order` then `python scripts/index_cost_check.py --index 600`; `python -m pytest tests/test_index_batching.py -q` (11 tests), full suite 863 passed, 1 skipped
+- Dataset/repo: https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35, its first 600 prepared documents at clip 2,000
+- Date: 2026-10-10
+- Commit: b91833f
+- Notes: **spend for this entry: 94.26 for the order check plus 276.06 for the validation index = 370.32 estimated neurons**, on top of the 0.55 the held-out run cost. Today's ledger reads 370.87 over 34 calls. Both figures were printed before each run, as a dashboard reading on either side was wanted.
+  **Nothing in the index changed.** `test_sorting_changes_neither_the_signature_nor_the_index_format` pins both strings, because if either had moved, every existing index would have been invalidated by what is purely a billing optimisation. The vectors are returned in the order their documents arrived, so a record keeps its own vector, and `test_an_indexed_repository_is_the_same_either_way` checks that end to end by indexing a repository both ways and comparing every record and vector.
+  **It is on for every provider, not only Cloudflare.** For hash it provably cannot matter - the vector is a pure function of the text - and for fastembed the batch size is 1, so there is nothing to sort. The check that justifies it was made against Cloudflare's bge-small; a future provider whose vectors did depend on batch composition would need checking again before trusting this.
+  **Two existing tests were changed**, from asserting which text the embedder saw *first* to asserting which texts it saw. The order is now a billing detail, not a contract, and a test that pins it would fail the next time the batching is tuned
