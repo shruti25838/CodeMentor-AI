@@ -510,3 +510,17 @@ def test_the_settings_really_reach_the_provider(monkeypatch) -> None:
         25,
         100.0,
     )
+
+
+def test_the_providers_estimate_counts_the_padding_it_will_be_billed_for(tmp_path) -> None:
+    """A long document in a batch raises what every other document in that batch costs."""
+    embedder = service(tmp_path, batch_size=50, max_chars=2000)
+    short = ["x" * 30] * 49
+    assert embedder.estimated_neurons(short + ["y" * 2000]) > embedder.estimated_neurons(short) * 10
+
+
+def test_the_estimate_uses_the_batch_size_the_provider_will_send(tmp_path) -> None:
+    texts = ["x" * 30] * 9 + ["y" * 1500]
+    big = service(tmp_path, batch_size=10).estimated_neurons(texts)
+    small = service(tmp_path, batch_size=1).estimated_neurons(texts)
+    assert big > small

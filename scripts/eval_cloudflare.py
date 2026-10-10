@@ -141,7 +141,8 @@ def plan_for(config: Config, question_files, split: str, app_config, cache_dir: 
         "config": config.name,
         "documents": documents_total,
         "uncached_texts": len(unpaid),
-        "estimated_neurons": round(neuron_ledger.estimated_neurons(unpaid), 2),
+        # Batched as the run will send them, since a batch is billed by its longest member.
+        "estimated_neurons": round(neuron_ledger.estimated_neurons(unpaid, index_settings.batch_size), 2),
         "repos": per_repo,
         "cache_file": embedder.path.name,
     }

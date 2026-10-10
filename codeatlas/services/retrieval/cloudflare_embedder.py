@@ -161,8 +161,10 @@ class CloudflareEmbeddingService(EmbeddingService):
         )
 
     def estimated_neurons(self, texts: list[str]) -> float:
-        """What embedding these texts would be counted as costing, after clipping."""
-        return neuron_ledger.estimated_neurons([self._clip(text) for text in texts])
+        """What embedding these texts would be counted as costing: clipped, and batched as they will be sent."""
+        return neuron_ledger.estimated_neurons(
+            [self._clip(text) for text in texts], batch_size=self._settings.batch_size
+        )
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:

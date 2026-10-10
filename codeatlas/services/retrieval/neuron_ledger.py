@@ -10,9 +10,13 @@ token spend, and the provider stops calling when today's total passes the config
 Three things follow from that, and all three matter:
 
 * **The day is a UTC day**, not a local one, because that is when the allowance resets.
-* **The figure is an estimate and is named one.** It is `ceil(chars / 3)` capped at 512 tokens
-  per document, priced at Cloudflare's published rate - measured against the dashboard once,
-  it over-counted by 1.39x (see docs/RESULTS.md). It is a ceiling on spend, not a measurement.
+* **The figure is an estimate and is named one**, priced at Cloudflare's published rate. It is
+  a ceiling on spend, not a measurement, and the first version of it was not even that: summing
+  each text's own tokens predicted 1,464 neurons for a run the dashboard billed at about 4,400,
+  **three times under**. A batch appears to be billed by its longest member, so fifty short
+  functions sent alongside one long file cost fifty long files. The estimate now prices every
+  text in a call at the longest text in that call, which predicted 4,767 for the same run -
+  9% high, and high is the side to be wrong on (see docs/RESULTS.md).
 * **It counts what this machine spent.** Another machine, or the dashboard, will read higher.
 
 Nothing here records what was embedded: a count of documents and a number of neurons, never a
@@ -68,13 +72,33 @@ def today() -> str:
     return datetime.now(UTC).date().isoformat()
 
 
-def estimated_tokens(texts: list[str]) -> int:
-    """ceil(chars / 3) per text, capped at the model's 512-token window."""
-    return sum(min(math.ceil(len(text) / CHARS_PER_TOKEN), MAX_TOKENS_PER_DOCUMENT) for text in texts)
+def text_tokens(text: str) -> int:
+    """One text's own tokens: ceil(chars / 3), capped at the model's 512-token window."""
+    return min(math.ceil(len(text) / CHARS_PER_TOKEN), MAX_TOKENS_PER_DOCUMENT)
 
 
-def estimated_neurons(texts: list[str]) -> float:
-    return estimated_tokens(texts) * NEURONS_PER_MILLION_INPUT_TOKENS / 1_000_000
+def estimated_tokens(texts: list[str], batch_size: int | None = None) -> int:
+    """What these texts are billed as, counting the padding a batch is charged for.
+
+    Every text in one call is priced at the longest text in that call, because that is what the
+    dashboard says actually happens. `batch_size` is how the texts will be split into calls;
+    None means they are one call, which is what the provider passes, since it calls this once
+    per batch it is about to send.
+
+    This is the difference between an estimate that is 9% high and one that is 3x low.
+    """
+    if not texts:
+        return 0
+    size = batch_size or len(texts)
+    total = 0
+    for start in range(0, len(texts), size):
+        batch = texts[start : start + size]
+        total += max(text_tokens(text) for text in batch) * len(batch)
+    return total
+
+
+def estimated_neurons(texts: list[str], batch_size: int | None = None) -> float:
+    return estimated_tokens(texts, batch_size) * NEURONS_PER_MILLION_INPUT_TOKENS / 1_000_000
 
 
 def record(neurons: float, documents: int, path: Path | None = None) -> None:

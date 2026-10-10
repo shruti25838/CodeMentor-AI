@@ -83,3 +83,55 @@ def test_the_file_keeps_a_bounded_history(tmp_path) -> None:
     days = json.loads(path.read_text(encoding="utf-8"))["days"]
     assert len(days) <= neuron_ledger.HISTORY_DAYS
     assert neuron_ledger.today() in days
+
+
+# --- padding: what a batch is actually billed as -----------------------------------------
+
+
+def test_a_batch_is_priced_at_its_longest_text() -> None:
+    """The correction that matters: fifty short functions beside one long file cost fifty long files."""
+    short, long_text = "x" * 30, "y" * 1500
+    alone = neuron_ledger.estimated_tokens([short])
+    together = neuron_ledger.estimated_tokens([short, long_text])
+    assert alone == 10
+    assert together == neuron_ledger.text_tokens(long_text) * 2
+    assert together > alone + neuron_ledger.text_tokens(long_text) - 1
+
+
+def test_texts_of_one_length_cost_what_they_always_did() -> None:
+    assert neuron_ledger.estimated_tokens(["abc"] * 10) == 10
+
+
+def test_the_batch_size_decides_how_much_padding_is_counted() -> None:
+    """Sending the same texts in smaller calls costs less, for identical vectors."""
+    texts = ["x" * 30] * 49 + ["y" * 1500]
+    in_one_call = neuron_ledger.estimated_tokens(texts, batch_size=50)
+    one_at_a_time = neuron_ledger.estimated_tokens(texts, batch_size=1)
+    assert in_one_call == 500 * 50
+    assert one_at_a_time == 49 * 10 + 500
+    # 25,000 against 990: the same vectors, for twenty-five times the price.
+    assert in_one_call > one_at_a_time * 25
+
+
+def test_batches_are_counted_separately() -> None:
+    texts = ["y" * 1500, "x" * 30, "x" * 30, "x" * 30]
+    assert neuron_ledger.estimated_tokens(texts, batch_size=2) == 500 * 2 + 10 * 2
+
+
+def test_a_partial_last_batch_is_charged_for_what_is_in_it() -> None:
+    assert neuron_ledger.estimated_tokens(["x" * 30] * 3, batch_size=2) == 10 * 2 + 10 * 1
+
+
+def test_no_batch_size_means_one_call() -> None:
+    """Which is what the provider passes: it asks once per batch it is about to send."""
+    texts = ["x" * 30, "y" * 1500]
+    assert neuron_ledger.estimated_tokens(texts) == neuron_ledger.estimated_tokens(texts, batch_size=len(texts))
+
+
+def test_nothing_costs_nothing() -> None:
+    assert neuron_ledger.estimated_tokens([]) == 0
+    assert neuron_ledger.estimated_neurons([]) == 0.0
+
+
+def test_one_text_is_its_own_tokens_and_nothing_more() -> None:
+    assert neuron_ledger.estimated_tokens(["x" * 1200]) == neuron_ledger.text_tokens("x" * 1200) == 400
