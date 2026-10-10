@@ -886,3 +886,47 @@ Every number or claim here comes from a command that can be re-run.
   **Re-running the whole dev evaluation afterwards cost nothing**: 1,944 cache hits, 0 texts embedded, the ledger unmoved. That is the vector cache doing what it was built for, and it is why the held-out runs will be nearly free.
   **The clipping limit from the note above applies to every number here.** These results were achieved with more than half of each repository's file records represented by their opening only, and for flask by 18.6% of their characters. The headroom above these figures is not all reranking.
   **This is not a controlled embedder-only comparison with hash.** hash reads every record in full and has no clip at all; the Cloudflare configurations clip at 2,000 or 1,500 characters. What is being compared is the server running one provider against the server running the other, which is the decision actually on the table
+
+### Fix: the neuron estimate was three times under, because a batch is billed by its longest text
+- Value: **the dev run was estimated at 1,464.37 neurons and the dashboard billed about 4,400.** The estimator now prices every text in a call at the longest text in that call, which predicts 4,767 for the same run - 9% high rather than 3x low.
+
+  **The dashboard figures, as supplied.** bge-small read 8.41 neurons before the dev run and about 4.41k over the following 24 hours, so the run itself cost roughly **4,392** real neurons. (The "used today" figure came through as the letter `N` and is not recorded here; the arithmetic below uses the 24-hour reading.)
+
+  | | tokens | neurons | vs billed |
+  |---|---|---|---|
+  | old estimate: each text's own tokens | 807,111 | 1,485.90 planned / **1,464.37 recorded** | **0.33x** |
+  | billed, from the dashboard | ~2,385,000 | **~4,392** | 1.00x |
+  | new estimate: every text at its batch's longest | 2,589,429 | **4,767.1** | 1.09x |
+  | ceiling: every text at the full 512-token window | 2,893,824 | 5,327.5 | 1.21x |
+
+  **Why padding explains it and nothing else does.** The average prepared document is 455 characters in flask and 587 in itsdangerous - about 141 and 177 estimated tokens. Billed, the run works out at roughly 445 tokens per text, close to the 512-token window. That is not a tokenizer being three times worse than guessed; it is fifty texts in one call all being charged at the length of the longest one. About one record in twenty is long enough to reach the clip, so with batches of fifty **nearly every batch contained one and paid the long rate for all fifty.**
+
+  **The spend reconciles exactly, and nothing was wasted.** 177 calls were recorded. Reconstructed from the corpus: 3 configurations x (39 document batches + 20 query calls) = **177**. So **no index was built more than once and no call was retried** - a retry would have raised the count and would also have logged a warning, and none did. 5,355 texts were sent, 1,785 per configuration, which is the 1,864 documents plus 20 questions less 99 duplicates that the cache embedded once.
+
+  **What to assume going forward: about 3.0 real neurons per *old* estimated neuron, and about 0.92 per *new* one.** The new estimate is deliberately the high side of the truth, so the honest instruction is to treat it as the figure to plan against and expect to be billed a little less.
+
+  **This closed a hole, not a rounding error.** Under the old estimate the 8,000-neuron budget stop would have allowed roughly **24,000 real neurons, nearly two and a half times the 10,000 daily free allowance**. The stop would not have fired; the day's allowance would simply have run out and every question would have fallen back to hash. The only reason that did not happen is that the evaluation was run once.
+- Value (what a repository actually costs now): **a 600-document index of a flask-sized repository costs 562 neurons** at the current batch size of 50 - about **14 analyses inside the 8,000 budget**, 17 inside the free allowance.
+
+  | | batch 50 | batch 10 | batch 5 | batch 50, length-sorted |
+  |---|---|---|---|---|
+  | 600 documents, clip 2000 | **561.9** | 483.4 | 423.0 | **276.1** |
+  | 600 documents, clip 1500 | 561.8 | 482.7 | 422.2 | 275.4 |
+  | 600 documents, clip 1000 | 385.6 | 350.4 | 318.9 | 225.6 |
+  | all 1,705 flask documents, clip 2000 | 1,442.1 | - | - | 463.9 |
+
+  **A tighter clip is not a cost lever, and that is the most useful thing in this table.** Clip 1,500 costs 561.8 against clip 2,000's 561.9 - a saving of 0.1 neurons in 562, because padding is set by the longest text in each batch and at either clip that text is at the ceiling. The dev run already showed clip 1,500 losing 0.033 of MRR. **It costs retrieval quality and saves nothing.**
+
+  **The lever is batching.** Sorting a repository's documents by length before batching halves the cost - 276 against 562 - for **byte-identical vectors**, because batches then contain texts of similar length and pay for almost no padding. It changes nothing about the index, nothing about the signature, and nothing a visitor sees.
+- Proposed, and **not applied without approval**:
+  1. **Sort documents by length before batching, then restore their order** (embed in length order, write records back in the original order). Halves the cost of every index. The only argument against is the code it adds.
+  2. **Leave the clip at 2,000.** Lowering it demonstrably costs MRR and saves nothing under padding.
+  3. **Leave the document cap at 600 if (1) is taken** - it would then cost 276 neurons per repository, about 29 analyses inside the budget. **Without (1), lower the cap to 300**, which costs about 280 and restores the same headroom, at the price of more repositories falling back to hash.
+  4. **Leave the batch size at 50 if (1) is taken.** Without it, 10 would save 14% and 5 would save 25%, but both multiply the number of calls and the time an index takes, and the index time limit is 120 s.
+- Command: `python -m pytest tests/test_neuron_ledger.py tests/test_cloudflare_provider.py -q`, then `python -m pytest tests/ -q` -> 852 passed, 1 skipped. The cost tables are `CodeIndexService.documents` over the pinned flask checkout, priced by the new estimator; no call was made to produce them
+- Dataset/repo: the dev run recorded above (`eval/results/cloudflare/dev.json`), and https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35 for the cost tables
+- Date: 2026-10-10
+- Commit: 686413f
+- Notes: **the dashboard figures are user-supplied** and read by hand: 8.41 before, about 4.41k over 24 hours after. The embeddings response carries no usage at all, which is why the ledger exists and why it had to be calibrated against a figure this project cannot read. Both readings are rounded, so "about 4,392" carries real uncertainty - but not enough to explain a factor of three.
+  **The probe script keeps its own old estimator** and its recorded numbers are left alone. It is a record of a run that happened, not a tool to be re-run, and its inputs were nine calls of one or two texts where padding barely applies.
+  **No default was changed by this commit.** The budget stays 8,000, the cap 600, the clip 2,000, the batch size 50. What changed is that the stop now fires where it was meant to - and at the new prices it will fire about three times sooner than it used to
