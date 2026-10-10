@@ -148,16 +148,29 @@ def plan_for(config: Config, question_files, split: str, app_config, cache_dir: 
     }
 
 
-def evaluate(config: Config, question_files, split: str, app_config, cache_dir: Path, repo_cache: Path) -> dict:
-    """Index each repository once for this configuration, then score every ordering from it."""
+def evaluate(
+    config: Config,
+    question_files,
+    split: str,
+    app_config,
+    cache_dir: Path,
+    repo_cache: Path,
+    orderings: tuple[str, ...] = ORDERINGS,
+) -> dict:
+    """Index each repository once for this configuration, then score the chosen orderings from it.
+
+    `orderings` is narrowed on the held-out split. Scoring the others would cost no neurons, and
+    that is exactly why the restriction has to be deliberate: a held-out split stops being held
+    out the moment someone has seen what the alternatives would have scored on it.
+    """
     embedder = build_embedder(config, app_config, cache_dir)
     index_settings = replace(cloudflare_settings(app_config), pooling=config.pooling, max_chars=config.max_chars)
     retrieval = get_retrieval_settings()
     depth = max(RANKED_DEPTH, RECALL_DEPTH, retrieval.candidates)
 
     repos: dict[str, dict] = {}
-    pairs: dict[str, list] = {ordering: [] for ordering in ORDERINGS}
-    pools: dict[str, list] = {ordering: [] for ordering in ORDERINGS}
+    pairs: dict[str, list] = {ordering: [] for ordering in orderings}
+    pools: dict[str, list] = {ordering: [] for ordering in orderings}
     per_question: dict[str, dict] = {}
 
     for path in question_files:
@@ -176,12 +189,12 @@ def evaluate(config: Config, question_files, split: str, app_config, cache_dir: 
         indexer.index_repository(repository, parsed)
         rankers = Rankers.build(retriever, embedder, retrieval)
 
-        repo_pairs: dict[str, list] = {ordering: [] for ordering in ORDERINGS}
-        repo_pools: dict[str, list] = {ordering: [] for ordering in ORDERINGS}
+        repo_pairs: dict[str, list] = {ordering: [] for ordering in orderings}
+        repo_pools: dict[str, list] = {ordering: [] for ordering in orderings}
         questions = question_set.select(split)
         for q in questions:
             expected = set(q.expected_files)
-            for ordering in ORDERINGS:
+            for ordering in orderings:
                 records = order(ordering, rankers, repository.repo_id, q.question, depth)
                 ranked = [_relative(record.metadata.get("path", ""), root) for record in records]
                 repo_pairs[ordering].append((ranked[:RANKED_DEPTH], expected))
@@ -209,7 +222,7 @@ def evaluate(config: Config, question_files, split: str, app_config, cache_dir: 
         "max_chars": config.max_chars,
         "split": split,
         "repos": repos,
-        "overall": {ordering: _metrics(pairs[ordering], pools[ordering]) for ordering in ORDERINGS},
+        "overall": {ordering: _metrics(pairs[ordering], pools[ordering]) for ordering in orderings},
         "per_question": per_question,
         # The cache file by name only: the full path is a developer's home directory, which has
         # no place in a results file that gets committed.
@@ -224,9 +237,17 @@ def _metrics(pairs, pools) -> dict:
         "hit@1": round(m.hit_rate[1], 4),
         "hit@3": round(m.hit_rate[3], 4),
         "hit@5": round(m.hit_rate[5], 4),
+        "p@3": round(m.precision[3], 4),
         f"mrr@{RANKED_DEPTH}": round(m.mrr, 4),
         f"recall@{RECALL_DEPTH}": round(m.recall, 4),
     }
+
+
+def _row(label: str, m: dict) -> str:
+    return (
+        f"{label:<10}{m['questions']:>4}{m['hit@1']:>8.3f}{m['hit@3']:>8.3f}{m['hit@5']:>8.3f}"
+        f"{m['p@3']:>8.3f}{m['mrr@10']:>9.3f}{m['recall@20']:>8.3f}"
+    )
 
 
 def _relative(path: str, root: Path) -> str:
@@ -256,13 +277,9 @@ def print_results(result: dict) -> None:
         f"\nconfiguration {result['config']} (pooling {result['pooling']}, clip {result['max_chars']}), "
         f"split {result['split']}"
     )
-    header = f"  {'ordering':<10}{'n':>4}{'hit@1':>8}{'hit@3':>8}{'hit@5':>8}{'MRR@10':>9}{'recall@20':>11}"
-    print(header)
+    print(f"  {'ordering':<10}{'n':>4}{'hit@1':>8}{'hit@3':>8}{'hit@5':>8}{'P@3':>8}{'MRR@10':>9}{'R@20':>8}")
     for ordering, m in result["overall"].items():
-        print(
-            f"  {ordering:<10}{m['questions']:>4}{m['hit@1']:>8.3f}{m['hit@3']:>8.3f}{m['hit@5']:>8.3f}"
-            f"{m['mrr@10']:>9.3f}{m['recall@20']:>11.3f}"
-        )
+        print(f"  {_row(ordering, m)}")
     for name, repo in result["repos"].items():
         print(f"  {name}: {repo['files_indexed']} files, {repo['records_indexed']} records")
         for scope, counts in sorted(repo["clipped"].items()):
@@ -273,10 +290,7 @@ def print_results(result: dict) -> None:
                 f" ({share:.1%})  characters kept: {kept:.1%}"
             )
         for ordering, m in repo["orderings"].items():
-            print(
-                f"    {ordering:<10}{m['questions']:>4}{m['hit@1']:>8.3f}{m['hit@3']:>8.3f}{m['hit@5']:>8.3f}"
-                f"{m['mrr@10']:>9.3f}{m['recall@20']:>11.3f}"
-            )
+            print(f"    {_row(ordering, m)}")
     print(f"  cache: {result['cache']['hits']} hits, {result['cache']['misses']} embedded")
 
 
@@ -285,6 +299,13 @@ def main() -> int:
     parser.add_argument("--split", choices=SPLITS, default="dev")
     parser.add_argument("--config", dest="configs", action="append", choices=sorted(CONFIGS), help="default: all")
     parser.add_argument("--set", dest="sets", action="append", type=Path, help="question file (default: all)")
+    parser.add_argument(
+        "--ordering",
+        dest="orderings",
+        action="append",
+        choices=ORDERINGS,
+        help="score only these orderings (default: all). Narrow this on a held-out split.",
+    )
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR, help="where repositories are checked out")
     parser.add_argument("--vector-cache", type=Path, default=VECTOR_CACHE_DIR)
     parser.add_argument("--json", type=Path, help="also write the full results here")
@@ -319,7 +340,11 @@ def main() -> int:
         )
         return 1
 
-    results = [evaluate(c, question_files, args.split, app_config, args.vector_cache, args.cache_dir) for c in configs]
+    orderings = tuple(args.orderings) if args.orderings else ORDERINGS
+    results = [
+        evaluate(c, question_files, args.split, app_config, args.vector_cache, args.cache_dir, orderings)
+        for c in configs
+    ]
     for result in results:
         print_results(result)
 
@@ -331,6 +356,7 @@ def main() -> int:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "split": args.split,
+            "orderings": list(orderings),
             "configs": [r["config"] for r in results],
             "results": results,
             "ledger_after": {"estimated_neurons": after.estimated_neurons, "calls": after.calls, "day": after.day},
