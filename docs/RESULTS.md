@@ -1159,3 +1159,28 @@ Every number or claim here comes from a command that can be re-run.
 - Commit: f5e55e0
 - Notes: **both dashboard figures in this file are user-supplied.** The embeddings response carries no usage at all, which is why the ledger exists and why it can only ever be calibrated against a number read by a person from a web page. Both readings are rounded at an unknown precision.
   **"Used today" reading 0 is the UTC rollover working as intended**, not a lost record: the ledger keeps a dated history and still holds both days
+
+### Fix: a DI test built a real model client, and only a developer's .env was hiding it
+- Value: **`tests/test_dual_index.py::test_the_answer_service_is_given_the_fallback_only_when_there_is_one` passed locally and failed in GitHub CI** with `pydantic ValidationError: ChatOpenAI did not find openai_api_key`. It now passes in both, and the whole suite passes with no credentials anywhere: **894 passed, 1 skipped**.
+
+  **What it was doing.** The test builds the answer service through the real `get_answer_service()` factory, so the real `LlmProvider` has to build *something*. The LLM provider was left at its default of `groq`, so it constructed a `ChatOpenAI` - which needs a key to exist at construction time, before any call is made.
+
+  **Why it passed locally and not in CI.** Two separate routes put `.env` into the process environment on a developer's machine, and neither exists in CI:
+
+  | route | when |
+  |---|---|
+  | `codeatlas/app/main.py` calls `load_dotenv()` at import | any test that builds the FastAPI app, which several do |
+  | `load_cloudflare_credentials()` calls `load_dotenv()` | any test that touches the Cloudflare credentials helper |
+
+  Either one loads the **whole** file, so `GROQ_API_KEY` lands in `os.environ` for the rest of the session no matter which test pulled it in. Test order then decides whether a test that needs a key happens to find one - locally it always did, and in CI there was nothing to find. **The test was never isolated; it was sharing state with whatever ran before it.**
+
+  **The fix is `CODEATLAS_LLM_PROVIDER=none`**, which makes the factory return the app's own `FallbackChatModel`: no key, no client, no network, and the same path the server takes when nothing is configured. That exercises real code rather than a fake, and it is a far better fix than **putting a dummy key in the workflow**, which would have left the test free to build a real client and merely stopped CI from mentioning it.
+
+  The test now also asserts *which* model it was given, so the next time something makes this path build a real client it fails with that sentence rather than with a missing key.
+- Command: `python -m pytest tests/ -q` locally (894 passed, 1 skipped); the same suite with dotenv disabled and every provider credential cleared from the environment, which is how CI runs it (894 passed, 1 skipped)
+- Dataset/repo: none
+- Date: 2026-10-11
+- Commit: 33d5f0a
+- Notes: **reproduced before it was fixed**, with a pytest plugin that makes `dotenv.load_dotenv` a no-op and deletes every `CLOUDFLARE_*`, `OPENAI_API_KEY` and `GROQ_API_KEY` from the environment before any project module is imported. It reproduced the CI failure exactly - the same one test, 893 others passing. **The `.env` file was never read, moved or renamed to do this.**
+  **One other place builds a real client, deliberately.** `tests/test_llm_defaults.py` constructs `ChatOpenAI` three times to check that the model name and token budget are passed through, and sets an obviously fake key itself to do so. That is a legitimate use - it is testing the construction - and it depends on nothing ambient, which is why it passed in CI too. The guard added in the next entry makes that intent explicit rather than incidental.
+  **No test reaches a real provider.** Nothing in the suite calls a model, and nothing calls Cloudflare: every Cloudflare test passes a fake client into the provider
