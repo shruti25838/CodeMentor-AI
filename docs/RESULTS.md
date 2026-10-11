@@ -602,3 +602,609 @@ Every number or claim here comes from a command that can be re-run.
   **The reranker limits how much the embedder can matter.** `rerank_weight` is 1.0, so the final order is keyword overlap with vector similarity only breaking ties; the embedder chooses the 20 candidates, not their order. A fair reading of these numbers is that fastembed puts the right file in the candidate pool far more often on flask, where hash's bag of words misses questions phrased in plain English.
   **hash remains the default** and nothing in this entry changes that: fastembed is 60x slower to index, needs an extra install and a model download, and the deployment it would run on has not been sized for it. The retrieval gauges on `/metrics` still read the three hash files in `eval/results`; the fastembed results are in a subfolder the gauge loader does not glob, verified by loading them (3 files read, all labelled `hash`).
   Four of the five eval runs report the commit as `97242ac-dirty`. The only modified files were the eval result JSON files the runs themselves had just written; no code differed between the five runs. `eval/results/all.json` was refreshed for hash at the same commit, for consistency within the folder; `all` is dev and test together and is not a third measurement
+
+### Check: what the Cloudflare Workers AI embeddings endpoint actually does, where the docs are silent
+- Value: nine calls answered the four questions that decide how the provider has to be written. **An array of 101 texts was accepted, so the widely repeated 100-item cap is not current. An 8,000-character text is accepted and silently truncated. `pooling: "cls"` is accepted over REST and is a genuinely different vector space. A bad token is an HTTP 401 with error code 10000.**
+
+  | call | texts | chars | result |
+  |------|-------|-------|--------|
+  | baseline | 1 | 56 | HTTP 200, success=True, shape=[1, 384], pooling=mean |
+  | array-50 | 50 | 2840 | HTTP 200, success=True, shape=[50, 384], pooling=mean |
+  | array-100 | 100 | 5690 | HTTP 200, success=True, shape=[100, 384], pooling=mean |
+  | array-101 | 101 | 5748 | HTTP 200, success=True, shape=[101, 384], pooling=mean |
+  | long-8000 | 1 | 8000 | HTTP 200, success=True, shape=[1, 384], pooling=mean |
+  | head-2400 | 1 | 2400 | HTTP 200, success=True, shape=[1, 384], pooling=mean |
+  | tail-2400 | 1 | 2400 | HTTP 200, success=True, shape=[1, 384], pooling=mean |
+  | pooling-cls | 1 | 56 | HTTP 200, success=True, shape=[1, 384], pooling=cls |
+  | invalid-token | 1 | 56 | HTTP 401, success=False, errors=[{"code": 10000, "message": "Authentication error"}] |
+
+  **Batch size: 101 works, and the real ceiling was not looked for.** The "maximum 100" that circulates comes from a LlamaIndex integration page marked as seen 2024-03-31 and from cloudflare-docs issue #11316, a user report from 2023. Neither matches the endpoint today. Finding the true edge would mean a binary search of calls against a free allowance to learn a number the provider does not need, so the probe stopped at 101 and the provider will batch at 50 - comfortably inside whatever the limit is, and small enough that one failed batch re-sends little.
+
+  **Over-length text is truncated, not refused, and the cut is at or before 2,400 characters.** The 8,000-character input was 2,400 characters on one subject followed by 5,600 on an unrelated one. Its vector against the first subject embedded alone: **cos = 1.0000**. Against the second subject alone: **cos = 0.5888**. Identical to the head to four decimal places means the tail contributed nothing at all. Since 2,400 characters is already about 600 tokens, this is consistent with the documented 512-token window and tells us the model's own cut sits below 2,400 characters. The planned 2,000-character clip is therefore a cost control that we choose, not a limit we are up against - but it also means **a document longer than roughly 2,000 characters is only ever embedded by its opening**, whatever we set, which is a retrieval limitation to carry into the evaluation rather than a bug to fix.
+
+  **cls and mean are different spaces, and not different enough to be safe.** The same text embedded both ways gives **cos = 0.9466**. That is the dangerous case: not orthogonal nonsense that any sanity check would catch, but a near-miss that would quietly degrade ranking if an index built under one pooling were searched under the other. It is the concrete reason pooling belongs in the embedder signature alongside the model name, where the existing `embedder_mismatch` guard will refuse the mismatch.
+
+  **A refusal is HTTP 401 with `success: false` and `errors: [{"code": 10000, "message": "Authentication error"}]`.** The body is JSON and carries no echo of the request. **What a spent-budget refusal looks like is still unknown** and cannot be learned without spending the day's allowance, so the fallback to hash will trigger on any non-2xx status and any transport failure, never on a particular code.
+- Command: `python scripts/cloudflare_probe.py --dry-run` then `python scripts/cloudflare_probe.py`
+- Dataset/repo: none. Every input is an invented string defined in the script - short filler sentences, and two unrelated paragraphs for the truncation test. No repository content, no question, and no credential is printed: the output is statuses, shapes, pooling and error codes only
+- Date: 2026-10-09
+- Commit: 83fff8c
+- Notes: **cost: 6,344 estimated input tokens, 11.68 estimated neurons** of the 10,000-per-day free allowance (0.12%), by the estimator the provider will use - `ceil(chars / 3)` per text, capped at 512 per text. The invalid-token call is excluded from the estimate because it never reached the model. This is an estimate from character counts, not a figure Cloudflare reported: the response carries no token or neuron count, so the only authoritative number is the account dashboard.
+  **The probe is capped at 10 calls in code** (`MAX_CALLS`), and `--dry-run` prints the plan and the estimate without sending anything, which is also how the tests exercise it - `tests/test_cloudflare_probe.py` asserts the plan stays inside the cap, that every input is small, that the whole run costs under 1% of the daily allowance, and that nothing printed contains an input text.
+  **Three things this run did not establish.** The true maximum array length (above 101, not looked for). Whether Cloudflare bills the truncated tail of an over-length text or only the 512 tokens it read - our estimator assumes the latter, which is the optimistic reading, so a dashboard figure above the estimate would mean documents must be clipped before sending rather than relying on the model's own cut. And the status and body of a budget-exhausted refusal
+
+### Check: the neuron estimator against the account dashboard, after the probe
+- Value: **the dashboard read 8.41 neurons for the probe run; the estimator said 11.68.** The estimator over-counts by **1.39x**, which is the direction it was built to err in, and the gap is explained entirely by its deliberately pessimistic 3 characters per token.
+
+  | | input tokens | neurons |
+  |---|---|---|
+  | `estimated_neurons`, `ceil(chars / 3)` capped at 512 per text | 6,344 | 11.68 |
+  | implied by the dashboard, at 1,841 neurons per million input tokens | 4,568 | **8.41** |
+
+  **Where the 1.39x comes from, and a second thing it tells us.** The probe billed 27,190 characters across eight successful calls, 8,000 of them in the single over-length text. Solving for the real characters-per-token under each assumption about how that long text was billed:
+
+  | assumption about the 8,000-character text | characters per token the rest implies |
+  |---|---|
+  | billed the 512 tokens it actually read | **4.73** |
+  | billed its full length, about 1,700 tokens | 6.69 |
+  | billed more still | 10.09 |
+
+  Only 4.73 is a real number for English prose; 6.69 and 10.09 are not figures any tokenizer produces. So **the truncated tail was not billed** - Cloudflare charged for the 512 tokens the model read, not the 8,000 characters sent. That answers one of the three questions the probe left open, and it means the per-document clip is a bandwidth and latency choice rather than a cost one. The clip stays at 2,000 characters anyway: it is below the model's own cut, so it changes nothing about what is embedded, and sending less is still better.
+- Value (kept deliberately): the estimator stays `ceil(chars / 3)` capped at 512 tokens per document. Against real code, which tokenizes worse than prose, the margin will be smaller than 1.39x, and an estimate that stops early is the one that protects a free allowance. **The ledger is therefore a ceiling on spend, never a measurement of it.**
+- Command: `python scripts/cloudflare_probe.py` (the run recorded in the entry above), then the account dashboard read by hand
+- Dataset/repo: none; the probe's own invented inputs
+- Date: 2026-10-09
+- Commit: 83b2284 (the probe results this calibrates)
+- Notes: **the 8.41 figure is user-supplied, read from the Cloudflare dashboard by the account holder, not obtained by this project.** Nothing in the codebase can read it: the embeddings response carries no token or neuron count, which is the whole reason the ledger exists. It is also rounded to two decimals at an unknown precision, and may include overheads this arithmetic cannot see, so the 4.73 characters per token derived from it is an inference from one data point and not a constant to build on.
+  The comparison to repeat after the first real evaluation build is this same one at a scale where code, not prose, is being embedded
+
+### Feature: an opt-in Cloudflare Workers AI embedding provider, off by default
+- Value: `CODEATLAS_EMBEDDING_PROVIDER=cloudflare` embeds through @cf/baai/bge-small-en-v1.5 over REST, with **no new dependency** - the call is the stdlib client added with the probe. **hash is still the default**, and `test_the_cloudflare_settings_are_ignored_by_other_providers` pins that no cloudflare setting can move a hash index or its signature.
+
+  **Three failure paths, all of which end at the hash index.** This provider spends a free allowance that resets once a day and cannot be topped up, so it is built to stop rather than to try harder:
+
+  | reason | when | what the visitor reads |
+  |---|---|---|
+  | `budget` | today's estimated spend would pass `CODEATLAS_CLOUDFLARE_DAILY_NEURONS` (8,000 of the 10,000 free) | "Today's semantic search allowance is used up, so this answer used keyword search." |
+  | `api` | any transport error, any non-2xx, any malformed body | "Semantic search did not respond, so this answer used keyword search." |
+  | `circuit` | three consecutive failures, for the next five minutes | "Semantic search is briefly unavailable, so this answer used keyword search." |
+  | `cap` | repository over `CODEATLAS_CLOUDFLARE_MAX_DOCUMENTS` (600) | "This repository is too large for semantic search, so this answer used keyword search." |
+
+  **Failures are deliberately not told apart.** A spent allowance is reported by a status Cloudflare has not documented - the probe could not learn it without spending the day's budget - so matching on an error code would be guessing at the one case that matters most. "It did not work, use the hash index" is the only reading that cannot be wrong, and it is what the caller needs in every case anyway.
+
+  **The budget is checked before the call, never after.** Each batch's estimate is compared against a gitignored per-UTC-day ledger in `.codeatlas/cloudflare-neurons.json` and refused if it would pass the budget. UTC because that is when Cloudflare's allowance resets; local time would hand back the allowance at the wrong hour. `test_the_budget_stops_part_way_through_a_long_repository` pins that the refusal happens at the batch boundary, so a repository indexes as far as the budget reaches rather than all-or-nothing.
+
+  **Settings in the signature, and settings deliberately not in it.** The signature is `cloudflare:<model>:pooling=<p>:max_chars=<n>:prefix=<0|1>:subtokens=<0|1>:stopwords=<0|1>`. Pooling is in it because the probe measured **cos 0.9466** between the same text under `cls` and under `mean`: close enough to look like it is working, far enough to rank worse, and nothing downstream would catch it. Batch size, timeout, retries, the budget and the document cap are **out** of it, because none of them changes a vector and putting them in would throw away an index that had been paid for every time a budget was raised.
+- Command: `python -m pytest tests/test_cloudflare_provider.py tests/test_neuron_ledger.py -q` (76 and 11 tests), then the full suite: `python -m pytest tests/ -q` -> 750 passed, 1 skipped
+- Dataset/repo: none. **No test in this change reaches the network**: the provider is driven end to end by a fake client that records what it was asked to send
+- Date: 2026-10-09
+- Commit: 009d69f
+- Notes: **what is never written down, and how that is checked.** No document, question, URL, account id or token appears in a log, an error message, an exception repr or the ledger. `test_no_document_text_question_or_credential_is_logged` drives four real failures with `caplog` at DEBUG, asserts something was logged (so the test cannot pass vacuously) and then that none of it is the text being embedded, the credentials, or even the hostname. The ledger holds three fields per day - estimated neurons, documents, calls - and `test_the_ledger_holds_counts_and_nothing_about_what_was_embedded` pins that list exactly.
+  **A real cost worth knowing about: `rerank_subtokens` is in the signature although it does not change any vector.** It was included because an index should only be searched under the retrieval configuration it was measured with. The price is that flipping that one rerank setting invalidates every Cloudflare index and makes the repositories pay to be embedded again, for vectors that would have been identical. The eval's vector cache is keyed on the text rather than the signature, so experiments do not pay it; a deployment that flips the setting would. Dropping it from the signature is a one-line change if that trade turns out to be the wrong way round.
+  **Spend is counted only after a call that worked.** A refused call is not billed, and a call that vanished in transit cannot be counted without inventing the number - so a timeout that Cloudflare did in fact process goes uncounted, and the ledger reads low by that much. The 2,000-neuron cushion between the 8,000 budget and the 10,000 allowance is what covers that.
+  **The index time limit is the shared `CODEATLAS_INDEX_TIMEOUT_SECONDS`**, not a new one. A repository at the 600-document cap is twelve calls of fifty, so the 120 s default has room; raising the cap means raising the limit too, and a timeout throws the index away while the neurons stay spent
+
+### Feature: every semantic repository also gets a hash index, and questions fall back to it with a note
+- Value: with `CODEATLAS_EMBEDDING_PROVIDER=cloudflare` a repository is indexed twice from the same records. **The hash index is built first and always**, so a repository is never left holding only the index that might not be there when a question arrives. 30 tests in `tests/test_dual_index.py` cover it; 781 pass overall.
+
+  **Where each index lives, and why that is not a detail.** The hash index stays in `CODEATLAS_INDEX_DIR`, exactly where existing hash indexes already are - nothing was moved or rebuilt. The semantic index gets `CODEATLAS_CLOUDFLARE_INDEX_DIR` (`.codeatlas/indexes-cloudflare`). Two embedders' vectors are not comparable and a FAISS index cannot tell you so: both are 384 wide, so a mismatched query returns confident nonsense. Separate folders are the cheapest way to be certain they never meet, and the embedder signature check is the second line, not the first.
+
+  **Two kinds of failure, so the routing happens in two stages.**
+
+  | stage | what is known | what happens |
+  |---|---|---|
+  | before calling anything | what is on disk: whether a usable semantic index exists for this repository | an over-cap repository, or one whose semantic index was built by a different embedder, goes straight to hash with the `unindexed` note |
+  | while calling | whether the embedder actually works | `EmbeddingUnavailableError` from `embed_query` is caught, the same question is asked again against the hash index, and the note is the reason's |
+
+  The second stage is the one that matters: a visitor is already waiting when it happens. `test_a_failure_at_question_time_falls_back_and_tells_the_visitor` indexes with an embedder that works and then asks with one that does not, because that is the real sequence and a test that fails at index time would prove something else entirely.
+
+  **The visitor is told, above the answer.** One sentence, in a small bordered line over the answer text rather than inside the "Reasoning" dropdown: an answer built from the weaker search should say so where the answer is, not where someone would have to go looking. The note travels `GroundedAnswer.note` -> `AnswerResult.note` -> `AskResponse.retrieval_note` and the `done` event -> `MessageBubble`. In the agent graph a later successful retrieval does **not** erase an earlier fallback, so if any search behind an answer used the hash index the visitor hears about it.
+
+  | reason | sentence |
+  |---|---|
+  | `budget` | Today's semantic search allowance is used up, so this answer used keyword search. |
+  | `circuit` | Semantic search is briefly unavailable, so this answer used keyword search. |
+  | `api` | Semantic search did not respond, so this answer used keyword search. |
+  | `unindexed`, `cap` | Semantic search is not available for this repository, so this answer used keyword search. |
+
+- Command: `python -m pytest tests/test_dual_index.py -q` (30 tests), `python -m pytest tests/ -q` -> 781 passed, 1 skipped; `npm run lint`, `npm run test`, `npm run build` in `codementor-ui`
+- Dataset/repo: none. Repositories are built in pytest temp directories and the failing provider is a fake that raises the real exception type; nothing reaches the network
+- Date: 2026-10-09
+- Commit: c7f51cd
+- Notes: **a correction to the previous entry's wording.** That entry listed the `cap` note as "This repository is too large for semantic search". It now reads "Semantic search is not available for this repository", because at question time an over-cap repository and one whose semantic index was built by a different embedder are indistinguishable from the index on disk, and telling a visitor their repository is too large when in fact the index is stale would be worse than saying less. The `cap` key is still what indexing logs when it skips a repository for size.
+  **The error lives on the embedding interface, not on the provider.** `EmbeddingUnavailableError` is defined in `embedding.py` and `CloudflareUnavailableError` subclasses it, so `AnswerService` catches the general case and the question path contains no mention of Cloudflare. A later provider that can fail the same way gets the fallback without the question path being touched.
+  **For hash, the default, none of this exists.** `get_fallback_retriever()` and `get_fallback_embedder()` return `None` for every provider but cloudflare, `get_index_service()` returns the single `CodeIndexService` it always did, and `test_without_a_fallback_nothing_changes` pins that a mismatched index still returns nothing rather than quietly falling back to something.
+  **A fix that came with this, not asked for but needed:** `/search` used to read `CODEATLAS_INDEX_DIR` whatever the provider was, so with a semantic provider selected it would have embedded the query with one embedder and searched the other embedder's index - the exact failure the signature guard exists to prevent, on the one endpoint that bypasses the guard. It now reads the selected provider's own index. Its behaviour is otherwise untouched.
+  **What is not covered.** The two indexes are written in sequence with no transaction: a crash between them leaves a hash index and no semantic one, which is the safe direction but means `indexes` in the repository state can be optimistic if the process dies mid-write. An index built before this change records `indexes: ()`, which means "not recorded" and must not be read as "has no indexes"
+
+### Feature: the seven retrieval settings are configurable by environment variable, with the measured defaults
+- Value: `candidates`, `rerank_weight`, `rerank_subtokens`, `drop_stopwords`, `skip_tests`, `embed_max_chars` and `embed_prefix_metadata` now read from the environment. **Every default is unchanged** and `test_every_default_is_the_one_that_was_measured` checks all seven against the figures the earlier entries in this file measured.
+
+  | variable | default | what it does |
+  |---|---|---|
+  | `CODEATLAS_RETRIEVAL_CANDIDATES` | 20 | records taken from vector search before reranking |
+  | `CODEATLAS_RERANK_WEIGHT` | 1.0 | 1.0 keyword overlap only, 0.0 vector order only |
+  | `CODEATLAS_RERANK_SUBTOKENS` | false | match the parts of identifiers too |
+  | `CODEATLAS_DROP_STOPWORDS` | true | leave common English words out of the question |
+  | `CODEATLAS_SKIP_TESTS` | false | drop records from test files |
+  | `CODEATLAS_EMBED_MAX_CHARS` | 0 (no limit) | embed only the first N characters of a document |
+  | `CODEATLAS_EMBED_PREFIX_METADATA` | true | start each document with its path and name |
+
+  **A wrong value stops the app rather than becoming a setting.** `CODEATLAS_RETRIEVAL_CANDIDATES=twenty`, `CODEATLAS_RERANK_WEIGHT=1.5` and `CODEATLAS_DROP_STOPWORDS=flase` are all startup failures naming the variable. This is **stricter than the older flags in the same file**, which read `== "true"` and so take a typo as off, and it is stricter deliberately: the failure being guarded against is not a crash, it is an app that starts, answers differently, and tells nobody - after which a number in this file would describe a configuration that was never running. An empty variable is the single exception and means the default, because that is how a deployment unsets a value.
+- Command: `python -m pytest tests/test_retrieval_settings_from_env.py -q` (31 tests), then `python -m pytest tests/ -q` -> 812 passed, 1 skipped
+- Dataset/repo: none; environment variables and config defaults
+- Date: 2026-10-09
+- Commit: 68d0ae9
+- Notes: **provider-specific defaults still win where a provider has one.** `CODEATLAS_EMBED_MAX_CHARS` is the shared setting; the cloudflare provider clips at `CODEATLAS_CLOUDFLARE_MAX_CHARS` (2,000) whatever the shared one says, and fastembed at its own 3,000, exactly as before. `test_a_provider_may_still_have_its_own_defaults` pins that.
+  **`POST /search` does not go through any of this, and now says so** in `.env.example` and in its own module docstring. It embeds the query and returns what the index gives back: no reranking, no stopword dropping, no test filtering, no fallback to hash. Its results are therefore not what a visitor would see for the same words, and it is not the endpoint to measure retrieval with - `scripts/eval_retrieval.py` goes through `AnswerService`, which is the pipeline. Its behaviour is unchanged by this batch apart from following the selected provider's index.
+  **The two indexing settings are not free to change.** `embed_max_chars` and `embed_prefix_metadata` are part of `index_format`, so changing either means the index cache stops reusing existing indexes and every repository is indexed again - which for the cloudflare provider costs neurons
+
+### Check: recall@20 added to the retrieval eval, and the existing numbers are unchanged
+- Value: **hash on the held-out split still prints hit@5 0.750 and MRR@10 0.645**, the figures recorded before this change, and now also prints recall@20.
+
+  | split | repo | n | hit@1 | hit@3 | hit@5 | P@1 | P@3 | P@5 | MRR@10 | **recall@20** |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | dev | itsdangerous | 10 | 0.600 | 0.700 | 0.800 | 0.600 | 0.500 | 0.400 | 0.692 | **0.900** |
+  | dev | flask | 10 | 0.600 | 0.700 | 0.700 | 0.600 | 0.467 | 0.360 | 0.633 | **0.800** |
+  | dev | overall | 20 | 0.600 | 0.700 | 0.750 | 0.600 | 0.483 | 0.380 | 0.662 | **0.850** |
+  | test | itsdangerous | 10 | 0.800 | 0.800 | 0.900 | 0.800 | 0.700 | 0.560 | 0.820 | **1.000** |
+  | test | flask | 10 | 0.400 | 0.500 | 0.600 | 0.400 | 0.367 | 0.280 | 0.470 | **0.600** |
+  | test | overall | 20 | 0.600 | 0.650 | 0.750 | 0.600 | 0.533 | 0.420 | 0.645 | **0.800** |
+
+  **What recall@20 is for.** It is the share of questions whose expected file is anywhere in the 20 candidates the reranker chooses from - the embedder's own score, with the reranker's opinion removed. `rerank_weight` is 1.0, so the final order is keyword overlap; the embedder decides *which* 20 records are available and nothing else. A question whose file never reaches the pool cannot be answered well however the ordering is tuned, so this is the number that moves when the embedder changes.
+
+  **It already says something about hash.** On held-out flask, hash has recall@20 **0.600** against hit@5 0.600 - every question whose file is in the pool is already ranked into the top five, so **reranking is not what is losing those four questions; the bag-of-words embedding never found the file at all.** On itsdangerous, recall@20 is 1.000 while hit@5 is 0.900: there, one question is in the pool and mis-ranked, which is the kind of loss an ordering change could recover. The two repositories therefore have different problems, and only one of them is an ordering problem.
+
+  **How the old numbers were kept old.** Retrieval runs once to the pool depth and is read twice: the ranked answer is still its first ten, and recall is computed over the full pool through a separate `candidates` argument to `ranking_metrics`. Deepening the list the existing metrics see would have raised MRR@10 for every question with a hit at rank 11 to 20 and silently invalidated every earlier entry in this file.
+- Value (also added): under each repository's line, how many file records and function records are longer than the per-document clip, and what share of their characters survives it. For hash there is no clip, so both read 0.0% over the clip and 100.0% of characters kept
+- Command: `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/eval_retrieval.py --split dev` and `--split test`; `python -m pytest tests/ -q` -> 817 passed, 1 skipped
+- Dataset/repo: https://github.com/pallets/itsdangerous at 672971d66a2ef9f85151e53283113f33d642dabd (15 files, 159 records); https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35 (83 files, 1705 records); the same 40 questions in `eval/questions/*.json`, split as fixed before any of this
+- Date: 2026-10-09
+- Commit: fa0db11
+- Notes: **no neurons were spent on this**: hash runs entirely locally, and both splits took about three seconds each.
+  The commit reports as `9256a77-dirty` in the run output because the eval was run before the commit that contains it; no code differed between the two runs other than being uncommitted.
+  **recall@20 is capped by the pool, not by the index.** A file at rank 21 counts as not recalled, which is correct for this pipeline - the reranker would never see it - but means the figure describes retrieval as configured, not the embedding in the abstract. Raising `CODEATLAS_RETRIEVAL_CANDIDATES` would change it
+
+### Check: what the Cloudflare evaluation will cost, before any of it is spent
+- Value: the three dev configurations together are **1,485.90 estimated neurons**, 18.6% of the 8,000 budget and 14.9% of the 10,000 daily allowance. Nothing was sent to produce this figure.
+
+  ```
+  split: dev
+  configurations: cls-2000, mean-1500, mean-2000
+  ledger: 0.00 estimated neurons spent today (UTC 2026-10-09)
+  budget: 8000, remaining 8000.00
+    cls-2000      1864 documents   1884 not yet cached    495.47 estimated neurons
+    mean-1500     1864 documents   1884 not yet cached    494.96 estimated neurons
+    mean-2000     1864 documents   1884 not yet cached    495.47 estimated neurons
+    total                              1485.90 estimated neurons
+  ```
+
+  **Far cheaper than the worst case, and the reason is the corpus.** A pessimistic estimate - every one of the 1,864 records filling the 2,000-character clip - would be about 1,757 neurons per configuration and over 5,200 for the three. The real figure is 495 per configuration, because most records are single functions of a few hundred characters and only a handful reach the clip at all. **The 600-document cap would have been the binding constraint, not the budget**, which is exactly why the evaluation does not apply it: capping the corpus at 600 of 1,864 records would have measured a third of flask and called it flask.
+
+  **1,884 texts, not 1,864**: the twenty dev questions are embedded too, and are cached the same way. A question costs neurons like any other text.
+
+  **The held-out runs are nearly free.** Both splits ask questions of the same repositories, so after the dev runs every document vector is already cached; a held-out run pays only for its own twenty questions, a fraction of a neuron. The same is true of a rerun. This is the whole reason the cache exists, and it is what makes "run held-out once for the default and once for the dev winner" cost almost nothing on top of the figure above.
+- Command: `python scripts/eval_cloudflare.py --split dev --plan-only`
+- Dataset/repo: https://github.com/pallets/itsdangerous at 672971d66a2ef9f85151e53283113f33d642dabd and https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35, 1,864 records between them; the 20 dev questions from `eval/questions/*.json`
+- Date: 2026-10-09
+- Commit: 7ed7016
+- Notes: **this is the estimate, not a measurement**, by the same `ceil(chars / 3)` capped at 512 that over-counted the probe by 1.39x against the dashboard. If that ratio holds, the real cost of the three configurations is nearer 1,070 neurons - but code tokenizes worse than the prose the ratio was measured on, so the true figure should sit somewhere between the two, and the estimate remains the one to plan against.
+  **The run was stopped here deliberately**, before a single call, so the dashboard can be read before and after and the ledger compared against it at a scale where code rather than prose is being embedded. 838 tests pass, including 21 covering the cache and the orderings
+
+### Note: a record longer than the clip is embedded by its opening only
+- Value: **more than half of every file record in both evaluation repositories is longer than the 2,000-character clip, and flask's file records keep only 18.6% of their characters.** The probe established that the model ignores text past about 512 tokens, so this is not only a bandwidth choice - a longer document is represented by its opening however the clip is set.
+
+  | repo | clip | scope | records | over the clip | share | characters kept |
+  |---|---|---|---|---|---|---|
+  | itsdangerous | 2000 | file | 15 | 8 | 53.3% | 37.8% |
+  | itsdangerous | 2000 | function | 144 | 8 | 5.6% | 70.1% |
+  | itsdangerous | 1500 | file | 15 | 9 | 60.0% | 30.3% |
+  | itsdangerous | 1500 | function | 144 | 11 | 7.6% | 65.2% |
+  | flask | 2000 | file | 83 | 45 | 54.2% | 18.6% |
+  | flask | 2000 | function | 1622 | 52 | 3.2% | 72.8% |
+  | flask | 1500 | file | 83 | 47 | 56.6% | 14.6% |
+  | flask | 1500 | function | 1622 | 81 | 5.0% | 68.9% |
+
+  **The two scopes have completely different problems.** Function records are mostly intact: 3.2% of flask's 1,622 functions are clipped at all, and 72.8% of their characters survive. File records are not: **a flask file record is, on average, its first fifth**, and for the 54% that are clipped it is whatever the imports and the first definition happen to be. A question answered by matching a file record is therefore matching a header, not a file.
+
+  This is a limit on what the semantic numbers in the following entries can mean. Whatever recall@20 turns out to be, it was achieved with file records that are mostly openings, and the headroom above it is not all reranking.
+- Value (not built, deliberately): two candidates for a later batch, listed here so the reasoning is not lost and **neither is implemented in this one**:
+  1. **Header-style file records.** Instead of a file's first 2,000 characters, an assembled summary: the path, the imports, and the names and signatures of what it defines. That is what a file record is being used for - "which file is this question about" - and it would fit the window with room to spare rather than being a truncated prefix pretending to be a file.
+  2. **Windowed long functions.** Split a function longer than the clip into overlapping windows, embed each, and keep the best-scoring window for the record. This matters far less than the first: it would touch the 3-8% of functions that are clipped at all.
+
+  Both change what is in an index, so both mean re-embedding every repository, which for this provider costs neurons. Neither should be built on this evidence alone - the right order is to find out what the semantic numbers are first, and only then decide whether file records are worth rebuilding
+- Command: `CodeIndexService.clipped_counts` over both pinned checkouts at clips of 2,000 and 1,500; the same figures print under each repository in `python scripts/eval_retrieval.py` and `python scripts/eval_cloudflare.py`
+- Dataset/repo: https://github.com/pallets/itsdangerous at 672971d66a2ef9f85151e53283113f33d642dabd (15 files, 159 records); https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35 (83 files, 1705 records)
+- Date: 2026-10-09
+- Commit: 3c53c66
+- Notes: measured on the source text, before the path prefix is added, because that is the part the clip is deciding about. **No neurons were spent**: this counts characters and calls nothing.
+  **The hash provider has no clip at all** (`embed_max_chars` is unset), so it reads every record in full. That is one more way in which the hash and cloudflare comparisons in this file are not a controlled embedder-only swap, and it cuts against the semantic provider rather than for it
+
+### Fix: the Cloudflare embedder signature holds only what decides a vector
+- Value: `rerank_subtokens` is out of the signature. It splits identifiers **while reranking**, long after the vectors exist, so an index built with it off and searched with it on would have returned exactly the same vectors - but the guard would have refused the index, and for this provider refusing an index means paying to embed every document again.
+
+  | | before | after |
+  |---|---|---|
+  | signature | `cloudflare:<model>:pooling=mean:max_chars=2000:prefix=1:subtokens=0:stopwords=1` | `cloudflare:<model>:pooling=mean:max_chars=2000:prefix=1:stopwords=1` |
+
+  **What is in it, and why each one earns its place.** The model and the pooling decide the vector outright - the probe measured cos 0.9466 between the same text under `cls` and under `mean`, close enough to look like it is working and far enough to rank worse. The clip decides how much of a document is seen. `prefix` decides the text of every document; `stopwords` decides the text of every question before it is embedded. Those five, and nothing else.
+
+  **What is out, and why that is not laxity.** The rerank weight, reranker identifier splitting, the candidate count and test-file filtering all reorder records that have already been embedded. A signature that included them would be a guard against a mismatch that cannot happen, paid for in re-embedded documents.
+
+  **The cost of getting this wrong was asymmetric, which is why it was worth fixing first.** Too little in the signature means confident nonsense from mismatched vectors. Too much means an unnecessary bill. But no Cloudflare index exists yet, so correcting it now costs nothing at all, while correcting it after the evaluation had built three indexes would have meant either re-embedding them or carrying the wrong signature forward.
+- Command: `python -m pytest tests/test_cloudflare_provider.py -q` (82 tests), then `python -m pytest tests/ -q` -> 842 passed, 1 skipped
+- Dataset/repo: none; the signature is a pure function of settings
+- Date: 2026-10-09
+- Commit: 60f5cf4
+- Notes: tested in both directions. `test_flipping_a_ranking_only_setting_leaves_the_signature_alone` flips each of `CODEATLAS_RERANK_SUBTOKENS`, `CODEATLAS_RERANK_WEIGHT`, `CODEATLAS_RETRIEVAL_CANDIDATES` and `CODEATLAS_SKIP_TESTS` and asserts the signature is byte-identical; `test_every_setting_that_changes_the_embedded_text_changes_the_signature` asserts the five that remain each change it. A third test reads the signature as a **list of field names** rather than as a string, so a setting appended later fails a test and has to be argued for.
+  This supersedes the "a real cost worth knowing about" paragraph in the provider's entry above, which recorded the trade as accepted. It was not worth accepting
+
+### Check: three Cloudflare configurations on the dev split, three orderings each
+- Value: **recall@20 is 1.000 for every configuration and every ordering** - all three put the expected file in the candidate pool for all 20 dev questions, against **0.850 for hash**. No ordering change passed the keep rule in any configuration, and no configuration beat the default, so **the dev winner is the default: mean pooling, clip 2,000, keyword ordering.**
+
+  **Starting point: the account dashboard read 8.41 neurons before this run** (user-supplied, the probe's spend).
+
+  | config | ordering | n | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 |
+  |---|---|---|---|---|---|---|---|
+  | mean-2000 (default) | vector | 20 | 0.650 | 0.750 | 0.900 | 0.732 | 1.000 |
+  | mean-2000 (default) | **keyword** | 20 | 0.650 | 0.950 | **1.000** | **0.804** | 1.000 |
+  | mean-2000 (default) | rrf | 20 | 0.600 | 0.850 | 1.000 | 0.743 | 1.000 |
+  | mean-1500 | vector | 20 | 0.650 | 0.750 | 0.900 | 0.740 | 1.000 |
+  | mean-1500 | keyword | 20 | 0.600 | 0.950 | 1.000 | 0.771 | 1.000 |
+  | mean-1500 | rrf | 20 | 0.650 | 0.800 | 1.000 | 0.764 | 1.000 |
+  | cls-2000 | vector | 20 | 0.600 | 0.700 | 0.850 | 0.677 | 1.000 |
+  | cls-2000 | keyword | 20 | 0.650 | 0.900 | 0.950 | 0.779 | 1.000 |
+  | cls-2000 | rrf | 20 | 0.650 | 0.750 | 0.850 | 0.726 | 1.000 |
+
+  **The keep rule, applied, and every experiment it rejected.** Keep a change only if dev MRR rises and dev hit@5 does not fall. The baseline is the default configuration under the ordering the server uses today, mean-2000 / keyword: MRR 0.804, hit@5 1.000.
+
+  | experiment | MRR@10 | vs 0.804 | hit@5 | verdict |
+  |---|---|---|---|---|
+  | vector ordering (mean-2000) | 0.732 | -0.072 | 0.900 | **rejected**, MRR falls and hit@5 falls |
+  | rrf ordering (mean-2000) | 0.743 | -0.061 | 1.000 | **rejected**, MRR falls |
+  | clip 1,500 (keyword) | 0.771 | -0.033 | 1.000 | **rejected**, MRR falls |
+  | clip 1,500 + vector | 0.740 | -0.064 | 0.900 | **rejected** |
+  | clip 1,500 + rrf | 0.764 | -0.040 | 1.000 | **rejected** |
+  | cls pooling (keyword) | 0.779 | -0.025 | 0.950 | **rejected**, MRR falls and hit@5 falls |
+  | cls + vector | 0.677 | -0.127 | 0.850 | **rejected** |
+  | cls + rrf | 0.726 | -0.078 | 0.850 | **rejected** |
+
+  **Eight experiments, none kept.** That is the honest outcome: the settings chosen before any of them were run are the best of what was tried.
+
+  **Keyword ordering beats the embedder's own order, and fusion does not rescue it.** Under every configuration, ordering by keyword overlap beats ordering by vector similarity on MRR - by 0.072 at the default, 0.102 under cls. Reciprocal rank fusion lands between the two every single time (0.743, 0.764, 0.726 against keyword's 0.804, 0.771, 0.779), which is what fusion does when one input is simply worse than the other: it dilutes the better ranking rather than combining strengths. **No BM25 was tried, and that is not what these numbers argue against** - they argue against fusing *this* vector order into *this* keyword order.
+
+  **cls is worse than mean here, against Cloudflare's own advice.** Their documentation recommends cls "for better accuracy on larger inputs". On these 20 questions it was worse on both metrics (MRR 0.779 against 0.804, hit@5 0.950 against 1.000). The probe had already measured cos 0.9466 between the two spaces, so they were never going to be far apart; what this adds is that the difference, such as it is, runs the other way for code.
+
+  **A tighter clip is not free.** 1,500 characters loses 0.033 of MRR against 2,000 and raises the share of clipped flask file records from 54.2% to 56.6%, keeping 14.6% of their characters instead of 18.6%. There was no cost argument for it either: the full run came in at 18% of the budget.
+
+  **What dev cannot tell us.** recall@20 saturated at 1.000 for all three configurations, so **the dev split cannot discriminate between them on recall at all** - every difference above is a ranking difference over 20 questions, where one question is 0.05 of hit@5. The configuration choice rests on differences of 0.025 to 0.033 in MRR, which is two or three questions moving a rank or two. That is thin, and it is the reason the held-out run matters.
+- Command: `python scripts/eval_cloudflare.py --split dev --json eval/results/cloudflare/dev.json`
+- Dataset/repo: https://github.com/pallets/itsdangerous at 672971d66a2ef9f85151e53283113f33d642dabd (15 files, 159 records); https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35 (83 files, 1705 records); the 20 dev questions from `eval/questions/*.json`. **The held-out split was not run and not looked at**
+- Date: 2026-10-09
+- Commit: 149dac1
+- Notes: **cost: 1,464.37 estimated neurons over 177 calls, against a plan of 1,485.90**; 5,355 documents counted, 1,785 texts embedded per configuration. The small shortfall against the plan is duplicate texts, which the cache embeds once and the plan counted twice. Today's ledger stands at 1,464.37 of the 8,000 budget, 6,535.63 remaining. **The dashboard read 8.41 before this run**; the figure after it is the comparison worth making, since this is code being embedded rather than the probe's prose.
+  **Re-running the whole dev evaluation afterwards cost nothing**: 1,944 cache hits, 0 texts embedded, the ledger unmoved. That is the vector cache doing what it was built for, and it is why the held-out runs will be nearly free.
+  **The clipping limit from the note above applies to every number here.** These results were achieved with more than half of each repository's file records represented by their opening only, and for flask by 18.6% of their characters. The headroom above these figures is not all reranking.
+  **This is not a controlled embedder-only comparison with hash.** hash reads every record in full and has no clip at all; the Cloudflare configurations clip at 2,000 or 1,500 characters. What is being compared is the server running one provider against the server running the other, which is the decision actually on the table
+
+### Fix: the neuron estimate was three times under, because a batch is billed by its longest text
+- Value: **the dev run was estimated at 1,464.37 neurons and the dashboard billed about 4,400.** The estimator now prices every text in a call at the longest text in that call, which predicts 4,767 for the same run - 9% high rather than 3x low.
+
+  **The dashboard figures, as supplied.** bge-small read 8.41 neurons before the dev run and about 4.41k over the following 24 hours, so the run itself cost roughly **4,392** real neurons. (The "used today" figure came through as the letter `N` and is not recorded here; the arithmetic below uses the 24-hour reading.)
+
+  | | tokens | neurons | vs billed |
+  |---|---|---|---|
+  | old estimate: each text's own tokens | 807,111 | 1,485.90 planned / **1,464.37 recorded** | **0.33x** |
+  | billed, from the dashboard | ~2,385,000 | **~4,392** | 1.00x |
+  | new estimate: every text at its batch's longest | 2,589,429 | **4,767.1** | 1.09x |
+  | ceiling: every text at the full 512-token window | 2,893,824 | 5,327.5 | 1.21x |
+
+  **Why padding explains it and nothing else does.** The average prepared document is 455 characters in flask and 587 in itsdangerous - about 141 and 177 estimated tokens. Billed, the run works out at roughly 445 tokens per text, close to the 512-token window. That is not a tokenizer being three times worse than guessed; it is fifty texts in one call all being charged at the length of the longest one. About one record in twenty is long enough to reach the clip, so with batches of fifty **nearly every batch contained one and paid the long rate for all fifty.**
+
+  **The spend reconciles exactly, and nothing was wasted.** 177 calls were recorded. Reconstructed from the corpus: 3 configurations x (39 document batches + 20 query calls) = **177**. So **no index was built more than once and no call was retried** - a retry would have raised the count and would also have logged a warning, and none did. 5,355 texts were sent, 1,785 per configuration, which is the 1,864 documents plus 20 questions less 99 duplicates that the cache embedded once.
+
+  **What to assume going forward: about 3.0 real neurons per *old* estimated neuron, and about 0.92 per *new* one.** The new estimate is deliberately the high side of the truth, so the honest instruction is to treat it as the figure to plan against and expect to be billed a little less.
+
+  **This closed a hole, not a rounding error.** Under the old estimate the 8,000-neuron budget stop would have allowed roughly **24,000 real neurons, nearly two and a half times the 10,000 daily free allowance**. The stop would not have fired; the day's allowance would simply have run out and every question would have fallen back to hash. The only reason that did not happen is that the evaluation was run once.
+- Value (what a repository actually costs now): **a 600-document index of a flask-sized repository costs 562 neurons** at the current batch size of 50 - about **14 analyses inside the 8,000 budget**, 17 inside the free allowance.
+
+  | | batch 50 | batch 10 | batch 5 | batch 50, length-sorted |
+  |---|---|---|---|---|
+  | 600 documents, clip 2000 | **561.9** | 483.4 | 423.0 | **276.1** |
+  | 600 documents, clip 1500 | 561.8 | 482.7 | 422.2 | 275.4 |
+  | 600 documents, clip 1000 | 385.6 | 350.4 | 318.9 | 225.6 |
+  | all 1,705 flask documents, clip 2000 | 1,442.1 | - | - | 463.9 |
+
+  **A tighter clip is not a cost lever, and that is the most useful thing in this table.** Clip 1,500 costs 561.8 against clip 2,000's 561.9 - a saving of 0.1 neurons in 562, because padding is set by the longest text in each batch and at either clip that text is at the ceiling. The dev run already showed clip 1,500 losing 0.033 of MRR. **It costs retrieval quality and saves nothing.**
+
+  **The lever is batching.** Sorting a repository's documents by length before batching halves the cost - 276 against 562 - for **byte-identical vectors**, because batches then contain texts of similar length and pay for almost no padding. It changes nothing about the index, nothing about the signature, and nothing a visitor sees.
+- Proposed, and **not applied without approval**:
+  1. **Sort documents by length before batching, then restore their order** (embed in length order, write records back in the original order). Halves the cost of every index. The only argument against is the code it adds.
+  2. **Leave the clip at 2,000.** Lowering it demonstrably costs MRR and saves nothing under padding.
+  3. **Leave the document cap at 600 if (1) is taken** - it would then cost 276 neurons per repository, about 29 analyses inside the budget. **Without (1), lower the cap to 300**, which costs about 280 and restores the same headroom, at the price of more repositories falling back to hash.
+  4. **Leave the batch size at 50 if (1) is taken.** Without it, 10 would save 14% and 5 would save 25%, but both multiply the number of calls and the time an index takes, and the index time limit is 120 s.
+- Command: `python -m pytest tests/test_neuron_ledger.py tests/test_cloudflare_provider.py -q`, then `python -m pytest tests/ -q` -> 852 passed, 1 skipped. The cost tables are `CodeIndexService.documents` over the pinned flask checkout, priced by the new estimator; no call was made to produce them
+- Dataset/repo: the dev run recorded above (`eval/results/cloudflare/dev.json`), and https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35 for the cost tables
+- Date: 2026-10-10
+- Commit: 686413f
+- Notes: **the dashboard figures are user-supplied** and read by hand: 8.41 before, about 4.41k over 24 hours after. The embeddings response carries no usage at all, which is why the ledger exists and why it had to be calibrated against a figure this project cannot read. Both readings are rounded, so "about 4,392" carries real uncertainty - but not enough to explain a factor of three.
+  **The probe script keeps its own old estimator** and its recorded numbers are left alone. It is a record of a run that happened, not a tool to be re-run, and its inputs were nine calls of one or two texts where padding barely applies.
+  **No default was changed by this commit.** The budget stays 8,000, the cap 600, the clip 2,000, the batch size 50. What changed is that the stop now fires where it was meant to - and at the new prices it will fire about three times sooner than it used to
+
+### Check: the held-out split, run once, for the default configuration
+- Value: **held-out overall MRR@10 0.854 against hash's 0.645, and recall@20 1.000 against 0.800.** Run once, for mean pooling at clip 2,000 with keyword ordering - the default, and also the dev winner, so there was one run to make. No other configuration and no other ordering was scored on this split.
+
+  | repo | embedder | hit@1 | hit@3 | hit@5 | P@3 | MRR@10 | R@20 |
+  |---|---|---|---|---|---|---|---|
+  | itsdangerous | hash | 0.800 | 0.800 | 0.900 | 0.700 | 0.820 | 1.000 |
+  | itsdangerous | **cloudflare** | 0.800 | **0.900** | 0.900 | **0.767** | **0.864** | 1.000 |
+  | flask | hash | 0.400 | 0.500 | 0.600 | 0.367 | 0.470 | 0.600 |
+  | flask | **cloudflare** | **0.800** | **0.900** | **0.900** | **0.667** | **0.843** | **1.000** |
+  | overall | hash | 0.600 | 0.650 | 0.750 | 0.533 | 0.645 | 0.800 |
+  | overall | **cloudflare** | **0.800** | **0.900** | **0.900** | **0.717** | **0.854** | **1.000** |
+
+  **Overall gain: hit@1 +0.200, hit@3 +0.250, hit@5 +0.150, P@3 +0.184, MRR@10 +0.209, recall@20 +0.200.** The gain on held-out is larger than on dev, which is the opposite of the usual worry and is itself a reason for caution: 20 questions per split is small, and 0.200 of hit@1 is four questions.
+
+  **Nearly all of it is flask, and recall@20 says why.** On itsdangerous both embedders already had recall@20 1.000 - the right file was always in the pool - so the only available gain was in ordering, and it came to +0.044 of MRR. On flask hash had recall@20 0.600: **four of ten questions never had their file in the pool at all**, and no reranking could have recovered them. Cloudflare takes that to 1.000, and the ranking metrics follow: hit@1 0.400 to 0.800, MRR 0.470 to 0.843. This is the clearest statement yet of what the semantic embedder buys - not better ordering, but finding the file in the first place.
+
+  **A consistency check that was not planned and is worth keeping.** The fastembed entry earlier in this file measured held-out overall hit@1 0.800, hit@3 0.900, hit@5 0.900, P@3 0.717, MRR@10 0.864. This run: 0.800, 0.900, 0.900, 0.717, **0.854**. Those are two independent implementations of the same model - bge-small-en-v1.5 under ONNX locally, and the same model behind Cloudflare's API - agreeing to **0.010 of MRR and exactly on everything else**, despite different clips (3,000 against 2,000) and different batch sizes. Neither number is validating the other by construction, so the agreement is real evidence that both are measuring the model rather than their own plumbing.
+- Command: `python scripts/eval_cloudflare.py --split test --config mean-2000 --ordering keyword --json eval/results/cloudflare/test.json`; the hash column is the `--split test` run recorded earlier in this file
+- Dataset/repo: https://github.com/pallets/itsdangerous at 672971d66a2ef9f85151e53283113f33d642dabd (15 files, 159 records); https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35 (83 files, 1705 records); the 20 held-out questions from `eval/questions/*.json`, split as fixed before any of this work began
+- Date: 2026-10-10
+- Commit: b1bbfd4
+- Notes: **cost: 1.25 estimated neurons planned, 0.55 recorded across 20 calls** - the twenty held-out questions and nothing else. All 1,864 document vectors were already in the cache from the dev run, which is exactly what the cache was built for: 1,874 hits and 10 texts embedded on the run that completed.
+  **The first attempt crashed after embedding ten of the questions**, on a reference left pointing at every ordering rather than the chosen ones. It cost 0.24 estimated neurons and no numbers were produced or looked at; the retry paid only for the remaining ten. Both halves are in today's ledger.
+  **Nothing was tuned on this split.** The configuration and the ordering were both chosen on dev before this was run, and `--ordering keyword` was passed so that the alternatives were not even computed - they would have cost nothing, which is precisely why not computing them had to be deliberate.
+  **The clipping limit still stands over these numbers.** 54.2% of flask's file records are over the clip and keep 18.6% of their characters, so this result was achieved with most file records represented by their opening alone
+
+### Check: length-sorted batching halves the cost of an index, and changes no vector
+- Value: **600 flask documents cost 276.06 estimated neurons sorted against 561.87 in file order** - a 50.9% saving, confirmed by the ledger, for **identical** vectors.
+
+  | | estimated neurons |
+  |---|---|
+  | 600 documents, file order, batch 50 | 561.87 |
+  | 600 documents, **length order**, batch 50 | **276.06** |
+  | ledger delta for the real sorted index | **276.06** |
+
+  **The safety check came first, and it is the only reason this was applied.** The same 50 flask documents were embedded twice through the real API, once in file order and once in length order, and the smallest cosine between the two vectors of the same document was measured:
+
+  ```
+  documents: 50, clip 2000, batch size 50
+  estimate for both calls: 94.26 estimated neurons
+  minimum cosine between the two vectors of the same document: 1.000000
+  required: 0.9999
+  PASS: batching order does not change a vector
+  ```
+
+  **1.000000, not 0.9999-something.** Had it come back lower, an index would have depended on the order its files happened to be read in - two analyses of the same repository giving different vectors - and no saving would have been worth that. The check cost 94.26 estimated neurons and is reproducible: `python scripts/index_cost_check.py --check-order`.
+
+  **Why it works.** A call is billed at the length of its longest text. In file order a batch of fifty holds whatever fifty records came next, and about one record in twenty is long enough to reach the clip, so nearly every batch paid the long rate for all fifty. In length order the long records are together in their own few batches and the short ones pay short-record prices.
+
+  **What this is worth in practice.** A 600-document repository falls from 562 to 276 neurons, so the 8,000 budget covers about **29 analyses a day instead of 14**, and the 10,000 free allowance about 36 instead of 17 - without touching the clip, the cap, the batch size or anything a visitor sees.
+- Command: `python scripts/index_cost_check.py --check-order` then `python scripts/index_cost_check.py --index 600`; `python -m pytest tests/test_index_batching.py -q` (11 tests), full suite 863 passed, 1 skipped
+- Dataset/repo: https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35, its first 600 prepared documents at clip 2,000
+- Date: 2026-10-10
+- Commit: b91833f
+- Notes: **spend for this entry: 94.26 for the order check plus 276.06 for the validation index = 370.32 estimated neurons**, on top of the 0.55 the held-out run cost. Today's ledger reads 370.87 over 34 calls. Both figures were printed before each run, as a dashboard reading on either side was wanted.
+  **Nothing in the index changed.** `test_sorting_changes_neither_the_signature_nor_the_index_format` pins both strings, because if either had moved, every existing index would have been invalidated by what is purely a billing optimisation. The vectors are returned in the order their documents arrived, so a record keeps its own vector, and `test_an_indexed_repository_is_the_same_either_way` checks that end to end by indexing a repository both ways and comparing every record and vector.
+  **It is on for every provider, not only Cloudflare.** For hash it provably cannot matter - the vector is a pure function of the text - and for fastembed the batch size is 1, so there is nothing to sort. The check that justifies it was made against Cloudflare's bge-small; a future provider whose vectors did depend on batch composition would need checking again before trusting this.
+  **Two existing tests were changed**, from asserting which text the embedder saw *first* to asserting which texts it saw. The order is now a billing detail, not a contract, and a test that pins it would fail the next time the batching is tuned
+
+### Proposal: Render settings for the semantic provider, and what happens when the allowance runs out
+- Value: a complete deployment configuration, **proposed and not applied**. Nothing in this entry has been set anywhere; no default was changed.
+
+  | variable | proposed | why |
+  |---|---|---|
+  | `CODEATLAS_EMBEDDING_PROVIDER` | `cloudflare` | held-out MRR@10 0.854 against hash's 0.645, recall@20 1.000 against 0.800 |
+  | `CODEATLAS_CLOUDFLARE_MODEL` | `@cf/baai/bge-small-en-v1.5` | the measured model; 384 dims, free tier |
+  | `CODEATLAS_CLOUDFLARE_POOLING` | `mean` | cls was worse on dev (MRR 0.779 against 0.804) and the two are not interchangeable |
+  | `CODEATLAS_CLOUDFLARE_MAX_CHARS` | `2000` | 1,500 lost MRR and saved 0.1 neurons in 562 |
+  | `CODEATLAS_CLOUDFLARE_MAX_DOCUMENTS` | `600` | 276 neurons per repository with length-sorted batching |
+  | `CODEATLAS_CLOUDFLARE_DAILY_NEURONS` | **`2500`**, not 8000 | see the ledger problem below |
+  | `CODEATLAS_CLOUDFLARE_BATCH_SIZE` | `50` | unchanged |
+  | `CODEATLAS_NEURON_LEDGER` | `/var/data/cloudflare-neurons.json` | only if a disk is mounted; otherwise leave unset |
+  | `CODEATLAS_INDEX_DIR` | `/var/data/indexes` | the hash index, which every question can fall back to |
+  | `CODEATLAS_CLOUDFLARE_INDEX_DIR` | `/var/data/indexes-cloudflare` | the semantic index, which must never share a folder |
+  | `CLOUDFLARE_ACCOUNT_ID` | the account id | **as an environment variable in the Render dashboard**, never in the repository |
+  | `CLOUDFLARE_API_TOKEN` | the API token | the same, and marked secret |
+
+  **What a visitor sees when the allowance is gone.** They get an answer. The question is embedded, the call is refused, the hash index answers instead, and one sentence appears above the answer: *"Today's semantic search allowance is used up, so this answer used keyword search."* Citations, snippets and the rest are unchanged - the answer is built from the same pipeline, searched with a weaker embedder. Analysing a new repository also still works: the hash index is built first and always, so an analysis never fails for want of neurons; only the semantic half is skipped, and the next question on that repository says *"Semantic search is not available for this repository"*.
+
+  **The ledger problem, which is the real reason for the lower budget.** The ledger lives in `.codeatlas/cloudflare-neurons.json`, under the gitignored working directory. **On Render's free plan there is no persistent disk, so every restart wipes it** - and a free service spins down when idle and restarts on the next request, which for a demo may be several times a day. After each restart the budget guard believes nothing has been spent today and will allow a further full budget.
+
+  So with the budget at 8,000, four restarts in one UTC day could authorise 32,000 neurons against a 10,000 allowance. **2,500 is proposed instead: four restart-cycles still fit inside the free allowance**, and 2,500 is nine capped repository analyses, which is a reasonable day for a demo. If a disk is ever mounted, `CODEATLAS_NEURON_LEDGER` should point at it and the budget can go back up.
+
+  **The honest framing: the budget guard is a courtesy, not the protection.** It exists to stop *this project* spending more than it meant to. The protection against actually exceeding the allowance is that **Cloudflare refuses the call and every refusal falls back to hash with a note** - which is tested, and which works whether or not the ledger survived the restart. A wiped ledger means the day's allowance may really run out; it does not mean anything breaks.
+
+  **A larger cost driver than the ledger, and the reason to mount a disk if anything is paid for.** Without a persistent disk the *indexes* are wiped too. Every restart means every repository is analysed again, and under the cloudflare provider each re-analysis is a real 276 neurons. The index cache and the repository state are both under `.codeatlas` by default for the same reason. On a free plan with no disk, the practical ceiling is not the budget but how often the service restarts.
+- Command: none; nothing was run and nothing was applied. The figures come from the entries above
+- Dataset/repo: none
+- Date: 2026-10-10
+- Commit: b157fe5 (the state this proposal describes)
+- Notes: **approval required before any of this is set.** The defaults in the repository are unchanged: provider `hash`, budget 8,000, cap 600, clip 2,000, batch size 50.
+  **The credentials belong only in Render's own environment settings.** They are read straight from the environment into an object with a redacting repr and are never part of the app config, so no config dump or log line can print them; `.env.example` carries the names with empty values and `.env` is gitignored.
+  **One thing this proposal cannot answer:** whether a free Render instance's latency to `api.cloudflare.com` keeps a 600-document index inside `CODEATLAS_INDEX_TIMEOUT_SECONDS` (120 s). Length-sorted batching makes it twelve calls, which should be ample, but it has not been measured from Render and a timeout throws the index away while the neurons stay spent
+
+### Change: the default daily neuron budget is 2,500
+- Value: `CODEATLAS_CLOUDFLARE_DAILY_NEURONS` now defaults to **2,500** instead of 8,000, as approved from the Render proposal above.
+
+  **The allowance is not what sets this figure; the ledger is.** The running total lives in `.codeatlas/cloudflare-neurons.json`, on local disk. A host without a persistent disk wipes it on every restart, and a free service restarts whenever it has been idle. After each restart the guard reads zero spent today and will authorise a further full budget.
+
+  | budget | restart-cycles that fit inside 10,000 | capped repositories per cycle |
+  |---|---|---|
+  | 8,000 | 1 (four cycles would authorise 32,000) | ~29 |
+  | **2,500** | **4** | ~9 |
+
+  Nine capped repositories per cycle is a reasonable day for a demo, and four wipes in one UTC day is a pessimistic restart rate for one. If `CODEATLAS_NEURON_LEDGER` is ever pointed at a persistent disk, this can go back up.
+- Command: `python -m pytest tests/ -q` -> 863 passed, 1 skipped
+- Dataset/repo: none; a configuration default
+- Date: 2026-10-11
+- Commit: 61d5412
+- Notes: **the budget stop is a courtesy, not a hard limit**, and `.env.example` now says so in as many words. Its estimate has run from about 8% high to about 1.5% low against the dashboard, so a budget of 2,500 might stop at 2,300 real or 2,540 real. What actually protects the allowance is that Cloudflare refuses the call and the refusal falls back to the hash index with a note - which works whether or not the ledger survived the restart.
+  Only the default moved. The clip stays 2,000, the document cap 600, the batch size 50, and the provider stays off unless `CODEATLAS_EMBEDDING_PROVIDER=cloudflare` is set
+
+### Change: the semantic index has its own time limit, and running out of it is survivable
+- Value: `CODEATLAS_CLOUDFLARE_INDEX_TIMEOUT_SECONDS` defaults to **180** and applies only when that provider is selected. Missing it **no longer fails the analysis**.
+
+  | provider | index time limit | missing it |
+  |---|---|---|
+  | hash, sentence | `CODEATLAS_INDEX_TIMEOUT_SECONDS`, 120 s | 504, nothing saved |
+  | fastembed | `CODEATLAS_FASTEMBED_INDEX_TIMEOUT_SECONDS`, 900 s | 504, nothing saved |
+  | **cloudflare** | **`CODEATLAS_CLOUDFLARE_INDEX_TIMEOUT_SECONDS`, 180 s** | **hash index kept, analysis succeeds** |
+
+  **Why 180.** A repository at the 600-document cap is twelve calls of fifty under length-sorted batching, so 180 s allows about fifteen seconds a call - room for a slow free host and a retry inside each - without leaving a visitor waiting three minutes on an API that is not answering. It is separate from the shared limit because this is the only provider whose indexing crosses a network, and the only one for which running late is survivable.
+
+  **Why missing it is survivable here and nowhere else.** By the time the semantic index is being built the hash index is already on disk - it is built first, always. Throwing a completed analysis away and telling a visitor their repository could not be read, when the repository is in fact perfectly usable, would be a worse outcome than a repository that is merely harder to search. So a timeout now ends exactly as a refused call does: the half-built semantic index is discarded, the repository keeps its hash index, and the next question carries the note *"Semantic search is not available for this repository, so this answer used keyword search."*
+
+  **A timeout on the only index there is remains fatal**, and `test_a_timeout_on_the_only_index_is_still_fatal` pins that. Nothing here softens the single-index case, where running out of time really does mean no index at all.
+
+  **Outcomes, which are not what a visitor sees.** An attempt at a semantic index now ends in one of six named outcomes - `ok`, `budget`, `failure`, `breaker`, `timeout`, `cap` - mapped from the reasons a single call can fail. They exist for a log line and a metric. What a visitor is told is a shorter list, decided at question time from what turned out to be on disk, because at that point an over-capped repository, a timed-out one and one with a stale index are indistinguishable and should be.
+- Command: `python -m pytest tests/test_dual_index.py tests/test_config.py -q` (47 tests), full suite 869 passed, 1 skipped
+- Dataset/repo: none. The slow provider is a fake embedder driving a fake clock past the limit; **no call was made to Cloudflare in this task**
+- Date: 2026-10-11
+- Commit: afb686f
+- Notes: **the limit is validated at startup** like the other numeric settings, so `CODEATLAS_CLOUDFLARE_INDEX_TIMEOUT_SECONDS=0` stops the app rather than producing an index that times out instantly.
+  **Neurons already spent are not refunded by a timeout.** The documents embedded before the limit was reached were paid for and their vectors are discarded with the half-built index, so a repository that times out repeatedly would cost repeatedly. The circuit breaker does not help here either, since a timeout is not a failed call. **The real protection is the document cap**, which is unchanged at 600 pending a latency measurement from Render
+
+### Check: what a full 1,705-document flask index would cost, with the cap left at 600
+- Value: **463.86 estimated neurons in 35 calls**, length-sorted. The cap stays at 600 until Render's latency has been measured; this is what lifting it would buy and cost.
+
+  | flask at the pinned commit, clip 2,000, batch 50 | estimated neurons | calls | per document |
+  |---|---|---|---|
+  | all 1,705 documents, file order | 1,442.08 | 35 | 0.846 |
+  | **all 1,705 documents, length-sorted** | **463.86** | **35** | **0.272** |
+  | capped at 600, length-sorted | 276.06 | 12 | 0.460 |
+
+  **Lifting the cap would cost 68% more for 2.8 times the documents.** 463.86 against 276.06 is +187.80 neurons, and the per-document price falls from 0.460 to 0.272 - a capped index is *worse* value per document, because the 600 it keeps are the first 600 in file order and include a disproportionate share of the long, expensive file records.
+
+  | | full index | capped at 600 |
+  |---|---|---|
+  | inside the 2,500 budget | 5.4 repositories | 9.1 |
+  | inside the 10,000 allowance | 21.6 | 36.2 |
+
+  **The number that decides it is 35 calls against 12, not the neurons.** At the 180 s index limit, 35 calls allow about five seconds each; 12 allow fifteen. Whether a free Render instance can finish 35 round trips to `api.cloudflare.com` inside 180 s is exactly the unmeasured thing, and a timeout now costs the neurons already spent and keeps nothing. **That, not the budget, is why the cap stays at 600.**
+- Command: `CodeIndexService.documents` over the pinned flask checkout, priced by `neuron_ledger.estimated_neurons(..., batch_size=50)`
+- Dataset/repo: https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35, 83 files and 1,622 functions, 1,705 prepared documents at clip 2,000
+- Date: 2026-10-11
+- Commit: 6933310
+- Notes: **no neurons were spent on this and no call was made** - it counts characters and prices them with the committed estimator. The estimator itself has run between about 8% high and about 1.5% low against the dashboard, so read 463.86 as roughly 430 to 470 real.
+  **A caveat on "capped at 600".** The cap keeps the first 600 documents in the order they are collected - every file record first, then functions - so a capped flask index is all 83 file records plus the first 517 functions. That is not a random sample, and the retrieval numbers in this file were all measured on the **uncapped** corpus. What a capped index would score has not been measured
+
+### Change: one log line and three metrics per semantic analysis, and exactly what a visitor reads
+- Value: every attempt at a semantic index now logs one line and increments one counter, and every question answered from the fallback index is counted by reason.
+
+  ```
+  Semantic index for repo <id>: outcome=ok documents=1705 calls=35 api_seconds=31.5 estimated_neurons=463.86
+  ```
+
+  | field | what it is |
+  |---|---|
+  | `outcome` | one of `ok`, `budget`, `failure`, `breaker`, `timeout`, `cap` |
+  | `documents` | records offered to the embedder, before the cap is applied |
+  | `calls` | API calls made, **including attempts that failed and were retried** |
+  | `api_seconds` | time spent waiting on those calls, successful or not |
+  | `estimated_neurons` | this analysis's share of the ledger estimate |
+
+  | metric | labels |
+  |---|---|
+  | `codeatlas_semantic_index_total` | `outcome` |
+  | `codeatlas_semantic_index_estimated_neurons_total` | none |
+  | `codeatlas_retrieval_fallback_total` | `reason` |
+
+  **Every label is a word from a closed list** - the six outcomes above, and `budget`, `circuit`, `api`, `unindexed`, `cap` for a question. No label can hold a path, a question or a provider's error text, so cardinality is fixed and nothing a visitor typed can reach `/metrics`.
+
+  **Usage is taken twice per analysis**, once before the attempt and once after, so spend left over from an earlier analysis cannot be reported as this one's. `test_one_analysis_is_not_charged_for_the_one_before_it` pins that by handing the reporter a leftover and checking it never reaches the line.
+- Value (what the visitor actually sees): the note is shown **above** the answer, in a small bordered line with an information icon, not inside the collapsed "Reasoning" section - an answer built from the weaker search should say so where the answer is.
+
+  | reason | when | the sentence, in full |
+  |---|---|---|
+  | `budget` | today's estimated spend would pass the budget | *Today's semantic search allowance is used up, so this answer used keyword search.* |
+  | `circuit` | three consecutive failures, during the five-minute cooldown | *Semantic search is briefly unavailable, so this answer used keyword search.* |
+  | `api` | transport error, non-2xx, or a malformed body | *Semantic search did not respond, so this answer used keyword search.* |
+  | `unindexed` | no usable semantic index: over the cap, timed out, or built by a different embedder | *Semantic search is not available for this repository, so this answer used keyword search.* |
+  | `cap` | same sentence; the key is kept for the index-time log | *Semantic search is not available for this repository, so this answer used keyword search.* |
+  | anything unrecognised | a reason added later and not given a sentence | falls back to the `api` sentence |
+
+  **No, the note never appears when the semantic index was used normally.** The note is the empty string on every path where the first-choice index answered, and it is only non-empty where a reason was set - which happens in exactly two places, both of which switch to the fallback index first. `test_the_semantic_index_answers_when_it_can_and_says_nothing` and `test_an_ordinary_answer_carries_no_note` pin it, and with the hash provider there is no fallback pair at all, so the note cannot be produced.
+
+  **No reason names Cloudflare, a neuron, a status code or a provider.** A visitor is told what happened to their answer, not what happened to our budget.
+- Command: `python -m pytest tests/test_semantic_observability.py -q` (25 tests), full suite 894 passed, 1 skipped
+- Dataset/repo: none. Fake embedders and a fake usage reporter; **no Cloudflare call was made in this task**
+- Date: 2026-10-11
+- Commit: 0621511
+- Notes: **failed attempts are counted as calls.** A batch that is retried twice and then gives up reports three calls and all the seconds they took. That is deliberate: a line reading `outcome=failure calls=36 api_seconds=140.0` says something a line reading `calls=0` would hide.
+  **`estimated_neurons` on the line is an estimate like every other figure in this file**, and the ledger it comes from has run between about 8% high and about 1.5% low against the dashboard.
+  **An over-cap repository logs a line too**, with `calls=0`, although no analysis was attempted. A line saying a repository was skipped and why is more use than silence
+
+### Check: the second dashboard reconciliation, and the range the estimator has actually shown
+- Value: **the dashboard read 376.56 neurons against the ledger's 370.87 estimated - 1.5% low.** This is the first reconciliation of the padding-aware estimator against real spend, and it is close.
+
+  **The dashboard figures, as supplied.** The 24-hour view read **376.56 neurons** for bge-small, in a single bar at **Oct 10 17:15 (UTC-4)**. "Used today" read **0**, because the UTC day had rolled over since. The dev run's roughly 4,400 is outside that 24-hour window and does not appear in it.
+
+  | run | estimated | real | estimator |
+  |---|---|---|---|
+  | dev evaluation, 3 configurations | 4,767.10 | ~4,392 | **8.5% high** |
+  | held-out + order check + validation index | **370.87** | **376.56** | **1.51% low** |
+
+  The 370.87 is three pieces of work in one UTC day: 0.55 for the held-out questions, 94.26 for the sorted-versus-unsorted order check, and 276.06 for the 600-document validation index. The single bar at 17:15 is all three; they ran within about an hour of each other.
+
+  **So the estimator's error has run from about 8% high to about 1.5% low.** It is not a bound in either direction, and the 1.5% low matters more than the 8.5% high: an estimate that can come in *under* real spend means **the budget stop is a courtesy and not a hard limit**. A budget of 2,500 might stop after 2,540 real neurons rather than 2,500.
+
+  **What that does and does not mean.** It does not mean the allowance can be blown through: when the real allowance is gone Cloudflare refuses the call, the refusal falls back to the hash index, and the visitor is told - which is tested and works whether or not the estimate was accurate, and whether or not the ledger survived a restart. The budget stop exists to keep this project inside what it meant to spend, and a few per cent either way is within what it was built for. It should not be described, in this file or anywhere else, as a guarantee.
+
+  **Why the two errors run in opposite directions is not established.** The padding model prices every text in a call at its longest member, which was 8.5% generous on the dev run's 177 calls of mostly long batches, and 1.5% mean on this day's 34 calls - which were dominated by one length-sorted index where padding is almost absent by construction. A plausible reading is that sorted batching removes the slack the model was over-counting, leaving a small genuine under-count from the 3-characters-per-token figure. **Two data points cannot distinguish that from coincidence**, and no further calls were made to find out.
+- Command: the account dashboard, read by hand; `cat .codeatlas/cloudflare-neurons.json` for the ledger. **No call was made to Cloudflare in this task**
+- Dataset/repo: none
+- Date: 2026-10-11
+- Commit: f5e55e0
+- Notes: **both dashboard figures in this file are user-supplied.** The embeddings response carries no usage at all, which is why the ledger exists and why it can only ever be calibrated against a number read by a person from a web page. Both readings are rounded at an unknown precision.
+  **"Used today" reading 0 is the UTC rollover working as intended**, not a lost record: the ledger keeps a dated history and still holds both days
+
+### Fix: a DI test built a real model client, and only a developer's .env was hiding it
+- Value: **`tests/test_dual_index.py::test_the_answer_service_is_given_the_fallback_only_when_there_is_one` passed locally and failed in GitHub CI** with `pydantic ValidationError: ChatOpenAI did not find openai_api_key`. It now passes in both, and the whole suite passes with no credentials anywhere: **894 passed, 1 skipped**.
+
+  **What it was doing.** The test builds the answer service through the real `get_answer_service()` factory, so the real `LlmProvider` has to build *something*. The LLM provider was left at its default of `groq`, so it constructed a `ChatOpenAI` - which needs a key to exist at construction time, before any call is made.
+
+  **Why it passed locally and not in CI.** Two separate routes put `.env` into the process environment on a developer's machine, and neither exists in CI:
+
+  | route | when |
+  |---|---|
+  | `codeatlas/app/main.py` calls `load_dotenv()` at import | any test that builds the FastAPI app, which several do |
+  | `load_cloudflare_credentials()` calls `load_dotenv()` | any test that touches the Cloudflare credentials helper |
+
+  Either one loads the **whole** file, so `GROQ_API_KEY` lands in `os.environ` for the rest of the session no matter which test pulled it in. Test order then decides whether a test that needs a key happens to find one - locally it always did, and in CI there was nothing to find. **The test was never isolated; it was sharing state with whatever ran before it.**
+
+  **The fix is `CODEATLAS_LLM_PROVIDER=none`**, which makes the factory return the app's own `FallbackChatModel`: no key, no client, no network, and the same path the server takes when nothing is configured. That exercises real code rather than a fake, and it is a far better fix than **putting a dummy key in the workflow**, which would have left the test free to build a real client and merely stopped CI from mentioning it.
+
+  The test now also asserts *which* model it was given, so the next time something makes this path build a real client it fails with that sentence rather than with a missing key.
+- Command: `python -m pytest tests/ -q` locally (894 passed, 1 skipped); the same suite with dotenv disabled and every provider credential cleared from the environment, which is how CI runs it (894 passed, 1 skipped)
+- Dataset/repo: none
+- Date: 2026-10-11
+- Commit: 33d5f0a
+- Notes: **reproduced before it was fixed**, with a pytest plugin that makes `dotenv.load_dotenv` a no-op and deletes every `CLOUDFLARE_*`, `OPENAI_API_KEY` and `GROQ_API_KEY` from the environment before any project module is imported. It reproduced the CI failure exactly - the same one test, 893 others passing. **The `.env` file was never read, moved or renamed to do this.**
+  **One other place builds a real client, deliberately.** `tests/test_llm_defaults.py` constructs `ChatOpenAI` three times to check that the model name and token budget are passed through, and sets an obviously fake key itself to do so. That is a legitimate use - it is testing the construction - and it depends on nothing ambient, which is why it passed in CI too. The guard added in the next entry makes that intent explicit rather than incidental.
+  **No test reaches a real provider.** Nothing in the suite calls a model, and nothing calls Cloudflare: every Cloudflare test passes a fake client into the provider
+
+### Guard: no test may reach a real provider, or depend on one being configured
+- Value: an autouse fixture now clears the provider credentials and disables `.env` loading for **every** test, and building a provider client fails with a message saying what to do instead. The suite reports **903 passed, 1 skipped locally and 903 passed, 1 skipped with no credentials at all** - the two runs are now identical, which is the whole point.
+
+  | what | how it is blocked | why that way |
+  |---|---|---|
+  | `ChatOpenAI` (both the openai and groq paths) | construction raises | construction is what needs the key; by the time the object exists the mistake has been made |
+  | `ChatGroq` | construction raises, if the package is ever added | same |
+  | Cloudflare | the **call** raises, not the construction | several tests build a provider only to read its signature and never embed anything; one built without a fake client is given one that refuses |
+  | credentials in the environment | deleted per test | a test that finds one passes where one is configured and fails where it is not |
+  | `.env` | `load_dotenv` patched out in both places the app calls it | otherwise the first test to touch either puts the whole file back for every test after it |
+
+  **The opt-out is a marker, not an exception list.** Three tests in `test_llm_defaults.py` construct `ChatOpenAI` deliberately, to check that the model name and token budget reach it, and set their own plainly fake key. They carry `@pytest.mark.builds_model_client`. That turns what was an incidental fact - they happened to pass in CI because they supplied a key - into a stated one.
+
+  **Two mistakes made while writing this, both kept as comments in the code.**
+
+  1. **The guard reloaded the file it had just cleared.** `monkeypatch.setattr("codeatlas.app.main.load_dotenv", ...)` *imports* that module to patch it, and importing it runs `load_dotenv()` at module level. Clearing the environment first and patching second put every credential straight back. The patching now happens first, and the main module is only patched if it is already imported.
+  2. **A failing assertion printed a live token.** The obvious way to check the environment is clean is `assert name not in os.environ`; when it fails, pytest renders the entire environment into the report - which put a real `CLOUDFLARE_API_TOKEN` into a terminal. The test now builds a list of **names** and asserts on that, so the worst it can print is a list of variable names. **The token exposed this way was reported for rotation.**
+- Command: `python -m pytest tests/ -q` (903 passed, 1 skipped), and the same suite with `.env` disabled and every provider credential cleared, which is how CI runs it (903 passed, 1 skipped)
+- Dataset/repo: none
+- Date: 2026-10-11
+- Commit: 3143178
+- Notes: **the skip counts differ between the two machines for three reasons, and none of them hides a problem.** Locally: 1 skip, the symlink test in `test_safe_join.py`, which needs privileges Windows does not give. In CI: 4 skips - the two `test_fastembed_provider.py` tests that need the optional `fastembed` package, which CI does not install and this machine has, and the two `test_answer_smoke.py` tests that need cached eval clones under `.codeatlas/eval-repos`, which this machine has from the retrieval evaluation and CI starts without. The symlink test runs on Linux, so it is not among CI's four. 1 + 2 + 2 = the difference exactly, and **they were left alone**: each skip states its condition and would run if the condition were met.
+  **What the guard does not cover.** It does not stop a test making an HTTP request by some other route - `urllib` is not patched, because `tests/test_json_client.py` exercises the stdlib client directly with a fake `urlopen` and blocking it would break a legitimate test. Nothing in the suite does make one; this is a gap in the guard, not a known problem

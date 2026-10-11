@@ -15,7 +15,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from codeatlas.models.repository import Repository
-from codeatlas.services.eval.basic_eval import RankingMetrics, hit_at_k, ranking_metrics, reciprocal_rank
+from codeatlas.services.eval.basic_eval import (
+    RECALL_DEPTH,
+    RankingMetrics,
+    hit_at_k,
+    ranking_metrics,
+    reciprocal_rank,
+)
 from codeatlas.services.parsing.tree_sitter_parser import TreeSitterAstParser
 from codeatlas.services.qa.answer_service import AnswerService, RetrievalSettings
 from codeatlas.services.retrieval.embedding import EmbeddingService
@@ -121,6 +127,8 @@ class RepoRun:
     records_indexed: int
     metrics: RankingMetrics
     per_question: list[dict]
+    # Per scope: how many records the per-document clip cuts, and how much text it drops.
+    clipped: dict = field(default_factory=dict)
 
 
 def evaluate_set(
@@ -144,28 +152,37 @@ def evaluate_set(
     settings = settings or EvalSettings()
     parsed = TreeSitterAstParser().parse_repository(repository)
     retriever = FaissCodeRetriever()  # in memory only
-    CodeIndexService(
+    indexer = CodeIndexService(
         embedder=embedder,
         retriever=retriever,
         max_chars=settings.index.max_chars,
         prefix_metadata=settings.index.prefix_metadata,
         batch_size=settings.index.batch_size,
-    ).index_repository(repository, parsed)
+    )
+    indexer.index_repository(repository, parsed)
     answers = AnswerService(retriever=retriever, embedder=embedder, llm=None, settings=settings.retrieval)
 
+    # Retrieved once, to the pool depth, and read two ways. The ranked answer is its first
+    # RANKED_DEPTH, exactly as before, so every number this file used to report is unchanged;
+    # recall is measured over the whole pool, which is what "anywhere in the candidates" means.
+    depth = max(RANKED_DEPTH, RECALL_DEPTH, settings.retrieval.candidates)
     pairs: list[tuple[list[str], set[str]]] = []
+    pool_pairs: list[tuple[list[str], set[str]]] = []
     per_question: list[dict] = []
     for q in question_set.select(split):
-        records = answers.retrieve(repo_id, q.question, top_k=RANKED_DEPTH)
-        ranked = [_relative(record.metadata.get("path", ""), root) for record in records]
+        records = answers.retrieve(repo_id, q.question, top_k=depth)
+        pool = [_relative(record.metadata.get("path", ""), root) for record in records]
+        ranked = pool[:RANKED_DEPTH]
         expected = set(q.expected_files)
         pairs.append((ranked, expected))
+        pool_pairs.append((pool, expected))
         per_question.append(
             {
                 "id": q.id,
                 "top5": ranked[:5],
                 "hit@5": hit_at_k(ranked, expected, 5),
                 "rr": round(reciprocal_rank(ranked, expected), 4),
+                f"recall@{RECALL_DEPTH}": hit_at_k(pool, expected, RECALL_DEPTH),
             }
         )
     return RepoRun(
@@ -173,8 +190,9 @@ def evaluate_set(
         commit=question_set.commit,
         files_indexed=len(parsed.files),
         records_indexed=len(parsed.files) + len(parsed.functions),
-        metrics=ranking_metrics(pairs, ks),
+        metrics=ranking_metrics(pairs, ks, candidates=pool_pairs),
         per_question=per_question,
+        clipped=indexer.clipped_counts(parsed),
     )
 
 
@@ -191,6 +209,7 @@ def metrics_dict(m: RankingMetrics) -> dict:
         "hit_rate": {f"@{k}": round(v, 4) for k, v in m.hit_rate.items()},
         "precision": {f"@{k}": round(v, 4) for k, v in m.precision.items()},
         f"mrr@{RANKED_DEPTH}": round(m.mrr, 4),
+        f"recall@{RECALL_DEPTH}": round(m.recall, 4),
     }
 
 
@@ -220,6 +239,7 @@ def run(
         hit_rate={k: weighted(lambda m, k=k: m.hit_rate[k]) for k in ks},
         precision={k: weighted(lambda m, k=k: m.precision[k]) for k in ks},
         mrr=weighted(lambda m: m.mrr),
+        recall=weighted(lambda m: m.recall),
     )
     return {
         "embedder": describe_embedder(embedder),
@@ -230,6 +250,7 @@ def run(
                 "commit": r.commit,
                 "files_indexed": r.files_indexed,
                 "records_indexed": r.records_indexed,
+                "clipped": r.clipped,
                 **metrics_dict(r.metrics),
             }
             for r in runs

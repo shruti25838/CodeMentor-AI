@@ -133,19 +133,24 @@ def test_the_default_budget_is_above_the_threshold() -> None:
     assert DEFAULT_LLM_MAX_TOKENS > REASONING_OVERHEAD
 
 
+@pytest.mark.builds_model_client
 def test_the_provider_passes_the_budget_to_the_model(monkeypatch) -> None:
     # Constructing the client needs a key to be present; none is used, no call is made.
+    # The marker is what lets this past the guard in conftest: building the client is the
+    # point of the test, and the key below is plainly not one.
     monkeypatch.setenv("GROQ_API_KEY", "not-a-real-key")
     model = LlmProvider(config(llm_max_tokens=1234))._build()
     assert getattr(model, "max_tokens", None) == 1234
 
 
+@pytest.mark.builds_model_client
 def test_the_provider_passes_the_model_name(monkeypatch) -> None:
     monkeypatch.setenv("GROQ_API_KEY", "not-a-real-key")
     model = LlmProvider(config(llm_model="some/other-model"))._build()
     assert getattr(model, "model_name", None) == "some/other-model"
 
 
+@pytest.mark.builds_model_client
 def test_the_openai_provider_also_gets_a_budget(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "not-a-real-key")
     model = LlmProvider(config(llm_provider="openai", llm_max_tokens=777))._build()

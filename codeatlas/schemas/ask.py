@@ -24,3 +24,6 @@ class AskResponse(BaseModel):
     reasoning_steps: list[str]
     # The agents that actually ran, in order. Empty for a question answered without agents.
     agents_used: list[str] = Field(default_factory=list)
+    # One sentence shown under the answer when keyword search stood in for semantic search,
+    # so a visitor is never quietly given the weaker result. Empty the rest of the time.
+    retrieval_note: str = ""

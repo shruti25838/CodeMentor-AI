@@ -1,4 +1,4 @@
-"""Score retrieval on the fixed question sets: hit rate@k, precision@k (k = 1, 3, 5) and MRR@10.
+"""Score retrieval on the fixed question sets: hit rate@k, precision@k (k = 1, 3, 5), MRR@10 and recall@20.
 
     python scripts/eval_retrieval.py --split dev
     python scripts/eval_retrieval.py --split test --json eval/results/test.json
@@ -7,6 +7,13 @@ Needs no model key: only retrieval runs. The embedder is the one the server woul
 (CODEATLAS_EMBEDDING_PROVIDER, default hash) and its name is printed with the results.
 Each repository is fetched at the commit pinned in its question file into --cache-dir
 (default .codeatlas/eval-repos, ignored by git) and reused on later runs.
+
+recall@20 is the share of questions whose expected file is anywhere in the 20 candidates the
+reranker chooses from. It is the embedder's own score: the reranker can only reorder that pool,
+so a question whose file is not in it cannot be answered well however the ordering is tuned.
+
+Under each repository's line is what the per-document clip removed, per scope. A record over
+the clip is embedded by its opening only.
 
 --min-hit-rate K=VALUE (repeatable) exits with status 1 if the overall hit rate at K is below VALUE.
 
@@ -26,6 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from codeatlas.app.di import get_config, get_embedder, get_retrieval_settings, index_options  # noqa: E402
+from codeatlas.services.eval.basic_eval import RECALL_DEPTH  # noqa: E402
 from codeatlas.services.eval.retrieval_eval import RANKED_DEPTH, SPLITS, EvalSettings, IndexSettings, run  # noqa: E402
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService  # noqa: E402
 
@@ -59,7 +67,10 @@ def main() -> int:
     print(f"embedder: {result['embedder']}")
     print(f"settings: {json.dumps(result['settings'], separators=(',', ':'))}")
     print(f"split: {result['split']}")
-    header = f"{'repo':<14}{'n':>4}  {'hit@1':>6}{'hit@3':>7}{'hit@5':>7}  {'P@1':>6}{'P@3':>7}{'P@5':>7}  {'MRR@' + str(RANKED_DEPTH):>7}"
+    header = (
+        f"{'repo':<14}{'n':>4}  {'hit@1':>6}{'hit@3':>7}{'hit@5':>7}  {'P@1':>6}{'P@3':>7}{'P@5':>7}"
+        f"  {'MRR@' + str(RANKED_DEPTH):>7}{'R@' + str(RECALL_DEPTH):>7}"
+    )
     print(header)
     rows = [(name, r) for name, r in result["repos"].items()] + [("overall", result["overall"])]
     for name, m in rows:
@@ -67,9 +78,18 @@ def main() -> int:
         print(
             f"{name:<14}{m['questions']:>4}  {h['@1']:>6.3f}{h['@3']:>7.3f}{h['@5']:>7.3f}"
             f"  {p['@1']:>6.3f}{p['@3']:>7.3f}{p['@5']:>7.3f}  {m[f'mrr@{RANKED_DEPTH}']:>7.3f}"
+            f"{m[f'recall@{RECALL_DEPTH}']:>7.3f}"
         )
     for name, r in result["repos"].items():
         print(f"{name}: pinned commit {r['commit'][:12]}, {r['files_indexed']} files, {r['records_indexed']} records")
+        for scope, counts in sorted((r.get("clipped") or {}).items()):
+            records, clipped = counts["records"], counts["clipped"]
+            share = clipped / records if records else 0.0
+            kept = counts["chars_kept"] / counts["chars"] if counts["chars"] else 1.0
+            print(
+                f"  {scope + ' records':<20}{records:>5}  over the clip: {clipped:>4} ({share:.1%})"
+                f"  characters kept: {kept:.1%}"
+            )
     print(f"seconds: {result['seconds']}")
 
     if args.json:

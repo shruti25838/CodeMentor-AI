@@ -154,16 +154,17 @@ def _index(tmp_path, **options) -> RecordingEmbedder:
     return embedder
 
 
+# These assert on *which* texts were embedded, not on the order the embedder saw them in:
+# indexing sorts by length before batching, so that order is a billing detail, not a contract.
 def test_index_defaults_embed_the_full_text(tmp_path):
-    embedder = _index(tmp_path)
-    assert embedder.texts[0] == "def run():\n    return 'x' * 100\n"
+    assert "def run():\n    return 'x' * 100\n" in _index(tmp_path).texts
 
 
 def test_index_max_chars_and_metadata_prefix(tmp_path):
-    assert _index(tmp_path, max_chars=8).texts[0] == "def run("
+    assert _index(tmp_path, max_chars=8).texts == ["def run(", "def run("]
     texts = _index(tmp_path, prefix_metadata=True).texts
-    assert texts[0].startswith("pkg/mod.py\ndef run")
-    assert texts[1].startswith("pkg/mod.py run\ndef run")
+    assert any(text.startswith("pkg/mod.py\ndef run") for text in texts)
+    assert any(text.startswith("pkg/mod.py run\ndef run") for text in texts)
 
 
 def test_server_uses_the_tuned_settings():

@@ -9,7 +9,8 @@ import {
     ChevronDown,
     BrainCircuit,
     Layers,
-    Quote
+    Quote,
+    Info
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { openFilePreview, parseCitation } from "@/lib/citations";
@@ -26,6 +27,12 @@ interface MessageBubbleProps {
     citations?: string[];
     /** One entry per agent that ran, in order, as deep mode reported it. */
     agentSteps?: AgentStep[];
+    /**
+     * One sentence, set when keyword search stood in for semantic search. It is shown rather
+     * than hidden in a dropdown: an answer built from the weaker search should say so where
+     * the answer is, not where someone would have to go looking for it.
+     */
+    retrievalNote?: string;
 }
 
 const AGENT_LABELS = {
@@ -65,7 +72,7 @@ const Collapsible = ({ title, icon: Icon, children, defaultOpen = false, preview
     );
 };
 
-export default function MessageBubble({ role, content, reasoningSteps, citations, agentSteps }: MessageBubbleProps) {
+export default function MessageBubble({ role, content, reasoningSteps, citations, agentSteps, retrievalNote }: MessageBubbleProps) {
     const isUser = role === "user";
 
     // Deduplicate citations and clean them up
@@ -107,6 +114,14 @@ export default function MessageBubble({ role, content, reasoningSteps, citations
                             ))}
                         </ol>
                     </Collapsible>
+                )}
+
+                {/* Said plainly, above the answer: this one came from the weaker search. */}
+                {!isUser && retrievalNote && (
+                    <div className="mb-3 flex items-start gap-2 text-xs text-muted/90 border border-white/5 bg-white/5 rounded-lg px-3 py-2">
+                        <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-accent/60" aria-hidden="true" />
+                        <p>{retrievalNote}</p>
+                    </div>
                 )}
 
                 {/* Reasoning Steps (Planner Dropdown) */}

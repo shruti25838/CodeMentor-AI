@@ -109,8 +109,10 @@ def _analyze(request, loader, parser, graph_builder, index_service, state_store,
             parsed = parser.parse_repository(repo)
         with timer.stage("graph"):
             dependency_graph = graph_builder.build_import_graph(parsed)
-        # Adds read_files, embed and index_write.
-        index_service.index_repository(repo, parsed)
+        # Adds read_files, embed and index_write. Returns which indexes the repository has
+        # afterwards: one name for a single-index provider, or both when the semantic index was
+        # built beside the hash one - and only the hash one when it could not be.
+        indexes = index_service.index_repository(repo, parsed) or ()
     except Exception as exc:
         index_service.discard(repo.repo_id)
         remove_clone(repo)
@@ -131,6 +133,7 @@ def _analyze(request, loader, parser, graph_builder, index_service, state_store,
                 url=repo.url,
                 commit=repo.commit,
                 index_format=index_service.index_format,
+                indexes=tuple(indexes),
             ),
         )
     return AnalyzeRepoResponse(

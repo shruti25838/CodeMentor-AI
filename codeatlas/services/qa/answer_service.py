@@ -14,9 +14,10 @@ from codeatlas.observability.agent_metrics import (
     current_agent,
     record_failure,
 )
+from codeatlas.observability.metrics import RETRIEVAL_FALLBACK
 from codeatlas.observability.timing import stage
 from codeatlas.services.llm.quota import classify_quota, quota_answer
-from codeatlas.services.retrieval.embedding import EmbeddingService
+from codeatlas.services.retrieval.embedding import EmbeddingService, EmbeddingUnavailableError, fallback_note
 from codeatlas.services.retrieval.hash_embedder import STOPWORDS, split_identifier
 from codeatlas.services.retrieval.indexing import embedder_mismatch
 from codeatlas.services.retrieval.interfaces import CodeRetriever
@@ -70,6 +71,9 @@ class GroundedAnswer:
     # The code the answer was built from, in the same order as `citations`. Later agents use
     # these instead of searching again, so what they read matches what the user is shown.
     snippets: list[Snippet] = field(default_factory=list)
+    # One sentence for the visitor when the fallback index answered instead of the semantic
+    # one. Empty on the ordinary path, which is every path when the provider cannot fail.
+    note: str = ""
 
 
 class AnswerService:
@@ -81,9 +85,16 @@ class AnswerService:
         settings: RetrievalSettings | None = None,
         snippet_max_chars: int = DEFAULT_SNIPPET_MAX_CHARS,
         total_max_chars: int = DEFAULT_TOTAL_MAX_CHARS,
+        fallback_retriever: CodeRetriever | None = None,
+        fallback_embedder: EmbeddingService | None = None,
     ) -> None:
         self._retriever = retriever
         self._embedder = embedder
+        # The index that answers when the first one cannot: present only where the first one is
+        # able to fail, which today means the Cloudflare provider. Both are needed or neither,
+        # since an index and the embedder that built it are one thing.
+        self._fallback_retriever = fallback_retriever
+        self._fallback_embedder = fallback_embedder
         self._llm = llm
         self._settings = settings or RetrievalSettings()
         self._snippet_max_chars = snippet_max_chars
@@ -102,9 +113,70 @@ class AnswerService:
 
     def retrieve(self, repo_id: str, question: str, top_k: int = 5) -> list[EmbeddingRecord]:
         """The records a question's answer is built from, best first. The retrieval eval calls this too."""
+        return self.retrieve_with_note(repo_id, question, top_k)[0]
+
+    def retrieve_with_note(self, repo_id: str, question: str, top_k: int = 5) -> tuple[list[EmbeddingRecord], str]:
+        """The records, and the sentence to show the visitor when the fallback index answered.
+
+        The order here is the point. Which index *can* answer is decided first, from what is on
+        disk; whether the chosen embedder *works* is only knowable by calling it, and a provider
+        that reaches an API fails at exactly that moment, with the visitor already waiting. Both
+        outcomes land in the same place: the fallback index, and a note saying so.
+        """
         settings = self._settings
+        if settings.drop_stopwords:
+            question = _without_stopwords(question)
+
+        retriever, embedder, reason = self._choose(repo_id)
+        if retriever is None:
+            return [], ""
+
+        try:
+            with stage("embed_query"):
+                query_vector = embedder.embed_query(question)
+        except EmbeddingUnavailableError as exc:
+            # The reason only. A detail may carry whatever the provider wrote into it, and the
+            # question itself is right here in scope - neither belongs in a log line.
+            self._logger.warning(
+                "Semantic search unavailable (%s) for repo %s; using the fallback index", exc.reason, repo_id
+            )
+            fallback = self._usable_fallback(repo_id)
+            if fallback is None:
+                return [], ""
+            retriever, embedder = fallback
+            reason = exc.reason
+            with stage("embed_query"):
+                query_vector = embedder.embed_query(question)
+
+        if reason:
+            # The reason is one of a fixed list, so the label can never hold anything a visitor
+            # typed, a path, or a provider's error text.
+            RETRIEVAL_FALLBACK.labels(reason=reason).inc()
+        with stage("search"):
+            records = retriever.search(repo_id, query_vector, max(top_k, settings.candidates))
+        if settings.skip_tests:
+            records = [r for r in records if not _is_test_path(r.metadata.get("path", ""))]
+        # Reranking reads each candidate's snippet from disk.
+        with stage("rerank"):
+            ranked = self._rerank(question, records, query_vector)[:top_k]
+        return ranked, fallback_note(reason) if reason else ""
+
+    def _choose(self, repo_id: str) -> tuple[CodeRetriever | None, EmbeddingService, str]:
+        """Which index to search, decided before anything is called."""
         stored = self._retriever.stored_embedder(repo_id)
-        if embedder_mismatch(stored, self._embedder):
+        mismatched = embedder_mismatch(stored, self._embedder)
+        if not mismatched and self._retriever.has_index(repo_id):
+            return self._retriever, self._embedder, ""
+
+        fallback = self._usable_fallback(repo_id)
+        if fallback is not None:
+            # A repository over the document cap has only the fallback index, and so does one
+            # whose semantic index was built by a different embedder. The visitor sees one note
+            # for both, because from where they are sitting it is one situation.
+            self._logger.info("No usable semantic index for repo %s; using the fallback index", repo_id)
+            return fallback[0], fallback[1], "unindexed"
+
+        if mismatched:
             # Returning nothing is honest; the alternative is confident nonsense (see embedder_mismatch).
             self._logger.warning(
                 "Index for repo %s was built by embedder %r, not %r; refusing to search it. Analyze it again.",
@@ -112,22 +184,21 @@ class AnswerService:
                 stored,
                 self._embedder.signature(),
             )
-            return []
-        if settings.drop_stopwords:
-            question = _without_stopwords(question)
-        with stage("embed_query"):
-            query_vector = self._embedder.embed_query(question)
-        with stage("search"):
-            records = self._retriever.search(repo_id, query_vector, max(top_k, settings.candidates))
-        if settings.skip_tests:
-            records = [r for r in records if not _is_test_path(r.metadata.get("path", ""))]
-        # Reranking reads each candidate's snippet from disk.
-        with stage("rerank"):
-            return self._rerank(question, records, query_vector)[:top_k]
+            return None, self._embedder, ""
+        return self._retriever, self._embedder, ""
+
+    def _usable_fallback(self, repo_id: str) -> tuple[CodeRetriever, EmbeddingService] | None:
+        """The fallback pair, if there is one with an index for this repository that it can search."""
+        retriever, embedder = self._fallback_retriever, self._fallback_embedder
+        if retriever is None or embedder is None or not retriever.has_index(repo_id):
+            return None
+        if embedder_mismatch(retriever.stored_embedder(repo_id), embedder):
+            return None
+        return retriever, embedder
 
     def answer(self, repo_id: str, question: str, top_k: int = 5) -> GroundedAnswer:
         self._logger.info("Answering question for repo %s", repo_id)
-        records = self.retrieve(repo_id, question, top_k)
+        records, note = self.retrieve_with_note(repo_id, question, top_k)
         self._logger.info("Retrieved %s records for repo %s", len(records), repo_id)
         # Read each record's code once, capped, and keep only what fits the context budget.
         # Citations describe exactly these snippets, so the answer and the citations agree.
@@ -146,6 +217,7 @@ class AnswerService:
             citations=citations,
             reasoning_steps=reasoning,
             snippets=snippets,
+            note=note,
         )
 
     def _format_answer(self, question: str, snippets: list[Snippet]) -> list[str]:

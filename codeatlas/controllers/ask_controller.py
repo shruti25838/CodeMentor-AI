@@ -84,6 +84,7 @@ def _ask(request, orchestrator, llm_provider, timer: StageTimer) -> AskResponse:
         citations=result.citations,
         reasoning_steps=result.reasoning_steps,
         agents_used=result.agents_used,
+        retrieval_note=result.note,
     )
     _track(request, resp, start)
     return resp
@@ -209,6 +210,7 @@ async def ask_stream(
                         "citations": result.citations,
                         "reasoning_steps": result.reasoning_steps,
                         "agents_used": result.agents_used,
+                        "retrieval_note": result.note,
                         "timings_ms": timer.as_dict(),
                     }
                 )

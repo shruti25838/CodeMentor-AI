@@ -125,7 +125,7 @@ def test_run_reports_embedder_split_and_overall(tmp_path):
     assert result["embedder"].startswith("hash")
     assert result["split"] == "all"
     assert result["overall"]["questions"] == 2
-    assert set(result["overall"]) == {"questions", "hit_rate", "precision", "mrr@10"}
+    assert set(result["overall"]) == {"questions", "hit_rate", "precision", "mrr@10", "recall@20"}
     assert set(result["overall"]["hit_rate"]) == {"@1", "@3", "@5"}
     # Question text never goes into the results, only ids.
     assert "signed" not in json.dumps(result["per_question"])
@@ -163,3 +163,73 @@ def test_script_exit_code_follows_min_hit_rate(tmp_path):
     fail = subprocess.run([*base, "--min-hit-rate", "5=1.01"], capture_output=True, text=True)
     assert fail.returncode == 1
     assert "FAIL: overall hit@5" in fail.stdout
+
+
+# --- recall@20, and what the clip removes ------------------------------------------------
+
+
+def test_recall_counts_the_whole_candidate_pool_not_the_ranked_answer() -> None:
+    """The two are different questions, and the difference is the whole reason recall is here."""
+    from codeatlas.services.eval.basic_eval import RECALL_DEPTH, ranking_metrics
+
+    ranked = [("a.py", {"z.py"})]
+    pool = [([*[f"f{i}.py" for i in range(19)], "z.py"], {"z.py"})]
+    metrics = ranking_metrics(ranked, (1, 3, 5), candidates=pool)
+    assert metrics.hit_rate[5] == 0.0
+    assert metrics.mrr == 0.0
+    assert metrics.recall == 1.0
+    assert RECALL_DEPTH == 20
+
+
+def test_a_file_past_the_pool_depth_does_not_count_as_recalled() -> None:
+    from codeatlas.services.eval.basic_eval import ranking_metrics
+
+    pool = [([*[f"f{i}.py" for i in range(20)], "z.py"], {"z.py"})]
+    assert ranking_metrics([("a.py", {"z.py"})], (1, 3, 5), candidates=pool).recall == 0.0
+
+
+def test_without_a_candidate_pool_recall_falls_back_to_what_is_there() -> None:
+    from codeatlas.services.eval.basic_eval import ranking_metrics
+
+    assert ranking_metrics([(["z.py"], {"z.py"})], (1, 3, 5)).recall == 1.0
+
+
+def test_the_clip_counts_records_over_the_limit_per_scope(tmp_path) -> None:
+
+    from codeatlas.models.function_node import FunctionNode
+    from codeatlas.models.parsed_repository import ParsedRepository
+    from codeatlas.models.source_file import SourceFile
+    from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever
+    from codeatlas.services.retrieval.indexing import CodeIndexService
+
+    source = tmp_path / "big.py"
+    source.write_text("\n".join(f"x = {i}" for i in range(400)), encoding="utf-8")
+    parsed = ParsedRepository(
+        repository_id="r",
+        files=[SourceFile(path=str(source), language="python", size_bytes=source.stat().st_size)],
+        functions=[FunctionNode(name="f", file_path=str(source), start_line=1, end_line=2, signature="()")],
+    )
+    service = CodeIndexService(embedder=HashEmbeddingService(), retriever=FaissCodeRetriever(), max_chars=100)
+    counts = service.clipped_counts(parsed)
+    assert counts["file"] == {"records": 1, "clipped": 1, "chars": len(source.read_text()), "chars_kept": 100}
+    assert counts["function"]["clipped"] == 0
+
+
+def test_with_no_clip_nothing_is_counted_as_clipped(tmp_path) -> None:
+
+    from codeatlas.models.parsed_repository import ParsedRepository
+    from codeatlas.models.source_file import SourceFile
+    from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever
+    from codeatlas.services.retrieval.indexing import CodeIndexService
+
+    source = tmp_path / "big.py"
+    source.write_text("x = 1\n" * 500, encoding="utf-8")
+    parsed = ParsedRepository(
+        repository_id="r",
+        files=[SourceFile(path=str(source), language="python", size_bytes=source.stat().st_size)],
+        functions=[],
+    )
+    service = CodeIndexService(embedder=HashEmbeddingService(), retriever=FaissCodeRetriever(), max_chars=None)
+    counts = service.clipped_counts(parsed)
+    assert counts["file"]["clipped"] == 0
+    assert counts["file"]["chars_kept"] == counts["file"]["chars"]

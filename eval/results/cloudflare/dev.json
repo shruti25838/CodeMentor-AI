@@ -1,0 +1,1332 @@
+{
+  "split": "dev",
+  "configs": [
+    "cls-2000",
+    "mean-1500",
+    "mean-2000"
+  ],
+  "results": [
+    {
+      "config": "cls-2000",
+      "pooling": "cls",
+      "max_chars": 2000,
+      "split": "dev",
+      "repos": {
+        "itsdangerous": {
+          "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
+          "files_indexed": 15,
+          "records_indexed": 159,
+          "questions": 10,
+          "clipped": {
+            "file": {
+              "records": 15,
+              "clipped": 8,
+              "chars": 59558,
+              "chars_kept": 22487
+            },
+            "function": {
+              "records": 144,
+              "clipped": 8,
+              "chars": 90647,
+              "chars_kept": 63547
+            }
+          },
+          "orderings": {
+            "vector": {
+              "questions": 10,
+              "hit@1": 0.6,
+              "hit@3": 0.8,
+              "hit@5": 0.9,
+              "mrr@10": 0.7083,
+              "recall@20": 1.0
+            },
+            "keyword": {
+              "questions": 10,
+              "hit@1": 0.6,
+              "hit@3": 0.8,
+              "hit@5": 0.9,
+              "mrr@10": 0.7083,
+              "recall@20": 1.0
+            },
+            "rrf": {
+              "questions": 10,
+              "hit@1": 0.6,
+              "hit@3": 0.8,
+              "hit@5": 0.9,
+              "mrr@10": 0.7033,
+              "recall@20": 1.0
+            }
+          }
+        },
+        "flask": {
+          "commit": "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35",
+          "files_indexed": 83,
+          "records_indexed": 1705,
+          "questions": 10,
+          "clipped": {
+            "file": {
+              "records": 83,
+              "clipped": 45,
+              "chars": 589406,
+              "chars_kept": 109728
+            },
+            "function": {
+              "records": 1622,
+              "clipped": 52,
+              "chars": 824235,
+              "chars_kept": 600406
+            }
+          },
+          "orderings": {
+            "vector": {
+              "questions": 10,
+              "hit@1": 0.6,
+              "hit@3": 0.6,
+              "hit@5": 0.8,
+              "mrr@10": 0.645,
+              "recall@20": 1.0
+            },
+            "keyword": {
+              "questions": 10,
+              "hit@1": 0.7,
+              "hit@3": 1.0,
+              "hit@5": 1.0,
+              "mrr@10": 0.85,
+              "recall@20": 1.0
+            },
+            "rrf": {
+              "questions": 10,
+              "hit@1": 0.7,
+              "hit@3": 0.7,
+              "hit@5": 0.8,
+              "mrr@10": 0.7478,
+              "recall@20": 1.0
+            }
+          }
+        }
+      },
+      "overall": {
+        "vector": {
+          "questions": 20,
+          "hit@1": 0.6,
+          "hit@3": 0.7,
+          "hit@5": 0.85,
+          "mrr@10": 0.6767,
+          "recall@20": 1.0
+        },
+        "keyword": {
+          "questions": 20,
+          "hit@1": 0.65,
+          "hit@3": 0.9,
+          "hit@5": 0.95,
+          "mrr@10": 0.7792,
+          "recall@20": 1.0
+        },
+        "rrf": {
+          "questions": 20,
+          "hit@1": 0.65,
+          "hit@3": 0.75,
+          "hit@5": 0.85,
+          "mrr@10": 0.7256,
+          "recall@20": 1.0
+        }
+      },
+      "per_question": {
+        "vector": {
+          "itsd-01": {
+            "hit@5": 0.0,
+            "rr": 0.0,
+            "recall@20": 1.0
+          },
+          "itsd-03": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "itsd-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-07": {
+            "hit@5": 1.0,
+            "rr": 0.3333,
+            "recall@20": 1.0
+          },
+          "itsd-09": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-15": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-17": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-19": {
+            "hit@5": 1.0,
+            "rr": 0.25,
+            "recall@20": 1.0
+          },
+          "flask-01": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-03": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-05": {
+            "hit@5": 1.0,
+            "rr": 0.25,
+            "recall@20": 1.0
+          },
+          "flask-07": {
+            "hit@5": 0.0,
+            "rr": 0.0,
+            "recall@20": 1.0
+          },
+          "flask-09": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-15": {
+            "hit@5": 0.0,
+            "rr": 0.0,
+            "recall@20": 1.0
+          },
+          "flask-17": {
+            "hit@5": 1.0,
+            "rr": 0.2,
+            "recall@20": 1.0
+          },
+          "flask-19": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          }
+        },
+        "keyword": {
+          "itsd-01": {
+            "hit@5": 0.0,
+            "rr": 0.0,
+            "recall@20": 1.0
+          },
+          "itsd-03": {
+            "hit@5": 1.0,
+            "rr": 0.3333,
+            "recall@20": 1.0
+          },
+          "itsd-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-07": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-09": {
+            "hit@5": 1.0,
+            "rr": 0.25,
+            "recall@20": 1.0
+          },
+          "itsd-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-15": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-17": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-19": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-01": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-03": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-07": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-09": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-13": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-15": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-17": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-19": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          }
+        },
+        "rrf": {
+          "itsd-01": {
+            "hit@5": 0.0,
+            "rr": 0.0,
+            "recall@20": 1.0
+          },
+          "itsd-03": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "itsd-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-07": {
+            "hit@5": 1.0,
+            "rr": 0.3333,
+            "recall@20": 1.0
+          },
+          "itsd-09": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-15": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-17": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-19": {
+            "hit@5": 1.0,
+            "rr": 0.2,
+            "recall@20": 1.0
+          },
+          "flask-01": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-03": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-07": {
+            "hit@5": 1.0,
+            "rr": 0.2,
+            "recall@20": 1.0
+          },
+          "flask-09": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-15": {
+            "hit@5": 0.0,
+            "rr": 0.1111,
+            "recall@20": 1.0
+          },
+          "flask-17": {
+            "hit@5": 0.0,
+            "rr": 0.1667,
+            "recall@20": 1.0
+          },
+          "flask-19": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          }
+        }
+      },
+      "cache": {
+        "hits": 1944,
+        "misses": 0,
+        "file": "08ad85ab4011f2d4.json"
+      }
+    },
+    {
+      "config": "mean-1500",
+      "pooling": "mean",
+      "max_chars": 1500,
+      "split": "dev",
+      "repos": {
+        "itsdangerous": {
+          "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
+          "files_indexed": 15,
+          "records_indexed": 159,
+          "questions": 10,
+          "clipped": {
+            "file": {
+              "records": 15,
+              "clipped": 9,
+              "chars": 59558,
+              "chars_kept": 18027
+            },
+            "function": {
+              "records": 144,
+              "clipped": 11,
+              "chars": 90647,
+              "chars_kept": 59093
+            }
+          },
+          "orderings": {
+            "vector": {
+              "questions": 10,
+              "hit@1": 0.6,
+              "hit@3": 0.7,
+              "hit@5": 0.9,
+              "mrr@10": 0.7,
+              "recall@20": 1.0
+            },
+            "keyword": {
+              "questions": 10,
+              "hit@1": 0.6,
+              "hit@3": 0.9,
+              "hit@5": 1.0,
+              "mrr@10": 0.7583,
+              "recall@20": 1.0
+            },
+            "rrf": {
+              "questions": 10,
+              "hit@1": 0.5,
+              "hit@3": 0.8,
+              "hit@5": 1.0,
+              "mrr@10": 0.6833,
+              "recall@20": 1.0
+            }
+          }
+        },
+        "flask": {
+          "commit": "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35",
+          "files_indexed": 83,
+          "records_indexed": 1705,
+          "questions": 10,
+          "clipped": {
+            "file": {
+              "records": 83,
+              "clipped": 47,
+              "chars": 589406,
+              "chars_kept": 86328
+            },
+            "function": {
+              "records": 1622,
+              "clipped": 81,
+              "chars": 824235,
+              "chars_kept": 568234
+            }
+          },
+          "orderings": {
+            "vector": {
+              "questions": 10,
+              "hit@1": 0.7,
+              "hit@3": 0.8,
+              "hit@5": 0.9,
+              "mrr@10": 0.78,
+              "recall@20": 1.0
+            },
+            "keyword": {
+              "questions": 10,
+              "hit@1": 0.6,
+              "hit@3": 1.0,
+              "hit@5": 1.0,
+              "mrr@10": 0.7833,
+              "recall@20": 1.0
+            },
+            "rrf": {
+              "questions": 10,
+              "hit@1": 0.8,
+              "hit@3": 0.8,
+              "hit@5": 1.0,
+              "mrr@10": 0.845,
+              "recall@20": 1.0
+            }
+          }
+        }
+      },
+      "overall": {
+        "vector": {
+          "questions": 20,
+          "hit@1": 0.65,
+          "hit@3": 0.75,
+          "hit@5": 0.9,
+          "mrr@10": 0.74,
+          "recall@20": 1.0
+        },
+        "keyword": {
+          "questions": 20,
+          "hit@1": 0.6,
+          "hit@3": 0.95,
+          "hit@5": 1.0,
+          "mrr@10": 0.7708,
+          "recall@20": 1.0
+        },
+        "rrf": {
+          "questions": 20,
+          "hit@1": 0.65,
+          "hit@3": 0.8,
+          "hit@5": 1.0,
+          "mrr@10": 0.7642,
+          "recall@20": 1.0
+        }
+      },
+      "per_question": {
+        "vector": {
+          "itsd-01": {
+            "hit@5": 0.0,
+            "rr": 0.1667,
+            "recall@20": 1.0
+          },
+          "itsd-03": {
+            "hit@5": 1.0,
+            "rr": 0.3333,
+            "recall@20": 1.0
+          },
+          "itsd-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-07": {
+            "hit@5": 1.0,
+            "rr": 0.25,
+            "recall@20": 1.0
+          },
+          "itsd-09": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-15": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-17": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-19": {
+            "hit@5": 1.0,
+            "rr": 0.25,
+            "recall@20": 1.0
+          },
+          "flask-01": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-03": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-07": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-09": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-15": {
+            "hit@5": 0.0,
+            "rr": 0.1,
+            "recall@20": 1.0
+          },
+          "flask-17": {
+            "hit@5": 1.0,
+            "rr": 0.2,
+            "recall@20": 1.0
+          },
+          "flask-19": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          }
+        },
+        "keyword": {
+          "itsd-01": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-03": {
+            "hit@5": 1.0,
+            "rr": 0.3333,
+            "recall@20": 1.0
+          },
+          "itsd-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-07": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-09": {
+            "hit@5": 1.0,
+            "rr": 0.25,
+            "recall@20": 1.0
+          },
+          "itsd-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-15": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "itsd-17": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-19": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-01": {
+            "hit@5": 1.0,
+            "rr": 0.3333,
+            "recall@20": 1.0
+          },
+          "flask-03": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-07": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-09": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-13": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-15": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-17": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-19": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          }
+        },
+        "rrf": {
+          "itsd-01": {
+            "hit@5": 1.0,
+            "rr": 0.25,
+            "recall@20": 1.0
+          },
+          "itsd-03": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "itsd-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-07": {
+            "hit@5": 1.0,
+            "rr": 0.25,
+            "recall@20": 1.0
+          },
+          "itsd-09": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "itsd-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-15": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-17": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-19": {
+            "hit@5": 1.0,
+            "rr": 0.3333,
+            "recall@20": 1.0
+          },
+          "flask-01": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-03": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-07": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-09": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-15": {
+            "hit@5": 1.0,
+            "rr": 0.25,
+            "recall@20": 1.0
+          },
+          "flask-17": {
+            "hit@5": 1.0,
+            "rr": 0.2,
+            "recall@20": 1.0
+          },
+          "flask-19": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          }
+        }
+      },
+      "cache": {
+        "hits": 1944,
+        "misses": 0,
+        "file": "83740e8f2943e607.json"
+      }
+    },
+    {
+      "config": "mean-2000",
+      "pooling": "mean",
+      "max_chars": 2000,
+      "split": "dev",
+      "repos": {
+        "itsdangerous": {
+          "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
+          "files_indexed": 15,
+          "records_indexed": 159,
+          "questions": 10,
+          "clipped": {
+            "file": {
+              "records": 15,
+              "clipped": 8,
+              "chars": 59558,
+              "chars_kept": 22487
+            },
+            "function": {
+              "records": 144,
+              "clipped": 8,
+              "chars": 90647,
+              "chars_kept": 63547
+            }
+          },
+          "orderings": {
+            "vector": {
+              "questions": 10,
+              "hit@1": 0.6,
+              "hit@3": 0.8,
+              "hit@5": 0.9,
+              "mrr@10": 0.7083,
+              "recall@20": 1.0
+            },
+            "keyword": {
+              "questions": 10,
+              "hit@1": 0.6,
+              "hit@3": 0.9,
+              "hit@5": 1.0,
+              "mrr@10": 0.7583,
+              "recall@20": 1.0
+            },
+            "rrf": {
+              "questions": 10,
+              "hit@1": 0.5,
+              "hit@3": 0.8,
+              "hit@5": 1.0,
+              "mrr@10": 0.6833,
+              "recall@20": 1.0
+            }
+          }
+        },
+        "flask": {
+          "commit": "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35",
+          "files_indexed": 83,
+          "records_indexed": 1705,
+          "questions": 10,
+          "clipped": {
+            "file": {
+              "records": 83,
+              "clipped": 45,
+              "chars": 589406,
+              "chars_kept": 109728
+            },
+            "function": {
+              "records": 1622,
+              "clipped": 52,
+              "chars": 824235,
+              "chars_kept": 600406
+            }
+          },
+          "orderings": {
+            "vector": {
+              "questions": 10,
+              "hit@1": 0.7,
+              "hit@3": 0.7,
+              "hit@5": 0.9,
+              "mrr@10": 0.7561,
+              "recall@20": 1.0
+            },
+            "keyword": {
+              "questions": 10,
+              "hit@1": 0.7,
+              "hit@3": 1.0,
+              "hit@5": 1.0,
+              "mrr@10": 0.85,
+              "recall@20": 1.0
+            },
+            "rrf": {
+              "questions": 10,
+              "hit@1": 0.7,
+              "hit@3": 0.9,
+              "hit@5": 1.0,
+              "mrr@10": 0.8033,
+              "recall@20": 1.0
+            }
+          }
+        }
+      },
+      "overall": {
+        "vector": {
+          "questions": 20,
+          "hit@1": 0.65,
+          "hit@3": 0.75,
+          "hit@5": 0.9,
+          "mrr@10": 0.7322,
+          "recall@20": 1.0
+        },
+        "keyword": {
+          "questions": 20,
+          "hit@1": 0.65,
+          "hit@3": 0.95,
+          "hit@5": 1.0,
+          "mrr@10": 0.8042,
+          "recall@20": 1.0
+        },
+        "rrf": {
+          "questions": 20,
+          "hit@1": 0.6,
+          "hit@3": 0.85,
+          "hit@5": 1.0,
+          "mrr@10": 0.7433,
+          "recall@20": 1.0
+        }
+      },
+      "per_question": {
+        "vector": {
+          "itsd-01": {
+            "hit@5": 0.0,
+            "rr": 0.1667,
+            "recall@20": 1.0
+          },
+          "itsd-03": {
+            "hit@5": 1.0,
+            "rr": 0.3333,
+            "recall@20": 1.0
+          },
+          "itsd-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-07": {
+            "hit@5": 1.0,
+            "rr": 0.3333,
+            "recall@20": 1.0
+          },
+          "itsd-09": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-15": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-17": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-19": {
+            "hit@5": 1.0,
+            "rr": 0.25,
+            "recall@20": 1.0
+          },
+          "flask-01": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-03": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-07": {
+            "hit@5": 1.0,
+            "rr": 0.2,
+            "recall@20": 1.0
+          },
+          "flask-09": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-15": {
+            "hit@5": 0.0,
+            "rr": 0.1111,
+            "recall@20": 1.0
+          },
+          "flask-17": {
+            "hit@5": 1.0,
+            "rr": 0.25,
+            "recall@20": 1.0
+          },
+          "flask-19": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          }
+        },
+        "keyword": {
+          "itsd-01": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-03": {
+            "hit@5": 1.0,
+            "rr": 0.3333,
+            "recall@20": 1.0
+          },
+          "itsd-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-07": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-09": {
+            "hit@5": 1.0,
+            "rr": 0.25,
+            "recall@20": 1.0
+          },
+          "itsd-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-15": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "itsd-17": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-19": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-01": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-03": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-07": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-09": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-13": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-15": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-17": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-19": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          }
+        },
+        "rrf": {
+          "itsd-01": {
+            "hit@5": 1.0,
+            "rr": 0.25,
+            "recall@20": 1.0
+          },
+          "itsd-03": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "itsd-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-07": {
+            "hit@5": 1.0,
+            "rr": 0.25,
+            "recall@20": 1.0
+          },
+          "itsd-09": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "itsd-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-15": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-17": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "itsd-19": {
+            "hit@5": 1.0,
+            "rr": 0.3333,
+            "recall@20": 1.0
+          },
+          "flask-01": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-03": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-05": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-07": {
+            "hit@5": 1.0,
+            "rr": 0.5,
+            "recall@20": 1.0
+          },
+          "flask-09": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-11": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-13": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          },
+          "flask-15": {
+            "hit@5": 1.0,
+            "rr": 0.3333,
+            "recall@20": 1.0
+          },
+          "flask-17": {
+            "hit@5": 1.0,
+            "rr": 0.2,
+            "recall@20": 1.0
+          },
+          "flask-19": {
+            "hit@5": 1.0,
+            "rr": 1.0,
+            "recall@20": 1.0
+          }
+        }
+      },
+      "cache": {
+        "hits": 1944,
+        "misses": 0,
+        "file": "98332e737349d50a.json"
+      }
+    }
+  ],
+  "ledger_after": {
+    "estimated_neurons": 1464.3728,
+    "calls": 177,
+    "day": "2026-10-09"
+  }
+}

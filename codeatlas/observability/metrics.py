@@ -41,6 +41,23 @@ STAGE_LATENCY = Histogram(
     buckets=LATENCY_BUCKETS,
 )
 
+SEMANTIC_INDEX_OUTCOMES = Counter(
+    "codeatlas_semantic_index_total",
+    "Attempts to build a semantic index, by how each one ended",
+    ["outcome"],
+)
+
+SEMANTIC_INDEX_NEURONS = Counter(
+    "codeatlas_semantic_index_estimated_neurons_total",
+    "Estimated neurons spent building semantic indexes (an estimate, not the provider's own figure)",
+)
+
+RETRIEVAL_FALLBACK = Counter(
+    "codeatlas_retrieval_fallback_total",
+    "Questions answered from the fallback index instead of the semantic one, by reason",
+    ["reason"],
+)
+
 RETRIEVAL_HIT_RATE = Gauge(
     "codeatlas_retrieval_hit_rate",
     "Share of eval questions with a relevant file in the top k results (from eval/results, not live traffic)",

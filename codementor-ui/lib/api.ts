@@ -35,7 +35,13 @@ export async function askQuestionStream(
         onToken: (token: string) => void;
         onStatus: (status: string) => void;
         onAgent?: (agent: { name: string; detail: string }) => void;
-        onDone: (data: { citations: string[]; reasoning_steps: string[]; agents_used?: string[] }) => void;
+        onDone: (data: {
+            citations: string[];
+            reasoning_steps: string[];
+            agents_used?: string[];
+            /** Set when keyword search stood in for semantic search; shown under the answer. */
+            retrieval_note?: string;
+        }) => void;
         onError: (error: string) => void;
     },
     mode: AskMode = "fast",
