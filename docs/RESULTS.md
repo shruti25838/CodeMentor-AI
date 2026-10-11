@@ -1184,3 +1184,27 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **reproduced before it was fixed**, with a pytest plugin that makes `dotenv.load_dotenv` a no-op and deletes every `CLOUDFLARE_*`, `OPENAI_API_KEY` and `GROQ_API_KEY` from the environment before any project module is imported. It reproduced the CI failure exactly - the same one test, 893 others passing. **The `.env` file was never read, moved or renamed to do this.**
   **One other place builds a real client, deliberately.** `tests/test_llm_defaults.py` constructs `ChatOpenAI` three times to check that the model name and token budget are passed through, and sets an obviously fake key itself to do so. That is a legitimate use - it is testing the construction - and it depends on nothing ambient, which is why it passed in CI too. The guard added in the next entry makes that intent explicit rather than incidental.
   **No test reaches a real provider.** Nothing in the suite calls a model, and nothing calls Cloudflare: every Cloudflare test passes a fake client into the provider
+
+### Guard: no test may reach a real provider, or depend on one being configured
+- Value: an autouse fixture now clears the provider credentials and disables `.env` loading for **every** test, and building a provider client fails with a message saying what to do instead. The suite reports **903 passed, 1 skipped locally and 903 passed, 1 skipped with no credentials at all** - the two runs are now identical, which is the whole point.
+
+  | what | how it is blocked | why that way |
+  |---|---|---|
+  | `ChatOpenAI` (both the openai and groq paths) | construction raises | construction is what needs the key; by the time the object exists the mistake has been made |
+  | `ChatGroq` | construction raises, if the package is ever added | same |
+  | Cloudflare | the **call** raises, not the construction | several tests build a provider only to read its signature and never embed anything; one built without a fake client is given one that refuses |
+  | credentials in the environment | deleted per test | a test that finds one passes where one is configured and fails where it is not |
+  | `.env` | `load_dotenv` patched out in both places the app calls it | otherwise the first test to touch either puts the whole file back for every test after it |
+
+  **The opt-out is a marker, not an exception list.** Three tests in `test_llm_defaults.py` construct `ChatOpenAI` deliberately, to check that the model name and token budget reach it, and set their own plainly fake key. They carry `@pytest.mark.builds_model_client`. That turns what was an incidental fact - they happened to pass in CI because they supplied a key - into a stated one.
+
+  **Two mistakes made while writing this, both kept as comments in the code.**
+
+  1. **The guard reloaded the file it had just cleared.** `monkeypatch.setattr("codeatlas.app.main.load_dotenv", ...)` *imports* that module to patch it, and importing it runs `load_dotenv()` at module level. Clearing the environment first and patching second put every credential straight back. The patching now happens first, and the main module is only patched if it is already imported.
+  2. **A failing assertion printed a live token.** The obvious way to check the environment is clean is `assert name not in os.environ`; when it fails, pytest renders the entire environment into the report - which put a real `CLOUDFLARE_API_TOKEN` into a terminal. The test now builds a list of **names** and asserts on that, so the worst it can print is a list of variable names. **The token exposed this way was reported for rotation.**
+- Command: `python -m pytest tests/ -q` (903 passed, 1 skipped), and the same suite with `.env` disabled and every provider credential cleared, which is how CI runs it (903 passed, 1 skipped)
+- Dataset/repo: none
+- Date: 2026-10-11
+- Commit: 3143178
+- Notes: **the skip counts differ between the two machines for three reasons, and none of them hides a problem.** Locally: 1 skip, the symlink test in `test_safe_join.py`, which needs privileges Windows does not give. In CI: 4 skips - the two `test_fastembed_provider.py` tests that need the optional `fastembed` package, which CI does not install and this machine has, and the two `test_answer_smoke.py` tests that need cached eval clones under `.codeatlas/eval-repos`, which this machine has from the retrieval evaluation and CI starts without. The symlink test runs on Linux, so it is not among CI's four. 1 + 2 + 2 = the difference exactly, and **they were left alone**: each skip states its condition and would run if the condition were met.
+  **What the guard does not cover.** It does not stop a test making an HTTP request by some other route - `urllib` is not patched, because `tests/test_json_client.py` exercises the stdlib client directly with a fake `urlopen` and blocking it would break a legitimate test. Nothing in the suite does make one; this is a gap in the guard, not a known problem
