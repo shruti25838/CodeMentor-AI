@@ -1135,3 +1135,27 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **failed attempts are counted as calls.** A batch that is retried twice and then gives up reports three calls and all the seconds they took. That is deliberate: a line reading `outcome=failure calls=36 api_seconds=140.0` says something a line reading `calls=0` would hide.
   **`estimated_neurons` on the line is an estimate like every other figure in this file**, and the ledger it comes from has run between about 8% high and about 1.5% low against the dashboard.
   **An over-cap repository logs a line too**, with `calls=0`, although no analysis was attempted. A line saying a repository was skipped and why is more use than silence
+
+### Check: the second dashboard reconciliation, and the range the estimator has actually shown
+- Value: **the dashboard read 376.56 neurons against the ledger's 370.87 estimated - 1.5% low.** This is the first reconciliation of the padding-aware estimator against real spend, and it is close.
+
+  **The dashboard figures, as supplied.** The 24-hour view read **376.56 neurons** for bge-small, in a single bar at **Oct 10 17:15 (UTC-4)**. "Used today" read **0**, because the UTC day had rolled over since. The dev run's roughly 4,400 is outside that 24-hour window and does not appear in it.
+
+  | run | estimated | real | estimator |
+  |---|---|---|---|
+  | dev evaluation, 3 configurations | 4,767.10 | ~4,392 | **8.5% high** |
+  | held-out + order check + validation index | **370.87** | **376.56** | **1.51% low** |
+
+  The 370.87 is three pieces of work in one UTC day: 0.55 for the held-out questions, 94.26 for the sorted-versus-unsorted order check, and 276.06 for the 600-document validation index. The single bar at 17:15 is all three; they ran within about an hour of each other.
+
+  **So the estimator's error has run from about 8% high to about 1.5% low.** It is not a bound in either direction, and the 1.5% low matters more than the 8.5% high: an estimate that can come in *under* real spend means **the budget stop is a courtesy and not a hard limit**. A budget of 2,500 might stop after 2,540 real neurons rather than 2,500.
+
+  **What that does and does not mean.** It does not mean the allowance can be blown through: when the real allowance is gone Cloudflare refuses the call, the refusal falls back to the hash index, and the visitor is told - which is tested and works whether or not the estimate was accurate, and whether or not the ledger survived a restart. The budget stop exists to keep this project inside what it meant to spend, and a few per cent either way is within what it was built for. It should not be described, in this file or anywhere else, as a guarantee.
+
+  **Why the two errors run in opposite directions is not established.** The padding model prices every text in a call at its longest member, which was 8.5% generous on the dev run's 177 calls of mostly long batches, and 1.5% mean on this day's 34 calls - which were dominated by one length-sorted index where padding is almost absent by construction. A plausible reading is that sorted batching removes the slack the model was over-counting, leaving a small genuine under-count from the 3-characters-per-token figure. **Two data points cannot distinguish that from coincidence**, and no further calls were made to find out.
+- Command: the account dashboard, read by hand; `cat .codeatlas/cloudflare-neurons.json` for the ledger. **No call was made to Cloudflare in this task**
+- Dataset/repo: none
+- Date: 2026-10-11
+- Commit: f5e55e0
+- Notes: **both dashboard figures in this file are user-supplied.** The embeddings response carries no usage at all, which is why the ledger exists and why it can only ever be calibrated against a number read by a person from a web page. Both readings are rounded at an unknown precision.
+  **"Used today" reading 0 is the UTC rollover working as intended**, not a lost record: the ledger keeps a dated history and still holds both days
