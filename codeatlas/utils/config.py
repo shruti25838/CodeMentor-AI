@@ -3,6 +3,8 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from codeatlas.services.retrieval.bm25 import DEFAULT_B as DEFAULT_BM25_B
+from codeatlas.services.retrieval.bm25 import DEFAULT_K1 as DEFAULT_BM25_K1
 from codeatlas.services.retrieval.cloudflare_embedder import (
     DEFAULT_CLOUDFLARE_BATCH_SIZE,
     DEFAULT_CLOUDFLARE_COOLDOWN_SECONDS,
@@ -21,6 +23,7 @@ from codeatlas.services.retrieval.fastembed_embedder import (
     DEFAULT_FASTEMBED_BATCH_SIZE,
     DEFAULT_FASTEMBED_MODEL,
 )
+from codeatlas.services.retrieval.fusion import DEFAULT_RRF_K as DEFAULT_BM25_RRF_K
 
 # A reasoning model spends part of its output budget on reasoning before it writes anything
 # the user sees. Measured against openai/gpt-oss-20b with a short question: a budget of 64
@@ -113,6 +116,16 @@ class AppConfig:
     embed_prefix_metadata: bool = True
     hash_lowercase: bool = False
     hash_subtokens: bool = True
+    # A second, lexical retriever (BM25) whose results are fused into the vector candidates by
+    # reciprocal rank fusion. Off by default, and with it off not one line of the BM25 path
+    # runs, so every number recorded in docs/RESULTS.md still describes the defaults. k1 and b
+    # are Okapi BM25's own parameters; rrf_k damps the top of each list during fusion; depth is
+    # how far down each list is read before fusing, and 0 means "as deep as the vector pool".
+    bm25_enabled: bool = False
+    bm25_k1: float = DEFAULT_BM25_K1
+    bm25_b: float = DEFAULT_BM25_B
+    bm25_rrf_k: int = DEFAULT_BM25_RRF_K
+    bm25_depth: int = 0
     # Settings below apply only when embedding_provider == "fastembed". That provider runs a real
     # transformer on CPU, which is far slower per document than the hash embedder, so it indexes one
     # document at a time, embeds only the first 3,000 characters of each, and gets its own time
@@ -219,6 +232,15 @@ def load_config() -> AppConfig:
         # 0 means no limit, which is what None is inside the app.
         embed_max_chars=_non_negative_int("CODEATLAS_EMBED_MAX_CHARS", 0) or None,
         embed_prefix_metadata=_flag("CODEATLAS_EMBED_PREFIX_METADATA", True),
+        # BM25, off by default. Every one of these is rejected at startup if it is not a number
+        # in range, for the reason _number gives: a retrieval setting that silently reverts
+        # makes a measurement describe something other than what was configured.
+        bm25_enabled=_flag("CODEATLAS_BM25", False),
+        bm25_k1=_positive_float("CODEATLAS_BM25_K1", DEFAULT_BM25_K1),
+        bm25_b=_weight("CODEATLAS_BM25_B", DEFAULT_BM25_B),
+        bm25_rrf_k=_positive_int("CODEATLAS_BM25_RRF_K", DEFAULT_BM25_RRF_K),
+        # 0 is meaningful here, so this one allows it: "however deep the vector pool goes".
+        bm25_depth=_non_negative_int("CODEATLAS_BM25_DEPTH", 0),
         fastembed_model=os.getenv("CODEATLAS_FASTEMBED_MODEL", DEFAULT_FASTEMBED_MODEL),
         fastembed_batch_size=int(os.getenv("CODEATLAS_FASTEMBED_BATCH_SIZE", str(DEFAULT_FASTEMBED_BATCH_SIZE))),
         fastembed_max_chars=int(os.getenv("CODEATLAS_FASTEMBED_MAX_CHARS", "3000")),

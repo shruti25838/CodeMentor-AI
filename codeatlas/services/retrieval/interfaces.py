@@ -20,6 +20,16 @@ class CodeRetriever(ABC):
     def search(self, repo_id: str, query_vector: list[float], top_k: int) -> list[EmbeddingRecord]:
         raise NotImplementedError
 
+    def records(self, repo_id: str) -> list[EmbeddingRecord]:
+        """Every record stored for this repository, in the order it was indexed.
+
+        A vector search returns a neighbourhood; a lexical retriever needs the whole corpus.
+        The default is empty rather than abstract so that a retriever written before this - or
+        one that genuinely cannot enumerate its records - keeps working, with BM25 simply
+        finding nothing for it rather than the search failing.
+        """
+        return []
+
     @abstractmethod
     def has_index(self, repo_id: str) -> bool:
         raise NotImplementedError

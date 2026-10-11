@@ -135,3 +135,95 @@ def test_a_provider_may_still_have_its_own_defaults(monkeypatch) -> None:
     monkeypatch.setenv("CODEATLAS_EMBED_MAX_CHARS", "9999")
     config = replace(load_config(), embedding_provider="cloudflare")
     assert index_options(config)["max_chars"] == config.cloudflare_max_chars == 2000
+
+
+# ---------------------------------------------------------------- BM25, the second retriever
+
+
+BM25_SETTINGS = {
+    "CODEATLAS_BM25": ("bm25_enabled", False),
+    "CODEATLAS_BM25_K1": ("bm25_k1", 1.2),
+    "CODEATLAS_BM25_B": ("bm25_b", 0.75),
+    "CODEATLAS_BM25_RRF_K": ("bm25_rrf_k", 60),
+    "CODEATLAS_BM25_DEPTH": ("bm25_depth", 0),
+}
+
+
+@pytest.fixture(autouse=True)
+def _no_bm25_variables(monkeypatch):
+    for name in BM25_SETTINGS:
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_bm25_is_off_by_default_so_the_recorded_numbers_still_describe_the_defaults() -> None:
+    config = load_config()
+    for name, (field, default) in BM25_SETTINGS.items():
+        assert getattr(config, field) == default, name
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "expected"),
+    [
+        ("CODEATLAS_BM25", "on", True),
+        ("CODEATLAS_BM25", "true", True),
+        ("CODEATLAS_BM25", "off", False),
+        ("CODEATLAS_BM25_K1", "1.5", 1.5),
+        ("CODEATLAS_BM25_K1", "2", 2.0),
+        ("CODEATLAS_BM25_B", "0", 0.0),
+        ("CODEATLAS_BM25_B", "0.4", 0.4),
+        ("CODEATLAS_BM25_B", "1", 1.0),
+        ("CODEATLAS_BM25_RRF_K", "10", 10),
+        ("CODEATLAS_BM25_DEPTH", "0", 0),
+        ("CODEATLAS_BM25_DEPTH", "50", 50),
+    ],
+)
+def test_a_valid_bm25_value_is_taken(monkeypatch, name, value, expected) -> None:
+    monkeypatch.setenv(name, value)
+    assert getattr(load_config(), BM25_SETTINGS[name][0]) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("CODEATLAS_BM25", "maybe"),
+        ("CODEATLAS_BM25", "1.0"),
+        ("CODEATLAS_BM25_K1", "0"),
+        ("CODEATLAS_BM25_K1", "-1"),
+        ("CODEATLAS_BM25_K1", "high"),
+        # b is a fraction of the length normalisation, so outside 0..1 it means nothing.
+        ("CODEATLAS_BM25_B", "1.5"),
+        ("CODEATLAS_BM25_B", "-0.1"),
+        ("CODEATLAS_BM25_B", "most"),
+        ("CODEATLAS_BM25_RRF_K", "0"),
+        ("CODEATLAS_BM25_RRF_K", "-60"),
+        ("CODEATLAS_BM25_RRF_K", "sixty"),
+        ("CODEATLAS_BM25_DEPTH", "-1"),
+        ("CODEATLAS_BM25_DEPTH", "deep"),
+    ],
+)
+def test_an_invalid_bm25_value_stops_the_app(monkeypatch, name, value) -> None:
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError) as raised:
+        load_config()
+    # The variable's name, never the value a deployment set: this message reaches a log.
+    assert name in str(raised.value)
+
+
+def test_the_bm25_settings_reach_the_retrieval_pipeline(monkeypatch) -> None:
+    monkeypatch.setenv("CODEATLAS_BM25", "on")
+    monkeypatch.setenv("CODEATLAS_BM25_K1", "1.8")
+    monkeypatch.setenv("CODEATLAS_BM25_B", "0.3")
+    monkeypatch.setenv("CODEATLAS_BM25_RRF_K", "12")
+    monkeypatch.setenv("CODEATLAS_BM25_DEPTH", "40")
+    from codeatlas.app.di import get_config
+
+    get_config.cache_clear()
+    get_retrieval_settings.cache_clear()
+    try:
+        settings = get_retrieval_settings()
+        assert settings.bm25_enabled is True
+        assert (settings.bm25_k1, settings.bm25_b) == (1.8, 0.3)
+        assert (settings.bm25_rrf_k, settings.bm25_depth) == (12, 40)
+    finally:
+        get_config.cache_clear()
+        get_retrieval_settings.cache_clear()

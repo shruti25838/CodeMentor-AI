@@ -50,6 +50,12 @@ class FaissCodeRetriever(CodeRetriever):
                 results.append(repo_index.records[idx])
         return results
 
+    def records(self, repo_id: str) -> list[EmbeddingRecord]:
+        """The stored records, in index order. The list identity changes when a repo is reindexed,
+        which is what lets a lexical index built from it know it is stale."""
+        repo_index = self._indexes.get(repo_id)
+        return [] if repo_index is None else repo_index.records
+
     def has_index(self, repo_id: str) -> bool:
         return repo_id in self._indexes
 

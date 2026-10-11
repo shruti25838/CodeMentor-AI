@@ -219,6 +219,11 @@ def get_retrieval_settings() -> RetrievalSettings:
         rerank_subtokens=config.rerank_subtokens,
         drop_stopwords=config.drop_stopwords,
         skip_tests=config.skip_tests,
+        bm25_enabled=config.bm25_enabled,
+        bm25_k1=config.bm25_k1,
+        bm25_b=config.bm25_b,
+        bm25_rrf_k=config.bm25_rrf_k,
+        bm25_depth=config.bm25_depth,
     )
 
 
