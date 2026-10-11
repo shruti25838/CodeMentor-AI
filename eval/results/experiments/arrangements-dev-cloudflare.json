@@ -1,0 +1,176 @@
+{
+  "codementor_commit": "f3e3184-dirty",
+  "questions": "original",
+  "arrangements": {
+    "current": "vector candidates, ordered by keyword overlap (what the server does today)",
+    "bm25": "BM25 over every record, ordered by BM25 score",
+    "vector": "vector candidates, ordered by vector similarity",
+    "rrf": "reciprocal rank fusion of the vector and BM25 rankings",
+    "rrf+keyword": "reciprocal rank fusion of vector and BM25, then ordered by keyword overlap"
+  },
+  "embedder": "cloudflare (cloudflare:@cf/baai/bge-small-en-v1.5:pooling=mean:max_chars=2000, served from the evaluation cache, no API call)",
+  "split": "dev",
+  "candidates": 20,
+  "repos": {
+    "itsdangerous": {
+      "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
+      "files_indexed": 15,
+      "records_indexed": 159,
+      "questions": 10,
+      "arrangements": {
+        "current": {
+          "questions": 10,
+          "hit@1": 0.6,
+          "hit@3": 0.9,
+          "hit@5": 1.0,
+          "mrr@10": 0.7583,
+          "recall@20": 1.0,
+          "recall@candidates(20)": 1.0
+        },
+        "bm25": {
+          "questions": 10,
+          "hit@1": 0.6,
+          "hit@3": 0.7,
+          "hit@5": 0.8,
+          "mrr@10": 0.6633,
+          "recall@20": 0.9,
+          "recall@candidates(20)": 0.9
+        },
+        "vector": {
+          "questions": 10,
+          "hit@1": 0.6,
+          "hit@3": 0.8,
+          "hit@5": 0.9,
+          "mrr@10": 0.7083,
+          "recall@20": 1.0,
+          "recall@candidates(20)": 1.0
+        },
+        "rrf": {
+          "questions": 10,
+          "hit@1": 0.6,
+          "hit@3": 0.7,
+          "hit@5": 0.9,
+          "mrr@10": 0.7,
+          "recall@20": 1.0,
+          "recall@candidates(20)": 1.0
+        },
+        "rrf+keyword": {
+          "questions": 10,
+          "hit@1": 0.5,
+          "hit@3": 0.8,
+          "hit@5": 0.9,
+          "mrr@10": 0.6417,
+          "recall@20": 1.0,
+          "recall@candidates(20)": 1.0
+        }
+      }
+    },
+    "flask": {
+      "commit": "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35",
+      "files_indexed": 83,
+      "records_indexed": 1705,
+      "questions": 10,
+      "arrangements": {
+        "current": {
+          "questions": 10,
+          "hit@1": 0.7,
+          "hit@3": 1.0,
+          "hit@5": 1.0,
+          "mrr@10": 0.85,
+          "recall@20": 1.0,
+          "recall@candidates(20)": 1.0
+        },
+        "bm25": {
+          "questions": 10,
+          "hit@1": 0.9,
+          "hit@3": 0.9,
+          "hit@5": 0.9,
+          "mrr@10": 0.9,
+          "recall@20": 1.0,
+          "recall@candidates(20)": 1.0
+        },
+        "vector": {
+          "questions": 10,
+          "hit@1": 0.7,
+          "hit@3": 0.7,
+          "hit@5": 0.9,
+          "mrr@10": 0.7561,
+          "recall@20": 1.0,
+          "recall@candidates(20)": 1.0
+        },
+        "rrf": {
+          "questions": 10,
+          "hit@1": 0.7,
+          "hit@3": 0.8,
+          "hit@5": 1.0,
+          "mrr@10": 0.7833,
+          "recall@20": 1.0,
+          "recall@candidates(20)": 1.0
+        },
+        "rrf+keyword": {
+          "questions": 10,
+          "hit@1": 0.7,
+          "hit@3": 0.9,
+          "hit@5": 1.0,
+          "mrr@10": 0.8083,
+          "recall@20": 1.0,
+          "recall@candidates(20)": 1.0
+        }
+      }
+    }
+  },
+  "overall": {
+    "current": {
+      "questions": 20,
+      "hit@1": 0.65,
+      "hit@3": 0.95,
+      "hit@5": 1.0,
+      "mrr@10": 0.8042,
+      "recall@20": 1.0,
+      "recall@candidates(20)": 1.0
+    },
+    "bm25": {
+      "questions": 20,
+      "hit@1": 0.75,
+      "hit@3": 0.8,
+      "hit@5": 0.85,
+      "mrr@10": 0.7817,
+      "recall@20": 0.95,
+      "recall@candidates(20)": 0.95
+    },
+    "vector": {
+      "questions": 20,
+      "hit@1": 0.65,
+      "hit@3": 0.75,
+      "hit@5": 0.9,
+      "mrr@10": 0.7322,
+      "recall@20": 1.0,
+      "recall@candidates(20)": 1.0
+    },
+    "rrf": {
+      "questions": 20,
+      "hit@1": 0.65,
+      "hit@3": 0.75,
+      "hit@5": 0.95,
+      "mrr@10": 0.7417,
+      "recall@20": 1.0,
+      "recall@candidates(20)": 1.0
+    },
+    "rrf+keyword": {
+      "questions": 20,
+      "hit@1": 0.6,
+      "hit@3": 0.85,
+      "hit@5": 0.95,
+      "mrr@10": 0.725,
+      "recall@20": 1.0,
+      "recall@candidates(20)": 1.0
+    }
+  },
+  "seconds": 3.0,
+  "cache": {
+    "file": "98332e737349d50a.json",
+    "vectors": 1805,
+    "hits": 1944,
+    "embedded": 0
+  }
+}

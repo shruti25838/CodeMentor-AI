@@ -102,3 +102,56 @@ class CachingEmbeddingService(EmbeddingService):
 
 def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+class MissingVectorError(RuntimeError):
+    """An offline run needed a vector that was never paid for. Says how many, never which text."""
+
+
+class OfflineVectorCache(EmbeddingService):
+    """Serve vectors from the cache and never call anything.
+
+    `CachingEmbeddingService` falls through to a real provider on a miss, which is right when a
+    run is allowed to spend. An experiment that is allowed to spend *nothing* needs the opposite
+    default: a miss has to stop the run and say so, because the alternative is a silent API call
+    against a free allowance, or - worse - an invented vector and a measurement of nothing.
+
+    It is constructed with a signature rather than an inner embedder, because there is no inner
+    embedder: the signature is what the index records, and it must match what built the vectors.
+    """
+
+    def __init__(self, path: Path, signature: str) -> None:
+        self._path = Path(path)
+        self._signature = signature
+        data = json.loads(self._path.read_text(encoding="utf-8"))
+        self._vectors: dict[str, list[float]] = {
+            k: v for k, v in data.get("vectors", {}).items() if isinstance(v, list)
+        }
+        self.hits = 0
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def __len__(self) -> int:
+        return len(self._vectors)
+
+    def signature(self) -> str:
+        return self._signature
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        keys = [_digest(text) for text in texts]
+        missing = sum(1 for key in keys if key not in self._vectors)
+        if missing:
+            raise MissingVectorError(
+                f"{missing} of {len(texts)} texts are not in {self._path.name}. This run is offline and "
+                f"will not call the provider; re-run the evaluation that paid for them, or allow spending."
+            )
+        self.hits += len(texts)
+        return [self._vectors[key] for key in keys]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.embed_texts([text])[0]
+
+    def known(self, texts: list[str]) -> list[bool]:
+        return [_digest(text) in self._vectors for text in texts]
