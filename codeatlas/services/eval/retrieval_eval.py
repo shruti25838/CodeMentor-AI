@@ -29,6 +29,7 @@ from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever
 from codeatlas.services.retrieval.fastembed_embedder import FastEmbedEmbeddingService
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService
 from codeatlas.services.retrieval.indexing import CodeIndexService
+from codeatlas.services.retrieval.record_format import DEFAULT_WINDOW_CHARS, DEFAULT_WINDOW_OVERLAP, WHOLE
 from codeatlas.services.retrieval.sentence_transformer_embedder import SentenceTransformerEmbeddingService
 
 # The splits a question can be in. "dev" is what settings are chosen on; "test" is the original
@@ -104,6 +105,11 @@ class IndexSettings:
     max_chars: int | None = None
     prefix_metadata: bool = False
     batch_size: int = 64
+    # What a record is; see services/retrieval/record_format.py. "whole" is today's and is what
+    # every recorded number was measured with.
+    record_format: str = WHOLE
+    window_chars: int = DEFAULT_WINDOW_CHARS
+    window_overlap: int = DEFAULT_WINDOW_OVERLAP
 
 
 @dataclass(frozen=True)
@@ -166,6 +172,9 @@ def evaluate_set(
         max_chars=settings.index.max_chars,
         prefix_metadata=settings.index.prefix_metadata,
         batch_size=settings.index.batch_size,
+        record_format=settings.index.record_format,
+        window_chars=settings.index.window_chars,
+        window_overlap=settings.index.window_overlap,
     )
     indexer.index_repository(repository, parsed)
     answers = AnswerService(retriever=retriever, embedder=embedder, llm=None, settings=settings.retrieval)

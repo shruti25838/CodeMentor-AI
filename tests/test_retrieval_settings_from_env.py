@@ -227,3 +227,69 @@ def test_the_bm25_settings_reach_the_retrieval_pipeline(monkeypatch) -> None:
     finally:
         get_config.cache_clear()
         get_retrieval_settings.cache_clear()
+
+
+# ---------------------------------------------------------------- what a record is
+
+
+RECORD_SETTINGS = {
+    "CODEATLAS_RECORD_FORMAT": ("record_format", "whole"),
+    "CODEATLAS_RECORD_WINDOW_CHARS": ("record_window_chars", 2000),
+    "CODEATLAS_RECORD_WINDOW_OVERLAP": ("record_window_overlap", 200),
+}
+
+
+@pytest.fixture(autouse=True)
+def _no_record_variables(monkeypatch):
+    for name in RECORD_SETTINGS:
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_the_record_format_defaults_to_the_one_that_was_measured() -> None:
+    config = load_config()
+    for name, (field, default) in RECORD_SETTINGS.items():
+        assert getattr(config, field) == default, name
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "expected"),
+    [
+        ("CODEATLAS_RECORD_FORMAT", "structured", "structured"),
+        ("CODEATLAS_RECORD_FORMAT", "STRUCTURED", "structured"),
+        ("CODEATLAS_RECORD_FORMAT", " whole ", "whole"),
+        ("CODEATLAS_RECORD_WINDOW_CHARS", "1500", 1500),
+        ("CODEATLAS_RECORD_WINDOW_OVERLAP", "0", 0),
+    ],
+)
+def test_a_valid_record_value_is_taken(monkeypatch, name, value, expected) -> None:
+    monkeypatch.setenv(name, value)
+    assert getattr(load_config(), RECORD_SETTINGS[name][0]) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("CODEATLAS_RECORD_FORMAT", "chunks"),
+        ("CODEATLAS_RECORD_FORMAT", "windows"),
+        ("CODEATLAS_RECORD_WINDOW_CHARS", "0"),
+        ("CODEATLAS_RECORD_WINDOW_CHARS", "-100"),
+        ("CODEATLAS_RECORD_WINDOW_CHARS", "big"),
+        ("CODEATLAS_RECORD_WINDOW_OVERLAP", "-1"),
+        ("CODEATLAS_RECORD_WINDOW_OVERLAP", "some"),
+    ],
+)
+def test_an_invalid_record_value_stops_the_app(monkeypatch, name, value) -> None:
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError) as raised:
+        load_config()
+    message = str(raised.value)
+    assert name in message or "record format" in message.lower()
+
+
+def test_the_default_format_does_not_change_the_embedder_signature(monkeypatch) -> None:
+    """An existing index must stay readable, which means its signature must not move."""
+    from codeatlas.app.di import build_embedder
+
+    assert build_embedder(load_config()).signature() == "hash:384:lowercase=0:subtokens=1"
+    monkeypatch.setenv("CODEATLAS_RECORD_FORMAT", "structured")
+    assert build_embedder(load_config()).signature().endswith("|records=structured")

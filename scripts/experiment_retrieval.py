@@ -51,6 +51,11 @@ from codeatlas.services.eval.vector_cache import OfflineVectorCache, cache_key  
 from codeatlas.services.parsing.tree_sitter_parser import TreeSitterAstParser  # noqa: E402
 from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever  # noqa: E402
 from codeatlas.services.retrieval.indexing import CodeIndexService  # noqa: E402
+from codeatlas.services.retrieval.record_format import (  # noqa: E402
+    RECORD_FORMATS,
+    WHOLE,
+    with_record_format,
+)
 
 DEFAULT_SETS = [ROOT / "eval" / "questions" / "itsdangerous.json", ROOT / "eval" / "questions" / "flask.json"]
 HOLDOUT2_SETS = [
@@ -74,7 +79,17 @@ def offline_cloudflare(app_config, cache_dir: Path) -> tuple[OfflineVectorCache,
     return OfflineVectorCache(path, signature), settings.max_chars
 
 
-def evaluate(question_files, embedder, split: str, max_chars: int | None, arrangements, label: str) -> dict:
+def evaluate(
+    question_files,
+    embedder,
+    split: str,
+    max_chars: int | None,
+    arrangements,
+    label: str,
+    record_format: str,
+    window_chars: int,
+    window_overlap: int,
+) -> dict:
     retrieval = get_retrieval_settings()
     config = get_config()
     depth = max(RANKED_DEPTH, RECALL_DEPTH, retrieval.candidates)
@@ -102,6 +117,9 @@ def evaluate(question_files, embedder, split: str, max_chars: int | None, arrang
             max_chars=max_chars,
             prefix_metadata=config.embed_prefix_metadata,
             batch_size=64,
+            record_format=record_format,
+            window_chars=window_chars,
+            window_overlap=window_overlap,
         ).index_repository(repository, parsed)
         built = Arrangements.build(retriever, embedder, retrieval, repository.repo_id)
 
@@ -129,6 +147,7 @@ def evaluate(question_files, embedder, split: str, max_chars: int | None, arrang
     return {
         "embedder": label,
         "split": split,
+        "record_format": record_format,
         "candidates": retrieval.candidates,
         "repos": repos,
         "overall": {n: _metrics(pairs[n], pools[n], retrieval.candidates) for n in arrangements},
@@ -173,7 +192,7 @@ def _commit() -> str:
 
 def print_results(result: dict) -> None:
     print(f"\nembedder: {result['embedder']}")
-    print(f"split: {result['split']}, candidate pool {result['candidates']}")
+    print(f"split: {result['split']}, records {result['record_format']}, candidate pool {result['candidates']}")
     recall_key = f"recall@candidates({result['candidates']})"
     header = (
         f"  {'arrangement':<14}{'n':>4}{'hit@1':>8}{'hit@3':>8}{'hit@5':>8}"
@@ -192,6 +211,9 @@ def print_results(result: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--embedder", choices=["hash", "cloudflare"], default="hash")
+    parser.add_argument("--record-format", choices=RECORD_FORMATS, default=WHOLE)
+    parser.add_argument("--window-chars", type=int, help="default: the clip, or 2000 when there is none")
+    parser.add_argument("--window-overlap", type=int, default=200)
     parser.add_argument("--split", choices=SPLITS, default="dev")
     parser.add_argument("--questions", choices=["original", "holdout2"], default="original")
     parser.add_argument("--json", type=Path, help="write the result here")
@@ -221,7 +243,20 @@ def main() -> int:
     files = HOLDOUT2_SETS if args.questions == "holdout2" else DEFAULT_SETS
     arrangements = tuple(args.arrangements or ARRANGEMENTS)
     started = time.perf_counter()
-    result = evaluate(files, embedder, args.split, max_chars, arrangements, label)
+    embedder = with_record_format(embedder, args.record_format)
+    window_chars = args.window_chars or max_chars or 2000
+    print(f"record format: {args.record_format} (window {window_chars}, overlap {args.window_overlap})")
+    result = evaluate(
+        files,
+        embedder,
+        args.split,
+        max_chars,
+        arrangements,
+        label,
+        args.record_format,
+        window_chars,
+        args.window_overlap,
+    )
     result = {
         "codementor_commit": _commit(),
         "questions": args.questions,

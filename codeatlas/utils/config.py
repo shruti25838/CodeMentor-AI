@@ -24,6 +24,12 @@ from codeatlas.services.retrieval.fastembed_embedder import (
     DEFAULT_FASTEMBED_MODEL,
 )
 from codeatlas.services.retrieval.fusion import DEFAULT_RRF_K as DEFAULT_BM25_RRF_K
+from codeatlas.services.retrieval.record_format import (
+    DEFAULT_WINDOW_CHARS,
+    DEFAULT_WINDOW_OVERLAP,
+    WHOLE,
+    validate_record_format,
+)
 
 # A reasoning model spends part of its output budget on reasoning before it writes anything
 # the user sees. Measured against openai/gpt-oss-20b with a short question: a budget of 64
@@ -126,6 +132,14 @@ class AppConfig:
     bm25_b: float = DEFAULT_BM25_B
     bm25_rrf_k: int = DEFAULT_BM25_RRF_K
     bm25_depth: int = 0
+    # What a record is: "whole" (one per file, one per function, each entire) or "structured"
+    # (file records become a header, long functions become overlapping windows). The default is
+    # today's, and it is what every number in docs/RESULTS.md was measured with. The format is
+    # part of the embedder's signature when it is not the default, so an index built under one
+    # is refused by a server running the other rather than searched and answered wrongly.
+    record_format: str = WHOLE
+    record_window_chars: int = DEFAULT_WINDOW_CHARS
+    record_window_overlap: int = DEFAULT_WINDOW_OVERLAP
     # Settings below apply only when embedding_provider == "fastembed". That provider runs a real
     # transformer on CPU, which is far slower per document than the hash embedder, so it indexes one
     # document at a time, embeds only the first 3,000 characters of each, and gets its own time
@@ -241,6 +255,9 @@ def load_config() -> AppConfig:
         bm25_rrf_k=_positive_int("CODEATLAS_BM25_RRF_K", DEFAULT_BM25_RRF_K),
         # 0 is meaningful here, so this one allows it: "however deep the vector pool goes".
         bm25_depth=_non_negative_int("CODEATLAS_BM25_DEPTH", 0),
+        record_format=validate_record_format(os.getenv("CODEATLAS_RECORD_FORMAT", WHOLE)),
+        record_window_chars=_positive_int("CODEATLAS_RECORD_WINDOW_CHARS", DEFAULT_WINDOW_CHARS),
+        record_window_overlap=_non_negative_int("CODEATLAS_RECORD_WINDOW_OVERLAP", DEFAULT_WINDOW_OVERLAP),
         fastembed_model=os.getenv("CODEATLAS_FASTEMBED_MODEL", DEFAULT_FASTEMBED_MODEL),
         fastembed_batch_size=int(os.getenv("CODEATLAS_FASTEMBED_BATCH_SIZE", str(DEFAULT_FASTEMBED_BATCH_SIZE))),
         fastembed_max_chars=int(os.getenv("CODEATLAS_FASTEMBED_MAX_CHARS", "3000")),

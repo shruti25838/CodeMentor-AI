@@ -178,7 +178,7 @@ class AnswerService:
             records = [r for r in records if not _is_test_path(r.metadata.get("path", ""))]
         # Reranking reads each candidate's snippet from disk.
         with stage("rerank"):
-            ranked = self._rerank(question, records, query_vector)[:top_k]
+            ranked = _dedupe_windows(self._rerank(question, records, query_vector))[:top_k]
         return ranked, fallback_note(reason) if reason else ""
 
     def _fuse_lexical(
@@ -352,6 +352,26 @@ class AnswerService:
             scored.append((score, record))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [record for _, record in scored]
+
+
+def _dedupe_windows(records: list[EmbeddingRecord]) -> list[EmbeddingRecord]:
+    """One result per function: the best-ranked window of it, in the order ranking put them.
+
+    Under the "structured" record format a long function becomes several overlapping windows,
+    so without this a visitor could be shown three slices of one function and nothing else.
+    Records written under "whole" carry no `function_id`, so for them this is provably a
+    no-op - the list comes back in the same order, unchanged, and a test says so.
+    """
+    seen: set[str] = set()
+    kept: list[EmbeddingRecord] = []
+    for record in records:
+        function_id = record.metadata.get("function_id")
+        if function_id is not None:
+            if function_id in seen:
+                continue
+            seen.add(function_id)
+        kept.append(record)
+    return kept
 
 
 def _location_list(snippets: list[Snippet]) -> list[str]:

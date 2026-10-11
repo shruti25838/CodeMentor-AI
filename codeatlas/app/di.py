@@ -21,6 +21,7 @@ from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever
 from codeatlas.services.retrieval.fastembed_embedder import FastEmbedEmbeddingService
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService
 from codeatlas.services.retrieval.indexing import CodeIndexService
+from codeatlas.services.retrieval.record_format import with_record_format
 from codeatlas.services.retrieval.sentence_transformer_embedder import (
     SentenceTransformerEmbeddingService,
 )
@@ -92,6 +93,10 @@ def build_embedder(config: AppConfig) -> EmbeddingService:
     Every known name is listed here. An unknown name raises rather than falling back to a
     default: a typo must not quietly produce a different kind of vector than the one asked for.
     """
+    return with_record_format(_provider_embedder(config), config.record_format)
+
+
+def _provider_embedder(config: AppConfig) -> EmbeddingService:
     if config.embedding_provider == "hash":
         return HashEmbeddingService(lowercase=config.hash_lowercase, subtokens=config.hash_subtokens)
     if config.embedding_provider == "sentence":
@@ -154,6 +159,7 @@ def index_options(config: AppConfig) -> dict:
             "batch_size": config.fastembed_batch_size,
             "max_chars": config.fastembed_max_chars,
             "prefix_metadata": config.embed_prefix_metadata,
+            **_record_options(config),
         }
     if config.embedding_provider == "cloudflare":
         return {
@@ -163,11 +169,22 @@ def index_options(config: AppConfig) -> dict:
             "batch_size": config.cloudflare_batch_size,
             "max_chars": config.cloudflare_max_chars,
             "prefix_metadata": config.embed_prefix_metadata,
+            **_record_options(config),
         }
     return {
         "timeout_seconds": config.index_timeout_seconds,
         "max_chars": config.embed_max_chars,
         "prefix_metadata": config.embed_prefix_metadata,
+        **_record_options(config),
+    }
+
+
+def _record_options(config: AppConfig) -> dict:
+    """What a record is, for every provider. The same three settings whichever one is running."""
+    return {
+        "record_format": config.record_format,
+        "window_chars": config.record_window_chars,
+        "window_overlap": config.record_window_overlap,
     }
 
 
