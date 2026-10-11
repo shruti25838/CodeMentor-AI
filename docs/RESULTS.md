@@ -1463,3 +1463,47 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **this entry exists to fix the order of events.** Choosing a configuration after seeing how it does on held-out data is not a held-out measurement at all, and the only defence against doing it accidentally is to write the choice down first. What follows this entry is two scoring runs and no further tuning.
   **Neither default is being changed by this entry.** `CODEATLAS_RECORD_FORMAT` stays `whole` and `CODEATLAS_BM25` stays off in the committed configuration; the table above is what the held-out runs will be *passed*, not what the server ships. Changing a default is a separate decision that should be made after the held-out numbers, not before them, and `hash` held-out must still print hit@5 0.750 and MRR@10 0.645 until it is.
   **The margins are small and the sample is small.** +0.021 for cloudflare is about one question moving two ranks on 20 questions. +0.081 for hash is larger but rests on ten flask questions. Both are reasons to read the held-out runs as a check rather than a confirmation, and the original held-out split has been scored repeatedly in this file already, which is why a second set was written
+### Check: the chosen configurations on the original held-out split and on holdout2, scored once
+- Value: six runs, each made once, with no tuning after any of them. The configurations are the ones recorded in the decision entry above, which was committed before any of this was run.
+
+  **The original held-out split (20 questions). This is a weak confirmation and should be read as one** — it has been scored in at least six entries in this file since it was written, so it has informed choices before, and a configuration that does well on it is not being tested on code the process has never seen.
+
+  | embedder | configuration | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 |
+  |---|---|---|---|---|---|---|
+  | hash | default: `whole`, no BM25 | 0.600 | 0.650 | 0.750 | 0.645 | 0.800 |
+  | hash | **chosen: `structured` + BM25 fusion** | **0.700** | **0.850** | **0.850** | **0.778** | **1.000** |
+  | cloudflare | default: `whole`, no BM25 | 0.800 | 0.900 | 0.900 | 0.854 | **1.000** |
+  | cloudflare | **chosen: `structured`, no BM25** | **0.850** | 0.900 | 0.900 | **0.873** | 0.950 |
+
+  **holdout2 (20 questions, written for this batch, scored once, never used to choose anything).**
+
+  | embedder | configuration | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 |
+  |---|---|---|---|---|---|---|
+  | hash | default: `whole`, no BM25 | 0.300 | 0.450 | 0.500 | 0.396 | 0.750 |
+  | hash | **chosen: `structured` + BM25 fusion** | **0.500** | **0.550** | **0.750** | **0.576** | **0.850** |
+  | cloudflare | default: `whole`, no BM25 | 0.450 | 0.700 | 0.800 | 0.587 | **0.950** |
+  | cloudflare | **chosen: `structured`, no BM25** | **0.550** | 0.700 | **0.850** | **0.641** | 0.900 |
+
+  Per repository on holdout2:
+
+  | | hash default | hash chosen | cloudflare default | cloudflare chosen |
+  |---|---|---|---|---|
+  | itsdangerous MRR@10 | 0.488 | **0.650** | 0.733 | **0.900** |
+  | flask MRR@10 | 0.303 | **0.502** | 0.440 | **0.382** |
+  | flask recall@20 | 0.700 | **0.900** | 0.900 | 0.800 |
+
+  **Three things these numbers say, and the first is the largest finding in this batch.**
+
+  **1. A genuinely fresh question set scores far worse than the sets that have been used before.** hash's default falls from MRR 0.645 on the original held-out split to **0.396** on holdout2; cloudflare's falls from 0.854 to **0.587**. Same code, same repositories, same commits, same person writing the questions, same method — twenty questions that had never been looked at. The gap is roughly 0.25 of MRR for both embedders. **The earlier splits flatter this system**, and every retrieval figure recorded in this file before today should be read with that in mind.
+
+  **2. Both chosen configurations are better than today's defaults on both held-out sets.** hash gains +0.133 of MRR on the original split and **+0.180 on holdout2**, with hit@5 +0.100 and +0.250; cloudflare gains +0.019 and +0.054. The improvements are larger on the fresh set than on the stale one, which is the opposite of what overfitting to dev would produce.
+
+  **3. `structured` costs cloudflare recall, on both held-out sets.** recall@20 goes 1.000 → 0.950 on the original split and 0.950 → 0.900 on holdout2, and on holdout2's flask it is 0.900 → 0.800 with MRR falling 0.440 → 0.382. A file record that is a header is a worse net for a question whose words appear in a body the header does not quote. The overall figures still improve because the ranking gains more than the pool loses, but **this is a real cost, it is in the direction a reader should worry about, and it only shows up outside dev** — on dev, cloudflare's recall@20 was 1.000 under both formats and could not have revealed it
+- Command: `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/experiment_retrieval.py --embedder hash --split test --record-format structured --arrangement rrf+keyword --json eval/results/experiments/chosen-heldout-hash.json`; `python scripts/experiment_retrieval.py --embedder cloudflare --split test --record-format structured --arrangement current --json eval/results/experiments/chosen-heldout-cloudflare.json`; then for holdout2, `--questions holdout2 --split holdout2` with `--record-format whole --arrangement current` and with each embedder's chosen pair, writing `eval/results/experiments/holdout2-{default,chosen}-{hash,cloudflare}.json`; the two cloudflare holdout2 runs added `--allow-spend`. `python -m pytest tests/ -q` -> 1056 passed, 1 skipped; `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; `ruff check codeatlas/ tests/ scripts/experiment_retrieval.py`, `ruff format codeatlas/ tests/ --check`; in `codementor-ui`: `npm test` (51 passed), `npm run lint` (0 errors, same 28 warnings as before)
+- Dataset/repo: `eval/questions/*.json` held-out split, and `eval/questions/holdout2/*.json`, all at 672971d66a2e and d73fa1cdcbd8
+- Date: 2026-10-11
+- Commit: 5edf06e
+- Notes: **cost: 0.67 estimated neurons.** The cloudflare held-out run under `structured` needed nothing — the dev run had already paid for every document vector, and the twenty held-out questions were paid for at b1bbfd4 — so it was made through the offline cache with **0 texts embedded**. The two holdout2 runs needed only the twenty new question vectors: planned 0.88, recorded 0.67, over 20 calls. **Today's ledger: 250.59 estimated neurons of the 2,500 budget, 46 calls, 2,249.41 remaining.**
+  **What "scored once" means here, precisely.** Each of the six runs was made one time and its numbers are the ones above. `--arrangement` was passed on every held-out run so that the arrangements *not* chosen were never computed on held-out data — they would have cost nothing, which is exactly why not computing them had to be deliberate. No configuration was changed after any run, and this entry is the first time any holdout2 number appears anywhere.
+  **No default has been changed.** `CODEATLAS_RECORD_FORMAT` is still `whole` and `CODEATLAS_BM25` is still off in the committed configuration. Changing them is a decision for after this entry, not part of it, and `scripts/eval_retrieval.py --split test` still prints the recorded 0.750 / 0.645.
+  **Limits.** Twenty questions per set: one question is 0.05 of a hit rate, so hash's +0.250 of hit@5 on holdout2 is five questions and cloudflare's +0.050 is one. holdout2's questions are mine, written from the same two repositories by the same method as the others, so "fresh" means unseen by the tuning process, not independent of me. And the per-repository split is uncomfortable: on holdout2 the chosen cloudflare configuration is much better on itsdangerous (0.733 → 0.900) and worse on flask (0.440 → 0.382), so the overall gain of 0.054 is an average over two repositories that disagree
