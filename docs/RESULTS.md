@@ -1065,3 +1065,27 @@ Every number or claim here comes from a command that can be re-run.
 - Commit: afb686f
 - Notes: **the limit is validated at startup** like the other numeric settings, so `CODEATLAS_CLOUDFLARE_INDEX_TIMEOUT_SECONDS=0` stops the app rather than producing an index that times out instantly.
   **Neurons already spent are not refunded by a timeout.** The documents embedded before the limit was reached were paid for and their vectors are discarded with the half-built index, so a repository that times out repeatedly would cost repeatedly. The circuit breaker does not help here either, since a timeout is not a failed call. **The real protection is the document cap**, which is unchanged at 600 pending a latency measurement from Render
+
+### Check: what a full 1,705-document flask index would cost, with the cap left at 600
+- Value: **463.86 estimated neurons in 35 calls**, length-sorted. The cap stays at 600 until Render's latency has been measured; this is what lifting it would buy and cost.
+
+  | flask at the pinned commit, clip 2,000, batch 50 | estimated neurons | calls | per document |
+  |---|---|---|---|
+  | all 1,705 documents, file order | 1,442.08 | 35 | 0.846 |
+  | **all 1,705 documents, length-sorted** | **463.86** | **35** | **0.272** |
+  | capped at 600, length-sorted | 276.06 | 12 | 0.460 |
+
+  **Lifting the cap would cost 68% more for 2.8 times the documents.** 463.86 against 276.06 is +187.80 neurons, and the per-document price falls from 0.460 to 0.272 - a capped index is *worse* value per document, because the 600 it keeps are the first 600 in file order and include a disproportionate share of the long, expensive file records.
+
+  | | full index | capped at 600 |
+  |---|---|---|
+  | inside the 2,500 budget | 5.4 repositories | 9.1 |
+  | inside the 10,000 allowance | 21.6 | 36.2 |
+
+  **The number that decides it is 35 calls against 12, not the neurons.** At the 180 s index limit, 35 calls allow about five seconds each; 12 allow fifteen. Whether a free Render instance can finish 35 round trips to `api.cloudflare.com` inside 180 s is exactly the unmeasured thing, and a timeout now costs the neurons already spent and keeps nothing. **That, not the budget, is why the cap stays at 600.**
+- Command: `CodeIndexService.documents` over the pinned flask checkout, priced by `neuron_ledger.estimated_neurons(..., batch_size=50)`
+- Dataset/repo: https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35, 83 files and 1,622 functions, 1,705 prepared documents at clip 2,000
+- Date: 2026-10-11
+- Commit: 6933310
+- Notes: **no neurons were spent on this and no call was made** - it counts characters and prices them with the committed estimator. The estimator itself has run between about 8% high and about 1.5% low against the dashboard, so read 463.86 as roughly 430 to 470 real.
+  **A caveat on "capped at 600".** The cap keeps the first 600 documents in the order they are collected - every file record first, then functions - so a capped flask index is all 83 file records plus the first 517 functions. That is not a random sample, and the retrieval numbers in this file were all measured on the **uncapped** corpus. What a capped index would score has not been measured
