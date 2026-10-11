@@ -1404,3 +1404,40 @@ Every number or claim here comes from a command that can be re-run.
   **The window size follows the clip.** `CODEATLAS_RECORD_WINDOW_CHARS` defaults to 2,000, but a provider with a per-document clip uses that clip instead, because a window larger than the clip would be embedded by its opening alone and the windowing would achieve nothing. Overlap defaults to 200 characters.
   **A known inconsistency, stated rather than fixed.** Under `structured` the embedder sees a file's *header*, but the keyword rerank and BM25 still read the file's *whole text* from disk, because `_record_text` is shared with the `whole` format. So a file record can be found by the embedder on its header and then ranked on its body. That is arguably the right trade - the rerank is local and free, and reading only the header would throw away the words a question actually matches - but it does mean "the file record is a header" is true of the vector and not of the ordering. Changing it would alter the `whole` format too, which this batch is not allowed to do.
   **Limits.** The header extraction is regex-based rather than parsed: the docstring rule looks for a leading triple-quoted string after comments and blank lines, and the import rule matches a line beginning with `import`, `from`, `#include`, `using`, `require`, `package`, `use` or `extern crate`. That covers the two Python repositories this is evaluated on and will be partly wrong elsewhere — a language whose imports are written differently simply contributes none. Signatures come from the Tree-sitter parse, which is already language-aware, so those are as good as the parser is
+### Check: the structured record format on the dev split, for hash and for cloudflare
+- Value: the same keep rule as before — **keep a change only if overall dev MRR@10 rises and dev hit@5 does not fall** — against the same baseline, `whole` records with the current pipeline.
+
+  **Every configuration measured on dev, 20 questions.** The four rows in bold are the ones the server could actually be set to; the others are arrangements the experiment scores but the server has no mode for.
+
+  | records | arrangement | hash MRR@10 | hash hit@5 | cloudflare MRR@10 | cloudflare hit@5 |
+  |---|---|---|---|---|---|
+  | **whole** | **current** (baseline) | **0.662** | **0.750** | **0.804** | **1.000** |
+  | **whole** | **rrf+keyword** | **0.717** | **0.900** | **0.725** | **0.950** |
+  | **structured** | **current** | **0.690** | **0.750** | **0.825** | **1.000** |
+  | **structured** | **rrf+keyword** | **0.743** | **0.900** | **0.794** | **0.950** |
+  | whole | bm25 alone | 0.782 | 0.850 | 0.782 | 0.850 |
+  | whole | vector alone | 0.479 | 0.550 | 0.732 | 0.900 |
+  | whole | rrf, no rerank | 0.651 | 0.800 | 0.742 | 0.950 |
+  | structured | bm25 alone | 0.763 | 0.850 | 0.763 | 0.850 |
+  | structured | vector alone | 0.488 | 0.600 | 0.733 | 0.900 |
+  | structured | rrf, no rerank | 0.649 | 0.800 | 0.721 | 0.950 |
+
+  **For hash, `structured` helps on its own** (0.662 → 0.690, hit@5 unchanged) **and helps more on top of BM25 fusion** (0.717 → 0.743, hit@5 0.900). **For cloudflare, `structured` helps and BM25 fusion does not**: 0.804 → 0.825 with the current pipeline, while every arrangement involving BM25 falls below the baseline.
+
+  Per repository, where the result actually lives:
+
+  | | hash whole | hash structured | cloudflare whole | cloudflare structured |
+  |---|---|---|---|---|
+  | itsdangerous MRR@10 (current) | 0.692 | **0.746** | 0.758 | **0.817** |
+  | flask MRR@10 (current) | 0.633 | 0.635 | 0.850 | 0.833 |
+  | flask recall@20 (rrf+keyword) | 0.900 | **1.000** | 1.000 | 1.000 |
+
+  **The structured gain is itsdangerous, not flask** — the opposite of BM25's, whose whole gain was flask. itsdangerous is eight small files where a file record under `whole` is already short enough not to be clipped, so the gain there is the *header*: a record that is the path, the docstring and the signatures rather than the whole module. On flask the current-pipeline figure moves by 0.002 and 0.017 in opposite directions, which is noise
+- Command: `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/experiment_retrieval.py --embedder hash --split dev --record-format structured --json eval/results/experiments/structured-dev-hash.json` (3.2 s); `python scripts/experiment_retrieval.py --embedder cloudflare --split dev --record-format structured --plan-only`, then the same with `--allow-spend --json eval/results/experiments/structured-dev-cloudflare.json` (19.0 s); `python -m pytest tests/ -q` -> 1056 passed, 1 skipped; `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.750**, MRR@10 **0.645**, unchanged; `ruff check codeatlas/ tests/ scripts/experiment_retrieval.py`, `ruff format codeatlas/ tests/ --check`; in `codementor-ui`: `npm test` (51 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, same 28 warnings as before)
+- Dataset/repo: `eval/questions/*.json`, the 20 dev questions, at 672971d66a2e and d73fa1cdcbd8
+- Date: 2026-10-11
+- Commit: c92cb5b
+- Notes: **cost, in full.** hash: nothing. cloudflare `whole`: nothing — every vector was already in the cache. cloudflare `structured`: a record format changes every document, so its vectors cannot be cached in advance. **Planned 313.88 estimated neurons over 333 uncached texts of 2,039; actually recorded 249.92 over 26 calls.** The ledger read **0.00 spent today** before the run and **249.92 of the 2,500 budget** after, leaving 2,250.08. The shortfall against the plan is duplicate texts, which the cache embeds once and the plan counted twice — the same effect recorded at 149dac1. A rerun of the structured evaluation would cost nothing.
+  **How the spending was gated.** `--allow-spend` is the only way this script pays for anything, and before it sends a byte it prints the plan and the ledger, then refuses to start if the estimate would take the day past the budget. `--plan-only` prints the same and sends nothing; that is the run that produced the 313.88 figure above, and it was read before `--allow-spend` was used.
+  **A consistency check worth keeping.** `structured` adds 175 documents (1,864 → 2,039) but only 333 of them are new *texts*. Most windows of a short function are byte-identical to the whole function, so the cache already had them — which is a check that windowing leaves a short function alone, arrived at from the billing side rather than from a test.
+  **Two things this does not show.** First, 20 questions: a 0.021 difference in cloudflare MRR is about one question moving two ranks, and the `structured`-vs-`whole` gap for hash on flask is noise in both directions. Second, **the arrangements in the unbolded rows are not settings** — `bm25` alone scores highest of anything for hash (0.782) and there is no way to configure the server to do it, because BM25 was built as a second retriever fused with the first, which is what the four bold rows measure. Adding a BM25-only mode would be a different change and it is not in this batch
