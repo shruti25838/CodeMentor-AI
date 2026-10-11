@@ -1,5 +1,5 @@
 {
-  "codementor_commit": "f3e3184-dirty",
+  "codementor_commit": "7046e81-dirty",
   "questions": "original",
   "arrangements": {
     "current": "vector candidates, ordered by keyword overlap (what the server does today)",
@@ -8,8 +8,9 @@
     "rrf": "reciprocal rank fusion of the vector and BM25 rankings",
     "rrf+keyword": "reciprocal rank fusion of vector and BM25, then ordered by keyword overlap"
   },
-  "embedder": "cloudflare (cloudflare:@cf/baai/bge-small-en-v1.5:pooling=mean:max_chars=2000, served from the evaluation cache, no API call)",
+  "embedder": "cloudflare (cloudflare:@cf/baai/bge-small-en-v1.5:pooling=mean:max_chars=2000:prefix=1:stopwords=1, served from the evaluation cache, no API call)",
   "split": "dev",
+  "record_format": "whole",
   "candidates": 20,
   "repos": {
     "itsdangerous": {
@@ -166,10 +167,9 @@
       "recall@candidates(20)": 1.0
     }
   },
-  "seconds": 3.0,
+  "seconds": 2.7,
   "cache": {
     "file": "98332e737349d50a.json",
-    "vectors": 1805,
     "hits": 1944,
     "embedded": 0
   }

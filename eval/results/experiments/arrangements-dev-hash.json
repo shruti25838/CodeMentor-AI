@@ -1,5 +1,5 @@
 {
-  "codementor_commit": "f3e3184-dirty",
+  "codementor_commit": "7046e81-dirty",
   "questions": "original",
   "arrangements": {
     "current": "vector candidates, ordered by keyword overlap (what the server does today)",
@@ -10,6 +10,7 @@
   },
   "embedder": "hash (HashEmbeddingService, 384 dims, subtokens, hashed bag of words, not semantic)",
   "split": "dev",
+  "record_format": "whole",
   "candidates": 20,
   "repos": {
     "itsdangerous": {
@@ -166,5 +167,5 @@
       "recall@candidates(20)": 0.95
     }
   },
-  "seconds": 3.6
+  "seconds": 3.2
 }

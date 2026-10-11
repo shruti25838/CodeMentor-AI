@@ -198,6 +198,15 @@ class RecordFormatEmbedder(EmbeddingService):
     def embed_query(self, text: str) -> list[float]:
         return self._inner.embed_query(text)
 
+    def known(self, texts: list[str]) -> list[bool]:
+        """Which of these the wrapped embedder has already paid for, when it keeps a cache.
+
+        Passed through so that costing a run does not have to know whether a record format
+        wrapper is in the way. An embedder with no cache has paid for nothing.
+        """
+        inner_known = getattr(self._inner, "known", None)
+        return inner_known(texts) if inner_known else [False] * len(texts)
+
 
 def with_record_format(embedder: EmbeddingService, record_format: str) -> EmbeddingService:
     """The embedder, with the record format in its signature unless the format is the default."""

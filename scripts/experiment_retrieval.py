@@ -4,10 +4,20 @@
         --json eval/results/experiments/bm25-dev-hash.json
     python scripts/experiment_retrieval.py --embedder cloudflare --split dev --json ...
 
-**Neither embedder calls an API.** `hash` is local arithmetic. `cloudflare` reads vectors from
-the evaluation cache and **refuses to call the provider**: a text that is not already paid for
-stops the run and says how many are missing, never which. That is the whole reason this script
-exists separately from `eval_cloudflare.py`, which is allowed to spend.
+**By default neither embedder calls an API.** `hash` is local arithmetic. `cloudflare` reads
+vectors from the evaluation cache and **refuses to call the provider**: a text that is not
+already paid for stops the run and says how many are missing, never which.
+
+A record format other than `whole` changes every document, so its vectors are not in the cache
+and cannot be. `--allow-spend` is the deliberate way to pay for them, and it:
+
+* prints the estimate and today's ledger **before anything is sent**, counting only the texts
+  that are not already cached;
+* refuses to start if the estimate would take today's total past the budget, so a run that
+  cannot finish does not spend half a budget discovering that;
+* writes every vector it pays for into the same cache, so a rerun is free.
+
+`--plan-only` prints the estimate and sends nothing.
 
 Results go to `eval/results/experiments/`, a folder nothing else reads - not the `/metrics`
 gauges, which glob `eval/results/*.json` and are not recursive, and not the Benchmarks summary,
@@ -47,8 +57,11 @@ from codeatlas.services.eval.retrieval_eval import (  # noqa: E402
     describe_embedder,
     load_question_set,
 )
-from codeatlas.services.eval.vector_cache import OfflineVectorCache, cache_key  # noqa: E402
+from codeatlas.services.eval.vector_cache import CachingEmbeddingService, OfflineVectorCache, cache_key  # noqa: E402
 from codeatlas.services.parsing.tree_sitter_parser import TreeSitterAstParser  # noqa: E402
+from codeatlas.services.qa.answer_service import _without_stopwords  # noqa: E402
+from codeatlas.services.retrieval import neuron_ledger  # noqa: E402
+from codeatlas.services.retrieval.cloudflare_embedder import CloudflareEmbeddingService  # noqa: E402
 from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever  # noqa: E402
 from codeatlas.services.retrieval.indexing import CodeIndexService  # noqa: E402
 from codeatlas.services.retrieval.record_format import (  # noqa: E402
@@ -56,6 +69,7 @@ from codeatlas.services.retrieval.record_format import (  # noqa: E402
     WHOLE,
     with_record_format,
 )
+from codeatlas.utils.config import load_cloudflare_credentials  # noqa: E402
 
 DEFAULT_SETS = [ROOT / "eval" / "questions" / "itsdangerous.json", ROOT / "eval" / "questions" / "flask.json"]
 HOLDOUT2_SETS = [
@@ -75,8 +89,70 @@ def offline_cloudflare(app_config, cache_dir: Path) -> tuple[OfflineVectorCache,
     settings = cloudflare_settings(app_config)
     key = cache_key(settings.model, settings.pooling, settings.max_chars)
     path = cache_dir / f"{__import__('hashlib').sha256(key.encode('utf-8')).hexdigest()[:16]}.json"
-    signature = f"cloudflare:{settings.model}:pooling={settings.pooling}:max_chars={settings.max_chars}"
+    # The same string the real provider reports, so the two cloudflare result files describe
+    # their embedder identically and nobody has to work out whether they are the same vectors.
+    signature = (
+        f"cloudflare:{settings.model}:pooling={settings.pooling}:max_chars={settings.max_chars}"
+        f":prefix={int(settings.prefix_metadata)}:stopwords={int(settings.drop_stopwords)}"
+    )
     return OfflineVectorCache(path, signature), settings.max_chars
+
+
+def spending_cloudflare(app_config, cache_dir: Path) -> CachingEmbeddingService:
+    """The cached embedder that *is* allowed to call the provider when a text is not cached."""
+    settings = cloudflare_settings(app_config)
+    return CachingEmbeddingService(
+        inner=CloudflareEmbeddingService(credentials=load_cloudflare_credentials(), settings=settings),
+        key=cache_key(settings.model, settings.pooling, settings.max_chars),
+        cache_dir=cache_dir,
+    )
+
+
+def plan(question_files, embedder, max_chars, record_format, window_chars, window_overlap, split) -> dict:
+    """What this run would cost: the texts it needs that are not already paid for.
+
+    Counts documents and questions exactly as the run will send them, and batches them the way
+    the run will, because a batch is billed at the length of its longest member.
+    """
+    config = get_config()
+    batch_size = cloudflare_settings(config).batch_size
+    unpaid: list[str] = []
+    documents = 0
+    for path in question_files:
+        question_set = load_question_set(path)
+        root = checkout(question_set, REPO_CACHE)
+        repository = Repository(
+            repo_id=f"eval-{question_set.name}",
+            name=question_set.name,
+            url=question_set.repo_url,
+            root_path=str(root.resolve()),
+            ingested_at=datetime.now(UTC),
+            commit=question_set.commit,
+        )
+        parsed = TreeSitterAstParser().parse_repository(repository)
+        indexer = CodeIndexService(
+            embedder=embedder,
+            retriever=FaissCodeRetriever(),
+            max_chars=max_chars,
+            prefix_metadata=config.embed_prefix_metadata,
+            batch_size=batch_size,
+            record_format=record_format,
+            window_chars=window_chars,
+            window_overlap=window_overlap,
+        )
+        texts, _ = indexer.documents(repository, parsed)
+        questions = [
+            _without_stopwords(q.question) if config.drop_stopwords else q.question
+            for q in question_set.select(split)
+        ]
+        both = texts + questions
+        unpaid.extend(text for text, known in zip(both, embedder.known(both)) if not known)
+        documents += len(texts)
+    return {
+        "documents": documents,
+        "uncached_texts": len(unpaid),
+        "estimated_neurons": round(neuron_ledger.estimated_neurons(unpaid, batch_size), 2),
+    }
 
 
 def evaluate(
@@ -214,6 +290,12 @@ def main() -> int:
     parser.add_argument("--record-format", choices=RECORD_FORMATS, default=WHOLE)
     parser.add_argument("--window-chars", type=int, help="default: the clip, or 2000 when there is none")
     parser.add_argument("--window-overlap", type=int, default=200)
+    parser.add_argument(
+        "--allow-spend",
+        action="store_true",
+        help="let the cloudflare run pay for vectors it does not have (prints the estimate first)",
+    )
+    parser.add_argument("--plan-only", action="store_true", help="print the estimate and send nothing")
     parser.add_argument("--split", choices=SPLITS, default="dev")
     parser.add_argument("--questions", choices=["original", "holdout2"], default="original")
     parser.add_argument("--json", type=Path, help="write the result here")
@@ -231,7 +313,16 @@ def main() -> int:
     args = parser.parse_args()
 
     app_config = get_config()
-    if args.embedder == "cloudflare":
+    budget = app_config.cloudflare_daily_neurons
+    if args.embedder == "cloudflare" and args.allow_spend:
+        if load_cloudflare_credentials() is None:
+            print("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must both be set (.env is read).")
+            return 1
+        embedder = spending_cloudflare(app_config, args.vector_cache)
+        max_chars = cloudflare_settings(app_config).max_chars
+        label = f"cloudflare ({embedder.signature()}, allowed to spend)"
+        print(f"cloudflare cache: {embedder.path.name}, clip {max_chars}")
+    elif args.embedder == "cloudflare":
         embedder, max_chars = offline_cloudflare(app_config, args.vector_cache)
         label = f"cloudflare ({embedder.signature()}, served from the evaluation cache, no API call)"
         print(f"offline cloudflare cache: {embedder.path.name}, {len(embedder)} vectors, clip {max_chars}")
@@ -246,6 +337,26 @@ def main() -> int:
     embedder = with_record_format(embedder, args.record_format)
     window_chars = args.window_chars or max_chars or 2000
     print(f"record format: {args.record_format} (window {window_chars}, overlap {args.window_overlap})")
+
+    if args.embedder == "cloudflare" and (args.allow_spend or args.plan_only):
+        estimate = plan(
+            files, embedder, max_chars, args.record_format, window_chars, args.window_overlap, args.split
+        )
+        spent = neuron_ledger.spent_today()
+        print(
+            f"\nplan: {estimate['documents']} documents, {estimate['uncached_texts']} not yet cached, "
+            f"{estimate['estimated_neurons']:.2f} estimated neurons"
+        )
+        print(
+            f"ledger: {spent.estimated_neurons:.2f} spent today (UTC {neuron_ledger.today()}), "
+            f"budget {budget:g}, remaining {max(budget - spent.estimated_neurons, 0.0):.2f}"
+        )
+        if args.plan_only:
+            print("plan only: nothing was sent")
+            return 0
+        if not neuron_ledger.affordable(estimate["estimated_neurons"], budget):
+            print("refusing to start: this run would take today's total past the budget.")
+            return 1
     result = evaluate(
         files,
         embedder,
@@ -265,7 +376,23 @@ def main() -> int:
         "seconds": round(time.perf_counter() - started, 1),
     }
     if args.embedder == "cloudflare":
-        result["cache"] = {"file": embedder.path.name, "vectors": len(embedder), "hits": embedder.hits, "embedded": 0}
+        inner = embedder.inner if hasattr(embedder, "inner") else embedder
+        result["cache"] = {
+            "file": inner.path.name,
+            "hits": inner.hits,
+            "embedded": getattr(inner, "misses", 0),
+        }
+        if args.allow_spend:
+            after = neuron_ledger.spent_today()
+            result["ledger_after"] = {
+                "estimated_neurons": round(after.estimated_neurons, 4),
+                "calls": after.calls,
+                "day": neuron_ledger.today(),
+            }
+            print(
+                f"\nledger after this run: {after.estimated_neurons:.2f} estimated neurons, "
+                f"{after.calls} calls; remaining {max(budget - after.estimated_neurons, 0.0):.2f}"
+            )
 
     print_results(result)
     print(f"\nseconds: {result['seconds']}")
