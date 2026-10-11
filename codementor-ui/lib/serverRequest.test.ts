@@ -163,6 +163,7 @@ test("api.ts sends indexing and chat once, and retries only read requests", () =
         "/repos": "READ",
         "/dependencies/graph": "READ",
         "/eval/stats": "READ",
+        "/eval/benchmarks": "READ",
     });
     assert.ok(!/\bfetch\(/.test(source), "every request goes through serverFetch");
 });
