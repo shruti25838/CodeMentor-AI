@@ -259,17 +259,23 @@ class AnswerService:
             return None
         return retriever, embedder
 
+    def snippets_for(self, records: list[EmbeddingRecord], total_max_chars: int | None = None) -> list[Snippet]:
+        """The code these records point at, each clipped, and only as many as the budget allows.
+
+        Public because grounded chat builds its prompt and its citations from one list of
+        snippets, and reaching into a private method to get it would let the two drift apart.
+        """
+        budget = self._total_max_chars if total_max_chars is None else total_max_chars
+        return fit_snippets([self._snippet_for(record) for record in records], budget)
+
     def answer(self, repo_id: str, question: str, top_k: int = 5) -> GroundedAnswer:
         self._logger.info("Answering question for repo %s", repo_id)
         records, note = self.retrieve_with_note(repo_id, question, top_k)
         self._logger.info("Retrieved %s records for repo %s", len(records), repo_id)
         # Read each record's code once, capped, and keep only what fits the context budget.
         # Citations describe exactly these snippets, so the answer and the citations agree.
-        snippets = fit_snippets(
-            [self._snippet_for(record) for record in records],
-            self._total_max_chars,
-        )
-        citations = [_citation_text(snippet) for snippet in snippets]
+        snippets = self.snippets_for(records)
+        citations = [citation_text(snippet) for snippet in snippets]
         answer_lines = self._format_answer(question, snippets)
         reasoning = [
             f"Embedded query for repo_id={repo_id}.",
@@ -379,7 +385,7 @@ def _location_list(snippets: list[Snippet]) -> list[str]:
     return ["Top relevant locations:"] + [f"- {snippet.location}" for snippet in snippets]
 
 
-def _citation_text(snippet: Snippet) -> str:
+def citation_text(snippet: Snippet) -> str:
     """One citation line: the snippet's own location and its first two lines."""
     preview = " ".join(snippet.text.splitlines()[:2]).strip()
     if len(preview) > 200:

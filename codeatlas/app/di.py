@@ -257,6 +257,25 @@ def get_answer_service() -> AnswerService:
 
 
 @lru_cache
+def get_retrieval_service() -> AnswerService:
+    """The same retrieval as `get_answer_service`, with **no model attached**.
+
+    Grounded chat searches with this and then streams the model itself, so the service it
+    retrieves with must not build a chat client: constructing one needs a credential, and
+    building it here would mean every /ask/stream request - including one for a repository
+    that does not exist - wanted a provider before it could be refused.
+    """
+    return AnswerService(
+        retriever=get_code_retriever(),
+        embedder=get_embedder(),
+        llm=None,
+        settings=get_retrieval_settings(),
+        fallback_retriever=get_fallback_retriever(),
+        fallback_embedder=get_fallback_embedder(),
+    )
+
+
+@lru_cache
 def get_explain_service() -> CodeExplainService:
     return CodeExplainService(state_store=get_repo_state_store(), llm=get_llm_provider().get_chat_model())
 

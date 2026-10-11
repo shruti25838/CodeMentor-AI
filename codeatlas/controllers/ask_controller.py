@@ -3,7 +3,7 @@ import json
 import queue
 import time
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse
 
 from codeatlas.app.di import (
@@ -11,6 +11,7 @@ from codeatlas.app.di import (
     get_conversation_store,
     get_llm_provider,
     get_repo_state_store,
+    get_retrieval_service,
 )
 from codeatlas.controllers.repo_guard import require_known_repo
 from codeatlas.observability.metrics import ERROR_COUNT
@@ -20,7 +21,9 @@ from codeatlas.schemas.ask import AskRequest, AskResponse
 from codeatlas.services.agents.orchestration import ANSWER_ERROR_PREFIX, AgentOrchestrator
 from codeatlas.services.llm.provider import LlmProvider
 from codeatlas.services.memory.conversation import ConversationStore, Turn, format_history
+from codeatlas.services.qa.answer_service import AnswerService
 from codeatlas.services.qa.followup import needs_rewrite, rewrite_question
+from codeatlas.services.qa.grounded_chat import GROUNDED, build_messages, grounded_context, stream_tokens
 from codeatlas.services.state.repo_state_store import RepoStateStore
 
 router = APIRouter(prefix="/ask", tags=["qa"])
@@ -28,6 +31,10 @@ router = APIRouter(prefix="/ask", tags=["qa"])
 # A question with no repository is answered by one model call, not by the agent graph.
 # Recording it as "mentor" would claim an agent ran that did not.
 DIRECT_ANSWER = ("direct",)
+
+# Grounded mode runs no agent graph: one retrieval and one model call. Recording it as
+# "mentor" would name an agent that did not run, which is the mistake fixed at 5d129c7.
+GROUNDED_ANSWER = ("grounded",)
 
 
 # ---------- normal (non-streaming) endpoint ----------
@@ -94,10 +101,12 @@ def _ask(request, orchestrator, llm_provider, timer: StageTimer) -> AskResponse:
 @router.post("/stream")
 async def ask_stream(
     request: AskRequest,
+    http_request: Request,
     orchestrator: AgentOrchestrator = Depends(get_agent_orchestrator),
     llm_provider: LlmProvider = Depends(get_llm_provider),
     state_store: RepoStateStore = Depends(get_repo_state_store),
     conversations: ConversationStore = Depends(get_conversation_store),
+    answers: AnswerService = Depends(get_retrieval_service),
 ):
     # Checked before the stream opens so the client gets a real 404, not a 200 with an error event.
     if request.repo_id:
@@ -156,6 +165,10 @@ async def ask_stream(
                         "timings_ms": timer.as_dict(),
                     }
                 )
+            elif _grounded(http_request) and request.mode != "deep":
+                # ---- Repo mode, grounded: one search, one streamed model call ----
+                async for event in _run_grounded(answers, llm_provider, request, history, timer, conversations, start):
+                    yield _sse(event)
             else:
                 # ---- Repo mode ----
                 if request.mode == "deep":
@@ -231,6 +244,89 @@ async def ask_stream(
 
 
 # ---------- helpers ----------
+
+
+def _grounded(http_request: Request) -> bool:
+    """Whether this server answers repository questions the grounded way. Default: it does not."""
+    return getattr(http_request.app.state.config, "chat_mode", "") == GROUNDED
+
+
+async def _run_grounded(answers, llm_provider, request: AskRequest, history, timer, conversations, start):
+    """One search, then the model's own tokens, forwarded as they arrive.
+
+    Everything the legacy path guarantees still holds: the unknown-repo 404 happened before the
+    stream opened, the question cap was enforced by the request schema, the session history is
+    in the prompt and the answer goes back into it, the semantic fallback note reaches the done
+    event, and a provider refusal becomes the same plain sentence with the files beneath it.
+    """
+    loop = asyncio.get_event_loop()
+    yield {"type": "status", "content": "Retrieving context..."}
+
+    search_question = request.question
+    if needs_rewrite(request.question, history):
+        search_question = await loop.run_in_executor(
+            None,
+            run_timed,
+            timer,
+            lambda: _rewrite(llm_provider, request.question, history),
+        )
+
+    context = await loop.run_in_executor(
+        None,
+        run_timed,
+        timer,
+        lambda: grounded_context(answers, request.repo_id, search_question, top_k=5, total_max_chars=6000),
+    )
+
+    # A reasoning model spends its first seconds on tokens nobody sees, so the visitor is told
+    # the wait has started rather than watching a retrieval message that is already finished.
+    yield {"type": "status", "content": "Reading the code..."}
+
+    llm = llm_provider.get_chat_model()
+    messages = build_messages(request.question, context, history)
+    outcome = None
+    stream = stream_tokens(llm, messages, context, on_first_token=lambda: timer.mark("first_model_token"))
+    while True:
+        item = await loop.run_in_executor(None, lambda it=stream: next(it, None))
+        if item is None:
+            break
+        token, finished = item
+        if finished is not None:
+            outcome = finished
+            break
+        if token:
+            timer.mark("first_token_sent")
+            yield {"type": "token", "content": token}
+
+    answer = outcome.answer if outcome else ""
+    steps = list(context.reasoning_steps)
+    if history:
+        steps.append(f"Used {len(history)} earlier turn(s) of this conversation.")
+    if search_question != request.question:
+        steps.append(f"Searched with the follow-up rewritten as: {search_question}")
+
+    if request.session_id and answer and outcome and not outcome.failed and not outcome.quota:
+        conversations.add(request.session_id, request.repo_id, request.question, answer)
+    tracker.record_query(
+        repo_id=request.repo_id,
+        latency_ms=(time.perf_counter() - start) * 1000,
+        citation_count=len(context.citations),
+        agents_used=list(GROUNDED_ANSWER),
+    )
+    timer.log("ask_stream")
+    yield {
+        "type": "done",
+        "citations": context.citations,
+        "reasoning_steps": steps,
+        "agents_used": list(GROUNDED_ANSWER),
+        "retrieval_note": context.note,
+        "timings_ms": timer.as_dict(),
+    }
+
+
+def _rewrite(llm_provider, question: str, history):
+    with stage("rewrite"):
+        return rewrite_question(llm_provider.get_chat_model(), question, history)
 
 
 async def _run_deep(orchestrator, llm_provider, request: AskRequest, history: list[Turn], timer: StageTimer):

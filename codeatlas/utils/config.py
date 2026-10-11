@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from codeatlas.services.qa.grounded_chat import LEGACY, validate_chat_mode
 from codeatlas.services.retrieval.bm25 import DEFAULT_B as DEFAULT_BM25_B
 from codeatlas.services.retrieval.bm25 import DEFAULT_K1 as DEFAULT_BM25_K1
 from codeatlas.services.retrieval.cloudflare_embedder import (
@@ -140,6 +141,10 @@ class AppConfig:
     record_format: str = WHOLE
     record_window_chars: int = DEFAULT_WINDOW_CHARS
     record_window_overlap: int = DEFAULT_WINDOW_OVERLAP
+    # How a repository question is answered. "legacy" is the agent pipeline every recorded
+    # measurement describes and stays the default. "grounded" is one search and one streamed
+    # model call over the snippets it found. Deep mode is unaffected either way.
+    chat_mode: str = LEGACY
     # Settings below apply only when embedding_provider == "fastembed". That provider runs a real
     # transformer on CPU, which is far slower per document than the hash embedder, so it indexes one
     # document at a time, embeds only the first 3,000 characters of each, and gets its own time
@@ -258,6 +263,7 @@ def load_config() -> AppConfig:
         record_format=validate_record_format(os.getenv("CODEATLAS_RECORD_FORMAT", WHOLE)),
         record_window_chars=_positive_int("CODEATLAS_RECORD_WINDOW_CHARS", DEFAULT_WINDOW_CHARS),
         record_window_overlap=_non_negative_int("CODEATLAS_RECORD_WINDOW_OVERLAP", DEFAULT_WINDOW_OVERLAP),
+        chat_mode=validate_chat_mode(os.getenv("CODEATLAS_CHAT_MODE", LEGACY)),
         fastembed_model=os.getenv("CODEATLAS_FASTEMBED_MODEL", DEFAULT_FASTEMBED_MODEL),
         fastembed_batch_size=int(os.getenv("CODEATLAS_FASTEMBED_BATCH_SIZE", str(DEFAULT_FASTEMBED_BATCH_SIZE))),
         fastembed_max_chars=int(os.getenv("CODEATLAS_FASTEMBED_MAX_CHARS", "3000")),

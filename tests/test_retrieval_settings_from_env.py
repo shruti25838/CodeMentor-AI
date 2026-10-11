@@ -293,3 +293,25 @@ def test_the_default_format_does_not_change_the_embedder_signature(monkeypatch) 
     assert build_embedder(load_config()).signature() == "hash:384:lowercase=0:subtokens=1"
     monkeypatch.setenv("CODEATLAS_RECORD_FORMAT", "structured")
     assert build_embedder(load_config()).signature().endswith("|records=structured")
+
+
+# ---------------------------------------------------------------- how a repository question is answered
+
+
+def test_the_chat_mode_defaults_to_legacy(monkeypatch) -> None:
+    monkeypatch.delenv("CODEATLAS_CHAT_MODE", raising=False)
+    assert load_config().chat_mode == "legacy"
+
+
+@pytest.mark.parametrize("value,expected", [("grounded", "grounded"), ("LEGACY", "legacy"), (" grounded ", "grounded")])
+def test_a_valid_chat_mode_is_taken(monkeypatch, value, expected) -> None:
+    monkeypatch.setenv("CODEATLAS_CHAT_MODE", value)
+    assert load_config().chat_mode == expected
+
+
+@pytest.mark.parametrize("value", ["agents", "fast", "deep", "streaming"])
+def test_an_unknown_chat_mode_stops_the_app(monkeypatch, value) -> None:
+    monkeypatch.setenv("CODEATLAS_CHAT_MODE", value)
+    with pytest.raises(ValueError) as raised:
+        load_config()
+    assert value in str(raised.value)
