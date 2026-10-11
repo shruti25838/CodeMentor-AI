@@ -1,0 +1,119 @@
+{
+  "recorded": "2026-10-11",
+  "model": "groq / openai/gpt-oss-20b",
+  "questions": 2,
+  "weak_check": "Two string tests per answer: is the expected file cited, and is one hand-written word present. No judge model, and nothing reads whether the explanation is correct.",
+  "stopped_early": "",
+  "summary": {
+    "legacy": {
+      "runs": 2,
+      "answered": 2,
+      "passed": 2,
+      "expected_file_cited": 2,
+      "fact_present": 2,
+      "no_answer": 0,
+      "first_token_seconds_median": 7.93,
+      "total_seconds_median": 7.94,
+      "model_calls_total": 4,
+      "tokens_total": 7541,
+      "cited_files_in_prompt": 4,
+      "cited_files_total": 4
+    },
+    "grounded": {
+      "runs": 2,
+      "answered": 2,
+      "passed": 2,
+      "expected_file_cited": 2,
+      "fact_present": 2,
+      "no_answer": 0,
+      "first_token_seconds_median": 8.76,
+      "total_seconds_median": 8.96,
+      "model_calls_total": 2,
+      "tokens_total": 3758,
+      "cited_files_in_prompt": 4,
+      "cited_files_total": 4
+    }
+  },
+  "rows": [
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-1",
+      "chat_mode": "legacy",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 14.921,
+      "total_seconds": 14.931,
+      "model_calls": 2,
+      "tokens": 4073,
+      "citations_total": 2,
+      "cited_in_prompt": 2,
+      "no_answer": false,
+      "agents_used": [
+        "retrieval",
+        "mentor"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-1",
+      "chat_mode": "grounded",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 16.969,
+      "total_seconds": 17.23,
+      "model_calls": 1,
+      "tokens": 2029,
+      "citations_total": 2,
+      "cited_in_prompt": 2,
+      "no_answer": false,
+      "agents_used": [
+        "grounded"
+      ]
+    },
+    {
+      "repo": "flask",
+      "question_id": "flask-2",
+      "chat_mode": "legacy",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 0.934,
+      "total_seconds": 0.954,
+      "model_calls": 2,
+      "tokens": 3468,
+      "citations_total": 2,
+      "cited_in_prompt": 2,
+      "no_answer": false,
+      "agents_used": [
+        "retrieval",
+        "mentor"
+      ]
+    },
+    {
+      "repo": "flask",
+      "question_id": "flask-2",
+      "chat_mode": "grounded",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 0.541,
+      "total_seconds": 0.689,
+      "model_calls": 1,
+      "tokens": 1729,
+      "citations_total": 2,
+      "cited_in_prompt": 2,
+      "no_answer": false,
+      "agents_used": [
+        "grounded"
+      ]
+    }
+  ],
+  "tokens_spent_today": {
+    "input": 13665,
+    "output": 3807,
+    "calls": 9
+  },
+  "seconds": 104.2
+}
