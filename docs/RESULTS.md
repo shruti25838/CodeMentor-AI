@@ -1089,3 +1089,49 @@ Every number or claim here comes from a command that can be re-run.
 - Commit: 6933310
 - Notes: **no neurons were spent on this and no call was made** - it counts characters and prices them with the committed estimator. The estimator itself has run between about 8% high and about 1.5% low against the dashboard, so read 463.86 as roughly 430 to 470 real.
   **A caveat on "capped at 600".** The cap keeps the first 600 documents in the order they are collected - every file record first, then functions - so a capped flask index is all 83 file records plus the first 517 functions. That is not a random sample, and the retrieval numbers in this file were all measured on the **uncapped** corpus. What a capped index would score has not been measured
+
+### Change: one log line and three metrics per semantic analysis, and exactly what a visitor reads
+- Value: every attempt at a semantic index now logs one line and increments one counter, and every question answered from the fallback index is counted by reason.
+
+  ```
+  Semantic index for repo <id>: outcome=ok documents=1705 calls=35 api_seconds=31.5 estimated_neurons=463.86
+  ```
+
+  | field | what it is |
+  |---|---|
+  | `outcome` | one of `ok`, `budget`, `failure`, `breaker`, `timeout`, `cap` |
+  | `documents` | records offered to the embedder, before the cap is applied |
+  | `calls` | API calls made, **including attempts that failed and were retried** |
+  | `api_seconds` | time spent waiting on those calls, successful or not |
+  | `estimated_neurons` | this analysis's share of the ledger estimate |
+
+  | metric | labels |
+  |---|---|
+  | `codeatlas_semantic_index_total` | `outcome` |
+  | `codeatlas_semantic_index_estimated_neurons_total` | none |
+  | `codeatlas_retrieval_fallback_total` | `reason` |
+
+  **Every label is a word from a closed list** - the six outcomes above, and `budget`, `circuit`, `api`, `unindexed`, `cap` for a question. No label can hold a path, a question or a provider's error text, so cardinality is fixed and nothing a visitor typed can reach `/metrics`.
+
+  **Usage is taken twice per analysis**, once before the attempt and once after, so spend left over from an earlier analysis cannot be reported as this one's. `test_one_analysis_is_not_charged_for_the_one_before_it` pins that by handing the reporter a leftover and checking it never reaches the line.
+- Value (what the visitor actually sees): the note is shown **above** the answer, in a small bordered line with an information icon, not inside the collapsed "Reasoning" section - an answer built from the weaker search should say so where the answer is.
+
+  | reason | when | the sentence, in full |
+  |---|---|---|
+  | `budget` | today's estimated spend would pass the budget | *Today's semantic search allowance is used up, so this answer used keyword search.* |
+  | `circuit` | three consecutive failures, during the five-minute cooldown | *Semantic search is briefly unavailable, so this answer used keyword search.* |
+  | `api` | transport error, non-2xx, or a malformed body | *Semantic search did not respond, so this answer used keyword search.* |
+  | `unindexed` | no usable semantic index: over the cap, timed out, or built by a different embedder | *Semantic search is not available for this repository, so this answer used keyword search.* |
+  | `cap` | same sentence; the key is kept for the index-time log | *Semantic search is not available for this repository, so this answer used keyword search.* |
+  | anything unrecognised | a reason added later and not given a sentence | falls back to the `api` sentence |
+
+  **No, the note never appears when the semantic index was used normally.** The note is the empty string on every path where the first-choice index answered, and it is only non-empty where a reason was set - which happens in exactly two places, both of which switch to the fallback index first. `test_the_semantic_index_answers_when_it_can_and_says_nothing` and `test_an_ordinary_answer_carries_no_note` pin it, and with the hash provider there is no fallback pair at all, so the note cannot be produced.
+
+  **No reason names Cloudflare, a neuron, a status code or a provider.** A visitor is told what happened to their answer, not what happened to our budget.
+- Command: `python -m pytest tests/test_semantic_observability.py -q` (25 tests), full suite 894 passed, 1 skipped
+- Dataset/repo: none. Fake embedders and a fake usage reporter; **no Cloudflare call was made in this task**
+- Date: 2026-10-11
+- Commit: 0621511
+- Notes: **failed attempts are counted as calls.** A batch that is retried twice and then gives up reports three calls and all the seconds they took. That is deliberate: a line reading `outcome=failure calls=36 api_seconds=140.0` says something a line reading `calls=0` would hide.
+  **`estimated_neurons` on the line is an estimate like every other figure in this file**, and the ledger it comes from has run between about 8% high and about 1.5% low against the dashboard.
+  **An over-cap repository logs a line too**, with `calls=0`, although no analysis was attempted. A line saying a repository was skipped and why is more use than silence
