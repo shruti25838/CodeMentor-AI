@@ -339,12 +339,29 @@ def test_the_fallback_embedder_is_the_one_the_hash_index_was_built_with() -> Non
 
 
 def test_the_answer_service_is_given_the_fallback_only_when_there_is_one(monkeypatch) -> None:
+    """Built through the real factory, which means the real LlmProvider has to build something.
+
+    CODEATLAS_LLM_PROVIDER=none is what makes that safe: the app answers with its own
+    FallbackChatModel, which needs no key, constructs no client and reaches no network. The
+    earlier version of this test left the provider at its default, so the factory built a
+    ChatOpenAI - which worked on a machine with a .env and failed in CI, where there is none.
+    """
+    from codeatlas.app.di import get_config, get_llm_provider
+    from codeatlas.services.llm.provider import FallbackChatModel
+
     monkeypatch.delenv("CODEATLAS_EMBEDDING_PROVIDER", raising=False)
-    get_answer_service.cache_clear()
+    monkeypatch.setenv("CODEATLAS_LLM_PROVIDER", "none")
+    for cached in (get_config, get_llm_provider, get_answer_service):
+        cached.cache_clear()
     try:
-        assert get_answer_service()._fallback_retriever is None
+        service = get_answer_service()
+        # The provider wraps every model with the metrics callback, so unwrap before checking.
+        assert isinstance(getattr(service._llm, "bound", service._llm), FallbackChatModel)
+        assert service._fallback_retriever is None
+        assert service._fallback_embedder is None
     finally:
-        get_answer_service.cache_clear()
+        for cached in (get_config, get_llm_provider, get_answer_service):
+            cached.cache_clear()
 
 
 # --- the semantic index has its own time limit, and missing it is survivable ---------------
