@@ -86,6 +86,19 @@ NO_CREDENTIALS = (
 RETRYABLE_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 
 
+@dataclass(frozen=True)
+class ApiUsage:
+    """What one stretch of work cost: calls made, seconds spent waiting, neurons estimated.
+
+    Counts and durations only. There is nowhere in here for a document, a question, a URL or a
+    credential to hide, which is the point of it being this small.
+    """
+
+    calls: int = 0
+    seconds: float = 0.0
+    estimated_neurons: float = 0.0
+
+
 class CloudflareUnavailableError(EmbeddingUnavailableError):
     """The API could not be used, for one of the reasons in embedding.REASONS.
 
@@ -140,10 +153,26 @@ class CloudflareEmbeddingService(EmbeddingService):
         self._breaker_lock = threading.Lock()
         self._consecutive_failures = 0
         self._open_until = 0.0
+        # Reset by take_usage(), so a caller measures one stretch of work rather than all time.
+        self._usage = ApiUsage()
 
     @property
     def settings(self) -> CloudflareSettings:
         return self._settings
+
+    def take_usage(self) -> ApiUsage:
+        """What has been spent since the last time this was asked, and start counting again."""
+        with self._breaker_lock:
+            usage, self._usage = self._usage, ApiUsage()
+        return usage
+
+    def _add_usage(self, calls: int = 0, seconds: float = 0.0, neurons: float = 0.0) -> None:
+        with self._breaker_lock:
+            self._usage = ApiUsage(
+                calls=self._usage.calls + calls,
+                seconds=self._usage.seconds + seconds,
+                estimated_neurons=self._usage.estimated_neurons + neurons,
+            )
 
     def signature(self) -> str:
         """Everything that decides the vectors, and nothing else, so the index guard can refuse a mismatch.
@@ -205,11 +234,13 @@ class CloudflareEmbeddingService(EmbeddingService):
         # Counted only after a call that worked. A refused call is not billed, and a call that
         # vanished in transit cannot be counted without inventing the number.
         neuron_ledger.record(estimate, documents=len(batch), path=self._ledger_path)
+        self._add_usage(neurons=estimate)
         return vectors
 
     def _call_with_retries(self, batch: list[str]) -> JsonResponse:
         last = ""
         for attempt in range(self._settings.retries + 1):
+            started = time.monotonic()
             try:
                 response = self._call(batch)
             except JsonClientError as exc:
@@ -218,9 +249,12 @@ class CloudflareEmbeddingService(EmbeddingService):
             else:
                 if response.ok:
                     self._succeeded()
+                    self._add_usage(calls=1, seconds=time.monotonic() - started)
                     return response
                 last = f"HTTP {response.status}"
                 retryable = response.status in RETRYABLE_STATUSES
+            # A failed attempt still cost time and still counts as a call.
+            self._add_usage(calls=1, seconds=time.monotonic() - started)
             self._logger.warning(
                 "Cloudflare embedding call failed (%s) for a batch of %d documents, attempt %d of %d",
                 last,

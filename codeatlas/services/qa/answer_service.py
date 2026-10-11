@@ -14,6 +14,7 @@ from codeatlas.observability.agent_metrics import (
     current_agent,
     record_failure,
 )
+from codeatlas.observability.metrics import RETRIEVAL_FALLBACK
 from codeatlas.observability.timing import stage
 from codeatlas.services.llm.quota import classify_quota, quota_answer
 from codeatlas.services.retrieval.embedding import EmbeddingService, EmbeddingUnavailableError, fallback_note
@@ -147,6 +148,10 @@ class AnswerService:
             with stage("embed_query"):
                 query_vector = embedder.embed_query(question)
 
+        if reason:
+            # The reason is one of a fixed list, so the label can never hold anything a visitor
+            # typed, a path, or a provider's error text.
+            RETRIEVAL_FALLBACK.labels(reason=reason).inc()
         with stage("search"):
             records = retriever.search(repo_id, query_vector, max(top_k, settings.candidates))
         if settings.skip_tests:

@@ -18,9 +18,12 @@ time, not at index time.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from codeatlas.models.parsed_repository import ParsedRepository
 from codeatlas.models.repository import Repository
+from codeatlas.observability.metrics import SEMANTIC_INDEX_NEURONS, SEMANTIC_INDEX_OUTCOMES
 from codeatlas.services.retrieval.embedding import EmbeddingUnavailableError
 from codeatlas.services.retrieval.indexing import CodeIndexService, IndexingTimeoutError
 
@@ -42,6 +45,15 @@ OUTCOMES = (OK, BUDGET, FAILURE, BREAKER, TIMEOUT, CAP)
 _OUTCOME_FOR_REASON = {"budget": BUDGET, "circuit": BREAKER, "api": FAILURE}
 
 
+@dataclass(frozen=True)
+class _Usage:
+    """What the semantic provider reported spending, flattened so this module needs no import of it."""
+
+    calls: int = 0
+    seconds: float = 0.0
+    estimated_neurons: float = 0.0
+
+
 class DualIndexService:
     def __init__(
         self,
@@ -50,6 +62,7 @@ class DualIndexService:
         semantic_name: str,
         max_documents: int,
         fallback_name: str = FALLBACK_NAME,
+        usage: Callable[[], object] | None = None,
     ) -> None:
         self._semantic = semantic
         self._fallback = fallback
@@ -58,6 +71,9 @@ class DualIndexService:
         # A repository bigger than this gets the fallback index only. The cap is on documents,
         # not on files, because a file with forty functions is forty documents to embed.
         self._max_documents = max_documents
+        # What the semantic provider spent, asked for once per analysis. None for a provider
+        # that has nothing to report, which is every provider that does not call an API.
+        self._usage = usage
         self._logger = logging.getLogger(__name__)
 
     @property
@@ -96,39 +112,59 @@ class DualIndexService:
         """
         self._fallback.index_repository(repository, parsed_repo)
         built = [self._fallback_name]
+        documents = self.document_count(parsed_repo)
+        self._take_usage()  # anything left over from an earlier analysis is not this one's
 
         if self.over_cap(parsed_repo):
-            self._logger.info(
-                "Repo %s has %d documents, over the %d the semantic index allows; outcome %s, it has the %s index only",
-                repository.repo_id,
-                self.document_count(parsed_repo),
-                self._max_documents,
-                CAP,
-                self._fallback_name,
-            )
+            self._report(repository.repo_id, CAP, documents)
             return tuple(built)
 
         try:
             self._semantic.index_repository(repository, parsed_repo)
         except EmbeddingUnavailableError as exc:
             # The reason, never the detail: a detail can carry whatever the provider put in it.
-            self._skipped(repository.repo_id, _OUTCOME_FOR_REASON.get(exc.reason, FAILURE))
+            self._semantic.discard(repository.repo_id)
+            self._report(repository.repo_id, _OUTCOME_FOR_REASON.get(exc.reason, FAILURE), documents)
             return tuple(built)
         except IndexingTimeoutError:
             # Deliberately not fatal here, unlike a timeout on the only index there is. The
             # repository already has a working index; taking too long over the second one is a
             # reason to stop building it, not a reason to throw away the analysis and tell a
             # visitor their repository could not be read.
-            self._skipped(repository.repo_id, TIMEOUT)
+            self._semantic.discard(repository.repo_id)
+            self._report(repository.repo_id, TIMEOUT, documents)
             return tuple(built)
 
+        self._report(repository.repo_id, OK, documents)
         return (self._semantic_name, *built)
 
-    def _skipped(self, repo_id: str, outcome: str) -> None:
-        self._logger.warning(
-            "Semantic index for repo %s was not built (%s); it has the %s index only",
+    def _report(self, repo_id: str, outcome: str, documents: int) -> None:
+        """One line per analysis, and the same facts as metrics.
+
+        Counts, seconds, an estimate and one word from a fixed list. No document, no question,
+        no URL, no credential - and the repository id, which is the identifier the rest of the
+        logs already use and is not a name or an address.
+        """
+        usage = self._take_usage()
+        self._logger.info(
+            "Semantic index for repo %s: outcome=%s documents=%d calls=%d api_seconds=%.1f estimated_neurons=%.2f",
             repo_id,
             outcome,
-            self._fallback_name,
+            documents,
+            usage.calls,
+            usage.seconds,
+            usage.estimated_neurons,
         )
-        self._semantic.discard(repo_id)
+        SEMANTIC_INDEX_OUTCOMES.labels(outcome=outcome).inc()
+        if usage.estimated_neurons:
+            SEMANTIC_INDEX_NEURONS.inc(usage.estimated_neurons)
+
+    def _take_usage(self) -> _Usage:
+        if self._usage is None:
+            return _Usage()
+        taken = self._usage()
+        return _Usage(
+            calls=int(getattr(taken, "calls", 0)),
+            seconds=float(getattr(taken, "seconds", 0.0)),
+            estimated_neurons=float(getattr(taken, "estimated_neurons", 0.0)),
+        )

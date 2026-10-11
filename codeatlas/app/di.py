@@ -204,6 +204,9 @@ def get_index_service() -> CodeIndexService | DualIndexService:
         fallback=fallback,
         semantic_name=config.embedding_provider,
         max_documents=config.cloudflare_max_documents,
+        # Only a provider that calls something has anything to report; getattr rather than an
+        # isinstance check so a later provider needs no change here to be counted.
+        usage=getattr(get_embedder(), "take_usage", None),
     )
 
 
