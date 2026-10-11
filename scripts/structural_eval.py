@@ -7,9 +7,15 @@ agree or they do not, and where they do not the reason is printed.
     python scripts/structural_eval.py                 # both splits, both repositories
     python scripts/structural_eval.py --split held-out
     python scripts/structural_eval.py --repo itsdangerous --show-disagreements
+    python scripts/structural_eval.py --json eval/results/structural/all.json
 
 Repositories are pinned by commit and cached under .codeatlas/eval-repos/. Nothing here
 calls a language model.
+
+--json writes the same figures as a result file, so that something which cannot clone the two
+repositories - the benchmarks summary and its test - can still read them. It records the breakdown
+by split, repository and question kind, and every disagreement with `ast`. Only the repository
+subjects the questions already name appear in it; there is no visitor text anywhere near this.
 """
 
 from __future__ import annotations
@@ -223,6 +229,7 @@ def main() -> int:
     parser.add_argument("--split", choices=["development", "held-out", "all"], default="all")
     parser.add_argument("--repo", choices=[*REPOS, "all"], default="all")
     parser.add_argument("--show-disagreements", action="store_true")
+    parser.add_argument("--json", type=Path, metavar="PATH", help="also write the figures to PATH as a result file")
     args = parser.parse_args()
 
     questions = json.loads(QUESTIONS.read_text(encoding="utf-8"))
@@ -252,6 +259,11 @@ def main() -> int:
     disagreements = [s for s in scored if not s.exact]
     print(f"\ntotal wall time {elapsed:.2f}s | {len(disagreements)} of {len(scored)} questions disagree with ast")
 
+    if args.json:
+        args.json.parent.mkdir(parents=True, exist_ok=True)
+        args.json.write_text(json.dumps(as_result(scored, args), indent=2) + "\n", encoding="utf-8")
+        print(f"\nwrote {args.json}")
+
     if args.show_disagreements and disagreements:
         print("\nDisagreements")
         for s in disagreements:
@@ -265,6 +277,67 @@ def main() -> int:
                 print(f"    graph found, ast did not ({len(extra)}): {', '.join(extra[:6])}")
             print(f"    note: {q.get('note', '-')}")
     return 0
+
+
+SPLITS = ("development", "held-out")
+KINDS = ("who_calls", "who_imports", "where_defined")
+
+
+def _group(rows: list[Scored]) -> dict:
+    """The four figures the report prints for a group of questions, as numbers rather than text."""
+    if not rows:
+        return {"questions": 0, "precision": None, "recall": None, "exact": 0}
+    return {
+        "questions": len(rows),
+        "precision": round(sum(r.precision for r in rows) / len(rows), 4),
+        "recall": round(sum(r.recall for r in rows) / len(rows), 4),
+        "exact": sum(1 for r in rows if r.exact),
+    }
+
+
+def as_result(scored: list[Scored], args) -> dict:
+    """The printed report as a result file: the same numbers, plus every disagreement with `ast`."""
+    disagreements = [
+        {
+            "repo": s.question["repo"],
+            "split": s.question["split"],
+            "kind": s.question["kind"],
+            "subject": s.question["subject"],
+            "note": s.question.get("note", ""),
+            "ast_found_graph_missed": sorted(s.expected - s.predicted),
+            "graph_found_ast_did_not": sorted(s.predicted - s.expected),
+        }
+        for s in scored
+        if not s.exact
+    ]
+    return {
+        "script": "scripts/structural_eval.py",
+        "ground_truth": "python ast",
+        "codementor_commit": _commit(),
+        "language": "python",
+        "selection": {"split": args.split, "repo": args.repo},
+        "repos": {name: {"commit": commit} for name, (_, commit) in sorted(REPOS.items())},
+        "overall": _group(scored),
+        "by_split": {split: _group([s for s in scored if s.question["split"] == split]) for split in SPLITS},
+        "by_repo": {
+            repo: _group([s for s in scored if s.question["repo"] == repo])
+            for repo in sorted({s.question["repo"] for s in scored})
+        },
+        "by_kind": {kind: _group([s for s in scored if s.question["kind"] == kind]) for kind in KINDS},
+        "disagreements": disagreements,
+    }
+
+
+def _commit() -> str:
+    """Short hash of this checkout, with -dirty if tracked files have uncommitted changes."""
+    try:
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True)
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT, capture_output=True, text=True
+        )
+    except OSError:
+        return "unknown"
+    return sha.stdout.strip() + ("-dirty" if dirty.stdout.strip() else "")
 
 
 def _table(scored: list[Scored]) -> None:

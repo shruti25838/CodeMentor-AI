@@ -1,0 +1,122 @@
+{
+  "script": "scripts/structural_eval.py",
+  "ground_truth": "python ast",
+  "codementor_commit": "bf5f6d5-dirty",
+  "language": "python",
+  "selection": {
+    "split": "all",
+    "repo": "all"
+  },
+  "repos": {
+    "flask": {
+      "commit": "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35"
+    },
+    "itsdangerous": {
+      "commit": "672971d66a2ef9f85151e53283113f33d642dabd"
+    }
+  },
+  "overall": {
+    "questions": 49,
+    "precision": 1.0,
+    "recall": 0.9673,
+    "exact": 45
+  },
+  "by_split": {
+    "development": {
+      "questions": 26,
+      "precision": 1.0,
+      "recall": 0.9641,
+      "exact": 23
+    },
+    "held-out": {
+      "questions": 23,
+      "precision": 1.0,
+      "recall": 0.971,
+      "exact": 22
+    }
+  },
+  "by_repo": {
+    "flask": {
+      "questions": 25,
+      "precision": 1.0,
+      "recall": 0.992,
+      "exact": 24
+    },
+    "itsdangerous": {
+      "questions": 24,
+      "precision": 1.0,
+      "recall": 0.9417,
+      "exact": 21
+    }
+  },
+  "by_kind": {
+    "who_calls": {
+      "questions": 14,
+      "precision": 1.0,
+      "recall": 0.8857,
+      "exact": 10
+    },
+    "who_imports": {
+      "questions": 12,
+      "precision": 1.0,
+      "recall": 1.0,
+      "exact": 12
+    },
+    "where_defined": {
+      "questions": 23,
+      "precision": 1.0,
+      "recall": 1.0,
+      "exact": 23
+    }
+  },
+  "disagreements": [
+    {
+      "repo": "itsdangerous",
+      "split": "development",
+      "kind": "who_calls",
+      "subject": "derive_key",
+      "note": "called through self inside Signer",
+      "ast_found_graph_missed": [
+        "tests/test_itsdangerous/test_signer.py:78"
+      ],
+      "graph_found_ast_did_not": []
+    },
+    {
+      "repo": "itsdangerous",
+      "split": "development",
+      "kind": "who_calls",
+      "subject": "get_signature",
+      "note": "dispatched through self on a base class",
+      "ast_found_graph_missed": [
+        "src/itsdangerous/signer.py:219",
+        "tests/test_itsdangerous/test_signer.py:109"
+      ],
+      "graph_found_ast_did_not": []
+    },
+    {
+      "repo": "itsdangerous",
+      "split": "held-out",
+      "kind": "who_calls",
+      "subject": "load_payload",
+      "note": "method dispatched through self",
+      "ast_found_graph_missed": [
+        "src/itsdangerous/timed.py:207",
+        "src/itsdangerous/url_safe.py:53",
+        "tests/test_itsdangerous/test_serializer.py:78",
+        "tests/test_itsdangerous/test_timed.py:111"
+      ],
+      "graph_found_ast_did_not": []
+    },
+    {
+      "repo": "flask",
+      "split": "development",
+      "kind": "who_calls",
+      "subject": "send_file",
+      "note": "called from helpers and tests",
+      "ast_found_graph_missed": [
+        "src/flask/helpers.py:528"
+      ],
+      "graph_found_ast_did_not": []
+    }
+  ]
+}
