@@ -18,6 +18,7 @@ from codeatlas.app.di import (
     get_fallback_embedder,
     get_fallback_retriever,
     get_index_service,
+    index_options,
 )
 from codeatlas.models.function_node import FunctionNode
 from codeatlas.models.parsed_repository import ParsedRepository
@@ -344,3 +345,107 @@ def test_the_answer_service_is_given_the_fallback_only_when_there_is_one(monkeyp
         assert get_answer_service()._fallback_retriever is None
     finally:
         get_answer_service.cache_clear()
+
+
+# --- the semantic index has its own time limit, and missing it is survivable ---------------
+
+
+def test_the_cloudflare_provider_gets_its_own_index_time_limit() -> None:
+    from codeatlas.app.di import index_options
+    from codeatlas.services.retrieval.cloudflare_embedder import DEFAULT_CLOUDFLARE_INDEX_TIMEOUT_SECONDS
+
+    config = replace(load_config(), embedding_provider="cloudflare")
+    assert index_options(config)["timeout_seconds"] == DEFAULT_CLOUDFLARE_INDEX_TIMEOUT_SECONDS == 180
+    assert index_options(replace(config, embedding_provider="hash"))["timeout_seconds"] == config.index_timeout_seconds
+
+
+def test_the_index_time_limit_is_configurable_and_checked_at_startup(monkeypatch) -> None:
+    monkeypatch.setenv("CODEATLAS_CLOUDFLARE_INDEX_TIMEOUT_SECONDS", "300")
+    assert load_config().cloudflare_index_timeout_seconds == 300
+    monkeypatch.setenv("CODEATLAS_CLOUDFLARE_INDEX_TIMEOUT_SECONDS", "0")
+    with pytest.raises(ValueError):
+        load_config()
+
+
+def test_that_limit_is_ignored_by_every_other_provider() -> None:
+    base = replace(load_config(), embedding_provider="hash")
+    assert index_options(base) == index_options(replace(base, cloudflare_index_timeout_seconds=1))
+
+
+class SlowEmbedder(FakeEmbedder):
+    """An embedder that takes longer than the index is allowed to take."""
+
+    def __init__(self, clock) -> None:
+        super().__init__(name="semantic", value=0.5)
+        self._clock = clock
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        self._clock.advance(1000)
+        return super().embed_texts(texts)
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_a_semantic_index_that_runs_out_of_time_keeps_the_repository_working(tmp_path) -> None:
+    """A timeout on the second index is a reason to stop building it, not to lose the analysis."""
+    clock = FakeClock()
+    semantic_retriever, fallback_retriever = FaissCodeRetriever(), FaissCodeRetriever()
+    service = DualIndexService(
+        semantic=CodeIndexService(
+            embedder=SlowEmbedder(clock),
+            retriever=semantic_retriever,
+            name="cloudflare",
+            timeout_seconds=180,
+            clock=clock,
+        ),
+        fallback=CodeIndexService(embedder=HashEmbeddingService(), retriever=fallback_retriever, name=FALLBACK_NAME),
+        semantic_name="cloudflare",
+        max_documents=600,
+    )
+    assert service.index_repository(*_repo(tmp_path)) == ("hash",)
+    assert fallback_retriever.has_index("r")
+    assert not semantic_retriever.has_index("r")
+    assert service.has_index("r")
+
+
+def test_the_timeout_is_logged_as_an_outcome(tmp_path, caplog) -> None:
+    from codeatlas.services.retrieval.dual_index import TIMEOUT
+
+    caplog.set_level("DEBUG")
+    clock = FakeClock()
+    service = DualIndexService(
+        semantic=CodeIndexService(
+            embedder=SlowEmbedder(clock),
+            retriever=FaissCodeRetriever(),
+            name="cloudflare",
+            timeout_seconds=180,
+            clock=clock,
+        ),
+        fallback=CodeIndexService(embedder=HashEmbeddingService(), retriever=FaissCodeRetriever(), name=FALLBACK_NAME),
+        semantic_name="cloudflare",
+        max_documents=600,
+    )
+    service.index_repository(*_repo(tmp_path))
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert TIMEOUT in logged
+
+
+def test_a_timeout_on_the_only_index_is_still_fatal(tmp_path) -> None:
+    """Nothing here softens the single-index case: there a timeout means no index at all."""
+    from codeatlas.services.retrieval.indexing import IndexingTimeoutError
+
+    clock = FakeClock()
+    service = CodeIndexService(
+        embedder=SlowEmbedder(clock), retriever=FaissCodeRetriever(), timeout_seconds=180, clock=clock
+    )
+    with pytest.raises(IndexingTimeoutError):
+        service.index_repository(*_repo(tmp_path))

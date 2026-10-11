@@ -22,9 +22,24 @@ import logging
 from codeatlas.models.parsed_repository import ParsedRepository
 from codeatlas.models.repository import Repository
 from codeatlas.services.retrieval.embedding import EmbeddingUnavailableError
-from codeatlas.services.retrieval.indexing import CodeIndexService
+from codeatlas.services.retrieval.indexing import CodeIndexService, IndexingTimeoutError
 
 FALLBACK_NAME = "hash"
+
+# How the attempt at a semantic index ended. These name outcomes for a log line and a metric,
+# not sentences for a visitor: what a visitor is told is decided at question time, from what
+# turned out to be on disk, and is deliberately a shorter list.
+OK = "ok"
+BUDGET = "budget"
+FAILURE = "failure"
+BREAKER = "breaker"
+TIMEOUT = "timeout"
+CAP = "cap"
+OUTCOMES = (OK, BUDGET, FAILURE, BREAKER, TIMEOUT, CAP)
+
+# EmbeddingUnavailableError reasons, which describe one call, mapped onto outcomes, which
+# describe a whole indexing attempt.
+_OUTCOME_FOR_REASON = {"budget": BUDGET, "circuit": BREAKER, "api": FAILURE}
 
 
 class DualIndexService:
@@ -84,10 +99,11 @@ class DualIndexService:
 
         if self.over_cap(parsed_repo):
             self._logger.info(
-                "Repo %s has %d documents, over the %d the semantic index allows; it has the %s index only",
+                "Repo %s has %d documents, over the %d the semantic index allows; outcome %s, it has the %s index only",
                 repository.repo_id,
                 self.document_count(parsed_repo),
                 self._max_documents,
+                CAP,
                 self._fallback_name,
             )
             return tuple(built)
@@ -96,13 +112,23 @@ class DualIndexService:
             self._semantic.index_repository(repository, parsed_repo)
         except EmbeddingUnavailableError as exc:
             # The reason, never the detail: a detail can carry whatever the provider put in it.
-            self._logger.warning(
-                "Semantic index for repo %s was not built (%s); it has the %s index only",
-                repository.repo_id,
-                exc.reason,
-                self._fallback_name,
-            )
-            self._semantic.discard(repository.repo_id)
+            self._skipped(repository.repo_id, _OUTCOME_FOR_REASON.get(exc.reason, FAILURE))
+            return tuple(built)
+        except IndexingTimeoutError:
+            # Deliberately not fatal here, unlike a timeout on the only index there is. The
+            # repository already has a working index; taking too long over the second one is a
+            # reason to stop building it, not a reason to throw away the analysis and tell a
+            # visitor their repository could not be read.
+            self._skipped(repository.repo_id, TIMEOUT)
             return tuple(built)
 
         return (self._semantic_name, *built)
+
+    def _skipped(self, repo_id: str, outcome: str) -> None:
+        self._logger.warning(
+            "Semantic index for repo %s was not built (%s); it has the %s index only",
+            repo_id,
+            outcome,
+            self._fallback_name,
+        )
+        self._semantic.discard(repo_id)

@@ -157,9 +157,9 @@ def index_options(config: AppConfig) -> dict:
         }
     if config.embedding_provider == "cloudflare":
         return {
-            # The time limit is the shared one. A repository at the 600-document cap is twelve
-            # calls of 50, so the default 120 s is ample; a raised cap may need it raised too.
-            "timeout_seconds": config.index_timeout_seconds,
+            # Its own limit, not the shared one: this is the only provider whose indexing
+            # crosses a network, and the only one for which running out of time is survivable.
+            "timeout_seconds": config.cloudflare_index_timeout_seconds,
             "batch_size": config.cloudflare_batch_size,
             "max_chars": config.cloudflare_max_chars,
             "prefix_metadata": config.embed_prefix_metadata,

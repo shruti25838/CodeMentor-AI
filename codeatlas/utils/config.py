@@ -8,6 +8,7 @@ from codeatlas.services.retrieval.cloudflare_embedder import (
     DEFAULT_CLOUDFLARE_COOLDOWN_SECONDS,
     DEFAULT_CLOUDFLARE_DAILY_NEURONS,
     DEFAULT_CLOUDFLARE_FAILURE_THRESHOLD,
+    DEFAULT_CLOUDFLARE_INDEX_TIMEOUT_SECONDS,
     DEFAULT_CLOUDFLARE_MAX_CHARS,
     DEFAULT_CLOUDFLARE_MAX_DOCUMENTS,
     DEFAULT_CLOUDFLARE_MODEL,
@@ -135,6 +136,7 @@ class AppConfig:
     cloudflare_retries: int = DEFAULT_CLOUDFLARE_RETRIES
     cloudflare_failure_threshold: int = DEFAULT_CLOUDFLARE_FAILURE_THRESHOLD
     cloudflare_cooldown_seconds: float = DEFAULT_CLOUDFLARE_COOLDOWN_SECONDS
+    cloudflare_index_timeout_seconds: int = DEFAULT_CLOUDFLARE_INDEX_TIMEOUT_SECONDS
     cloudflare_index_dir: str = ".codeatlas/indexes-cloudflare"
     # Folder of scripts/eval_retrieval.py --json results; read at startup into the retrieval gauges.
     eval_results_dir: str = "eval/results"
@@ -233,6 +235,9 @@ def load_config() -> AppConfig:
         ),
         cloudflare_cooldown_seconds=_positive_float(
             "CODEATLAS_CLOUDFLARE_COOLDOWN_SECONDS", DEFAULT_CLOUDFLARE_COOLDOWN_SECONDS
+        ),
+        cloudflare_index_timeout_seconds=_positive_int(
+            "CODEATLAS_CLOUDFLARE_INDEX_TIMEOUT_SECONDS", DEFAULT_CLOUDFLARE_INDEX_TIMEOUT_SECONDS
         ),
         cloudflare_index_dir=os.getenv("CODEATLAS_CLOUDFLARE_INDEX_DIR", ".codeatlas/indexes-cloudflare"),
     )

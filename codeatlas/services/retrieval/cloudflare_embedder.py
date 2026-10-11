@@ -64,6 +64,12 @@ DEFAULT_CLOUDFLARE_BATCH_SIZE = 50
 # and 2,500 is about nine capped repositories, which is a reasonable day for a demo.
 DEFAULT_CLOUDFLARE_DAILY_NEURONS = 2500
 DEFAULT_CLOUDFLARE_TIMEOUT_SECONDS = 30.0
+# The limit on building a whole semantic index, as opposed to one call. A repository at the
+# 600-document cap is twelve calls of fifty, so 180 s allows about fifteen seconds each - room
+# for a slow free host and a retry, without leaving a visitor waiting through three minutes of
+# an API that is not answering. Separate from the shared indexing limit because only this
+# provider's indexing crosses a network, and because missing it is not fatal here.
+DEFAULT_CLOUDFLARE_INDEX_TIMEOUT_SECONDS = 180
 DEFAULT_CLOUDFLARE_RETRIES = 2
 DEFAULT_CLOUDFLARE_FAILURE_THRESHOLD = 3
 DEFAULT_CLOUDFLARE_COOLDOWN_SECONDS = 300.0
