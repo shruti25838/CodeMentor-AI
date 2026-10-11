@@ -1024,3 +1024,21 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **approval required before any of this is set.** The defaults in the repository are unchanged: provider `hash`, budget 8,000, cap 600, clip 2,000, batch size 50.
   **The credentials belong only in Render's own environment settings.** They are read straight from the environment into an object with a redacting repr and are never part of the app config, so no config dump or log line can print them; `.env.example` carries the names with empty values and `.env` is gitignored.
   **One thing this proposal cannot answer:** whether a free Render instance's latency to `api.cloudflare.com` keeps a 600-document index inside `CODEATLAS_INDEX_TIMEOUT_SECONDS` (120 s). Length-sorted batching makes it twelve calls, which should be ample, but it has not been measured from Render and a timeout throws the index away while the neurons stay spent
+
+### Change: the default daily neuron budget is 2,500
+- Value: `CODEATLAS_CLOUDFLARE_DAILY_NEURONS` now defaults to **2,500** instead of 8,000, as approved from the Render proposal above.
+
+  **The allowance is not what sets this figure; the ledger is.** The running total lives in `.codeatlas/cloudflare-neurons.json`, on local disk. A host without a persistent disk wipes it on every restart, and a free service restarts whenever it has been idle. After each restart the guard reads zero spent today and will authorise a further full budget.
+
+  | budget | restart-cycles that fit inside 10,000 | capped repositories per cycle |
+  |---|---|---|
+  | 8,000 | 1 (four cycles would authorise 32,000) | ~29 |
+  | **2,500** | **4** | ~9 |
+
+  Nine capped repositories per cycle is a reasonable day for a demo, and four wipes in one UTC day is a pessimistic restart rate for one. If `CODEATLAS_NEURON_LEDGER` is ever pointed at a persistent disk, this can go back up.
+- Command: `python -m pytest tests/ -q` -> 863 passed, 1 skipped
+- Dataset/repo: none; a configuration default
+- Date: 2026-10-11
+- Commit: 61d5412
+- Notes: **the budget stop is a courtesy, not a hard limit**, and `.env.example` now says so in as many words. Its estimate has run from about 8% high to about 1.5% low against the dashboard, so a budget of 2,500 might stop at 2,300 real or 2,540 real. What actually protects the allowance is that Cloudflare refuses the call and the refusal falls back to the hash index with a note - which works whether or not the ledger survived the restart.
+  Only the default moved. The clip stays 2,000, the document cap 600, the batch size 50, and the provider stays off unless `CODEATLAS_EMBEDDING_PROVIDER=cloudflare` is set
