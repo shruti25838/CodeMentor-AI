@@ -1,0 +1,89 @@
+{
+  "name": "flask",
+  "repo_url": "https://github.com/pallets/flask",
+  "commit": "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35",
+  "note": "holdout2: a second held-out set, written from the source at this commit after the dev and test sets had been used repeatedly. Every question is about a fact none of the twenty questions in eval/questions/flask.json asks about, and none is a rewording of one; six of the ten point at files no earlier question expects. expected_files are paths relative to the repo root; a retrieved record counts as relevant if its file is in the list. Scored once, after the configuration was chosen on dev.",
+  "questions": [
+    {
+      "id": "h2-flask-01",
+      "split": "holdout2",
+      "question": "How can a view register a function that changes the response for this one request only?",
+      "expected_files": [
+        "src/flask/ctx.py"
+      ]
+    },
+    {
+      "id": "h2-flask-02",
+      "split": "holdout2",
+      "question": "What message explains that code tried to use the current application with no application context set up?",
+      "expected_files": [
+        "src/flask/globals.py"
+      ]
+    },
+    {
+      "id": "h2-flask-03",
+      "split": "holdout2",
+      "question": "Which signals does the framework publish for templates, requests and the app context?",
+      "expected_files": [
+        "src/flask/signals.py"
+      ]
+    },
+    {
+      "id": "h2-flask-04",
+      "split": "holdout2",
+      "question": "How does a blueprint serve files out of its own static folder?",
+      "expected_files": [
+        "src/flask/blueprints.py"
+      ]
+    },
+    {
+      "id": "h2-flask-05",
+      "split": "holdout2",
+      "question": "How do I turn keyword arguments into a JSON response object?",
+      "expected_files": [
+        "src/flask/json/__init__.py"
+      ]
+    },
+    {
+      "id": "h2-flask-06",
+      "split": "holdout2",
+      "question": "Where can I keep a value so that several functions handling the same request can share it?",
+      "expected_files": [
+        "src/flask/ctx.py",
+        "src/flask/globals.py"
+      ]
+    },
+    {
+      "id": "h2-flask-07",
+      "split": "holdout2",
+      "question": "Which dotfiles are read to set environment variables before the command line tool runs?",
+      "expected_files": [
+        "src/flask/cli.py"
+      ]
+    },
+    {
+      "id": "h2-flask-08",
+      "split": "holdout2",
+      "question": "How can a test call a custom command line command and read what it printed?",
+      "expected_files": [
+        "src/flask/testing.py"
+      ]
+    },
+    {
+      "id": "h2-flask-09",
+      "split": "holdout2",
+      "question": "How are functions that run before and after every request registered?",
+      "expected_files": [
+        "src/flask/sansio/scaffold.py"
+      ]
+    },
+    {
+      "id": "h2-flask-10",
+      "split": "holdout2",
+      "question": "In the tutorial app, how is one database connection reused for a whole request and then closed?",
+      "expected_files": [
+        "examples/tutorial/flaskr/db.py"
+      ]
+    }
+  ]
+}

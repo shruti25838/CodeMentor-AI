@@ -1,0 +1,90 @@
+{
+  "name": "itsdangerous",
+  "repo_url": "https://github.com/pallets/itsdangerous",
+  "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
+  "note": "holdout2: a second held-out set, written from the source at this commit after the dev and test sets had been used repeatedly. Every question is about a fact none of the twenty questions in eval/questions/itsdangerous.json asks about, and none is a rewording of one. expected_files are paths relative to the repo root; a retrieved record counts as relevant if its file is in the list. Scored once, after the configuration was chosen on dev.",
+  "questions": [
+    {
+      "id": "h2-itsd-01",
+      "split": "holdout2",
+      "question": "Is a signature compared in a way that does not leak timing information?",
+      "expected_files": [
+        "src/itsdangerous/signer.py"
+      ]
+    },
+    {
+      "id": "h2-itsd-02",
+      "split": "holdout2",
+      "question": "Can I check a signed value and get back true or false instead of catching an exception?",
+      "expected_files": [
+        "src/itsdangerous/signer.py",
+        "src/itsdangerous/timed.py"
+      ]
+    },
+    {
+      "id": "h2-itsd-03",
+      "split": "holdout2",
+      "question": "Why is the SHA-1 function looked up only when it is needed rather than when the module is imported?",
+      "expected_files": [
+        "src/itsdangerous/signer.py"
+      ]
+    },
+    {
+      "id": "h2-itsd-04",
+      "split": "holdout2",
+      "question": "What salt is used when the caller does not pass one?",
+      "expected_files": [
+        "src/itsdangerous/signer.py",
+        "src/itsdangerous/serializer.py"
+      ]
+    },
+    {
+      "id": "h2-itsd-05",
+      "split": "holdout2",
+      "question": "How does the code work out whether the data serializer produces text or binary output?",
+      "expected_files": [
+        "src/itsdangerous/serializer.py"
+      ]
+    },
+    {
+      "id": "h2-itsd-06",
+      "split": "holdout2",
+      "question": "How do I write a signed value straight into an open file and read it back out again?",
+      "expected_files": [
+        "src/itsdangerous/serializer.py"
+      ]
+    },
+    {
+      "id": "h2-itsd-07",
+      "split": "holdout2",
+      "question": "Can a single call decode a payload with a different serializer than the one stored on the class?",
+      "expected_files": [
+        "src/itsdangerous/serializer.py"
+      ]
+    },
+    {
+      "id": "h2-itsd-08",
+      "split": "holdout2",
+      "question": "What extra information does the error for a malformed header carry?",
+      "expected_files": [
+        "src/itsdangerous/exc.py"
+      ]
+    },
+    {
+      "id": "h2-itsd-09",
+      "split": "holdout2",
+      "question": "Why are the remaining signers not tried once a token turns out to be too old?",
+      "expected_files": [
+        "src/itsdangerous/timed.py"
+      ]
+    },
+    {
+      "id": "h2-itsd-10",
+      "split": "holdout2",
+      "question": "Which names can be imported straight from the top level of the package?",
+      "expected_files": [
+        "src/itsdangerous/__init__.py"
+      ]
+    }
+  ]
+}

@@ -31,7 +31,12 @@ from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService
 from codeatlas.services.retrieval.indexing import CodeIndexService
 from codeatlas.services.retrieval.sentence_transformer_embedder import SentenceTransformerEmbeddingService
 
-SPLITS = ("dev", "test", "all")
+# The splits a question can be in. "dev" is what settings are chosen on; "test" is the original
+# held-out set, which by now has been scored several times and is a weak confirmation rather than
+# a clean one; "holdout2" is a second set written later, from the same two repositories, to be
+# scored once. "all" is not a split a question carries - it selects every question in a file.
+QUESTION_SPLITS = ("dev", "test", "holdout2")
+SPLITS = (*QUESTION_SPLITS, "all")
 # Results kept per question; MRR is computed over these.
 RANKED_DEPTH = 10
 
@@ -67,8 +72,11 @@ def load_question_set(path: Path) -> QuestionSet:
         for q in data["questions"]
     ]
     for q in questions:
-        if q.split not in ("dev", "test") or not q.expected_files:
-            raise ValueError(f"{path}: question {q.id} needs split dev/test and at least one expected file")
+        if q.split not in QUESTION_SPLITS or not q.expected_files:
+            raise ValueError(
+                f"{path}: question {q.id} needs a split from {', '.join(QUESTION_SPLITS)} "
+                f"and at least one expected file"
+            )
     return QuestionSet(name=data["name"], repo_url=data["repo_url"], commit=data["commit"], questions=questions)
 
 
