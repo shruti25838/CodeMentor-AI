@@ -1042,3 +1042,26 @@ Every number or claim here comes from a command that can be re-run.
 - Commit: 61d5412
 - Notes: **the budget stop is a courtesy, not a hard limit**, and `.env.example` now says so in as many words. Its estimate has run from about 8% high to about 1.5% low against the dashboard, so a budget of 2,500 might stop at 2,300 real or 2,540 real. What actually protects the allowance is that Cloudflare refuses the call and the refusal falls back to the hash index with a note - which works whether or not the ledger survived the restart.
   Only the default moved. The clip stays 2,000, the document cap 600, the batch size 50, and the provider stays off unless `CODEATLAS_EMBEDDING_PROVIDER=cloudflare` is set
+
+### Change: the semantic index has its own time limit, and running out of it is survivable
+- Value: `CODEATLAS_CLOUDFLARE_INDEX_TIMEOUT_SECONDS` defaults to **180** and applies only when that provider is selected. Missing it **no longer fails the analysis**.
+
+  | provider | index time limit | missing it |
+  |---|---|---|
+  | hash, sentence | `CODEATLAS_INDEX_TIMEOUT_SECONDS`, 120 s | 504, nothing saved |
+  | fastembed | `CODEATLAS_FASTEMBED_INDEX_TIMEOUT_SECONDS`, 900 s | 504, nothing saved |
+  | **cloudflare** | **`CODEATLAS_CLOUDFLARE_INDEX_TIMEOUT_SECONDS`, 180 s** | **hash index kept, analysis succeeds** |
+
+  **Why 180.** A repository at the 600-document cap is twelve calls of fifty under length-sorted batching, so 180 s allows about fifteen seconds a call - room for a slow free host and a retry inside each - without leaving a visitor waiting three minutes on an API that is not answering. It is separate from the shared limit because this is the only provider whose indexing crosses a network, and the only one for which running late is survivable.
+
+  **Why missing it is survivable here and nowhere else.** By the time the semantic index is being built the hash index is already on disk - it is built first, always. Throwing a completed analysis away and telling a visitor their repository could not be read, when the repository is in fact perfectly usable, would be a worse outcome than a repository that is merely harder to search. So a timeout now ends exactly as a refused call does: the half-built semantic index is discarded, the repository keeps its hash index, and the next question carries the note *"Semantic search is not available for this repository, so this answer used keyword search."*
+
+  **A timeout on the only index there is remains fatal**, and `test_a_timeout_on_the_only_index_is_still_fatal` pins that. Nothing here softens the single-index case, where running out of time really does mean no index at all.
+
+  **Outcomes, which are not what a visitor sees.** An attempt at a semantic index now ends in one of six named outcomes - `ok`, `budget`, `failure`, `breaker`, `timeout`, `cap` - mapped from the reasons a single call can fail. They exist for a log line and a metric. What a visitor is told is a shorter list, decided at question time from what turned out to be on disk, because at that point an over-capped repository, a timed-out one and one with a stale index are indistinguishable and should be.
+- Command: `python -m pytest tests/test_dual_index.py tests/test_config.py -q` (47 tests), full suite 869 passed, 1 skipped
+- Dataset/repo: none. The slow provider is a fake embedder driving a fake clock past the limit; **no call was made to Cloudflare in this task**
+- Date: 2026-10-11
+- Commit: afb686f
+- Notes: **the limit is validated at startup** like the other numeric settings, so `CODEATLAS_CLOUDFLARE_INDEX_TIMEOUT_SECONDS=0` stops the app rather than producing an index that times out instantly.
+  **Neurons already spent are not refunded by a timeout.** The documents embedded before the limit was reached were paid for and their vectors are discarded with the half-built index, so a repository that times out repeatedly would cost repeatedly. The circuit breaker does not help here either, since a timeout is not a failed call. **The real protection is the document cap**, which is unchanged at 600 pending a latency measurement from Render
