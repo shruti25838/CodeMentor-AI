@@ -1,5 +1,5 @@
 {
-  "codementor_commit": "97242ac",
+  "codementor_commit": "016c655",
   "embedder": "hash (HashEmbeddingService, 384 dims, subtokens, hashed bag of words, not semantic)",
   "settings": {
     "retrieval": {
@@ -21,6 +21,20 @@
       "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
       "files_indexed": 15,
       "records_indexed": 159,
+      "clipped": {
+        "file": {
+          "records": 15,
+          "clipped": 0,
+          "chars": 59558,
+          "chars_kept": 59558
+        },
+        "function": {
+          "records": 144,
+          "clipped": 0,
+          "chars": 90647,
+          "chars_kept": 90647
+        }
+      },
       "questions": 10,
       "hit_rate": {
         "@1": 0.6,
@@ -32,12 +46,27 @@
         "@3": 0.5,
         "@5": 0.4
       },
-      "mrr@10": 0.6917
+      "mrr@10": 0.6917,
+      "recall@20": 0.9
     },
     "flask": {
       "commit": "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35",
       "files_indexed": 83,
       "records_indexed": 1705,
+      "clipped": {
+        "file": {
+          "records": 83,
+          "clipped": 0,
+          "chars": 589406,
+          "chars_kept": 589406
+        },
+        "function": {
+          "records": 1622,
+          "clipped": 0,
+          "chars": 824235,
+          "chars_kept": 824235
+        }
+      },
       "questions": 10,
       "hit_rate": {
         "@1": 0.6,
@@ -49,7 +78,8 @@
         "@3": 0.4667,
         "@5": 0.36
       },
-      "mrr@10": 0.6333
+      "mrr@10": 0.6333,
+      "recall@20": 0.8
     }
   },
   "overall": {
@@ -64,7 +94,8 @@
       "@3": 0.4833,
       "@5": 0.38
     },
-    "mrr@10": 0.6625
+    "mrr@10": 0.6625,
+    "recall@20": 0.85
   },
   "per_question": {
     "itsdangerous": [
@@ -78,7 +109,8 @@
           "src/itsdangerous/exc.py"
         ],
         "hit@5": 0.0,
-        "rr": 0.1667
+        "rr": 0.1667,
+        "recall@20": 1.0
       },
       {
         "id": "itsd-03",
@@ -90,7 +122,8 @@
           "tests/test_itsdangerous/test_timed.py"
         ],
         "hit@5": 0.0,
-        "rr": 0.0
+        "rr": 0.0,
+        "recall@20": 0.0
       },
       {
         "id": "itsd-05",
@@ -102,7 +135,8 @@
           "src/itsdangerous/serializer.py"
         ],
         "hit@5": 1.0,
-        "rr": 1.0
+        "rr": 1.0,
+        "recall@20": 1.0
       },
       {
         "id": "itsd-07",
@@ -114,7 +148,8 @@
           "src/itsdangerous/serializer.py"
         ],
         "hit@5": 1.0,
-        "rr": 1.0
+        "rr": 1.0,
+        "recall@20": 1.0
       },
       {
         "id": "itsd-09",
@@ -126,7 +161,8 @@
           "src/itsdangerous/encoding.py"
         ],
         "hit@5": 1.0,
-        "rr": 0.25
+        "rr": 0.25,
+        "recall@20": 1.0
       },
       {
         "id": "itsd-11",
@@ -138,7 +174,8 @@
           "src/itsdangerous/exc.py"
         ],
         "hit@5": 1.0,
-        "rr": 1.0
+        "rr": 1.0,
+        "recall@20": 1.0
       },
       {
         "id": "itsd-13",
@@ -150,7 +187,8 @@
           "tests/test_itsdangerous/test_signer.py"
         ],
         "hit@5": 1.0,
-        "rr": 1.0
+        "rr": 1.0,
+        "recall@20": 1.0
       },
       {
         "id": "itsd-15",
@@ -162,7 +200,8 @@
           "src/itsdangerous/url_safe.py"
         ],
         "hit@5": 1.0,
-        "rr": 1.0
+        "rr": 1.0,
+        "recall@20": 1.0
       },
       {
         "id": "itsd-17",
@@ -174,7 +213,8 @@
           "src/itsdangerous/exc.py"
         ],
         "hit@5": 1.0,
-        "rr": 1.0
+        "rr": 1.0,
+        "recall@20": 1.0
       },
       {
         "id": "itsd-19",
@@ -186,7 +226,8 @@
           "src/itsdangerous/timed.py"
         ],
         "hit@5": 1.0,
-        "rr": 0.5
+        "rr": 0.5,
+        "recall@20": 1.0
       }
     ],
     "flask": [
@@ -200,7 +241,8 @@
           "src/flask/config.py"
         ],
         "hit@5": 1.0,
-        "rr": 1.0
+        "rr": 1.0,
+        "recall@20": 1.0
       },
       {
         "id": "flask-03",
@@ -212,7 +254,8 @@
           "tests/test_basic.py"
         ],
         "hit@5": 1.0,
-        "rr": 1.0
+        "rr": 1.0,
+        "recall@20": 1.0
       },
       {
         "id": "flask-05",
@@ -224,7 +267,8 @@
           "src/flask/views.py"
         ],
         "hit@5": 1.0,
-        "rr": 1.0
+        "rr": 1.0,
+        "recall@20": 1.0
       },
       {
         "id": "flask-07",
@@ -236,7 +280,8 @@
           "tests/test_user_error_handler.py"
         ],
         "hit@5": 0.0,
-        "rr": 0.0
+        "rr": 0.0,
+        "recall@20": 1.0
       },
       {
         "id": "flask-09",
@@ -248,7 +293,8 @@
           "tests/test_async.py"
         ],
         "hit@5": 1.0,
-        "rr": 1.0
+        "rr": 1.0,
+        "recall@20": 1.0
       },
       {
         "id": "flask-11",
@@ -260,7 +306,8 @@
           "src/flask/ctx.py"
         ],
         "hit@5": 1.0,
-        "rr": 1.0
+        "rr": 1.0,
+        "recall@20": 1.0
       },
       {
         "id": "flask-13",
@@ -272,7 +319,8 @@
           "tests/test_basic.py"
         ],
         "hit@5": 0.0,
-        "rr": 0.0
+        "rr": 0.0,
+        "recall@20": 0.0
       },
       {
         "id": "flask-15",
@@ -284,7 +332,8 @@
           "tests/test_request.py"
         ],
         "hit@5": 0.0,
-        "rr": 0.0
+        "rr": 0.0,
+        "recall@20": 0.0
       },
       {
         "id": "flask-17",
@@ -296,7 +345,8 @@
           "tests/test_cli.py"
         ],
         "hit@5": 1.0,
-        "rr": 0.3333
+        "rr": 0.3333,
+        "recall@20": 1.0
       },
       {
         "id": "flask-19",
@@ -308,9 +358,10 @@
           "src/flask/wrappers.py"
         ],
         "hit@5": 1.0,
-        "rr": 1.0
+        "rr": 1.0,
+        "recall@20": 1.0
       }
     ]
   },
-  "seconds": 4.4
+  "seconds": 3.3
 }
