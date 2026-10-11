@@ -1335,3 +1335,48 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **nothing is measured here.** This entry adds a mechanism and shows the defaults did not move; whether fusing BM25 helps is the next entry's question, and the defaults in the table are the literature's values, not anything this repository chose.
   **Why the index is built lazily and cached by the record list's identity.** The lexical index needs every record's text, which the vector index does not keep, so `CodeRetriever` gained a `records(repo_id)` with an empty default — a retriever that cannot enumerate its records makes BM25 find nothing rather than making the search fail, and a test covers that. Reindexing replaces the record list, so caching on `id(records)` rebuilds exactly when the code changed. Building it costs one read of every record: the same reads the reranker already does, but all of them at once, on the first question after an index.
   **Limits.** The fusion is symmetric and unweighted — there is no setting that says "trust the vectors more than the words", because reciprocal rank fusion has no such parameter and adding one would be a different method. `bm25_depth` reads deeper into BM25's list than the vector list, which can only add candidates that the cut back to pool depth may then drop; it is there for the experiments. And BM25's corpus statistics are per repository, which is correct but means a one-file repository gives every term the same idf
+### Check: five retrieval arrangements on the dev split, for hash and for cloudflare
+- Value: the keep rule, fixed before the runs: **keep a change only if overall dev MRR@10 rises and dev hit@5 does not fall.** Baseline is `current`, the pipeline the server runs today. **No API call was made for any of this**: hash is local arithmetic, and the cloudflare half reads the evaluation vector cache through an embedder that refuses to call the provider.
+
+  **hash (the default), dev, 20 questions**
+
+  | arrangement | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 | verdict |
+  |---|---|---|---|---|---|---|
+  | current — vector pool, keyword rerank | 0.600 | 0.700 | 0.750 | 0.662 | 0.850 | baseline |
+  | **bm25** — BM25 over every record | **0.750** | **0.800** | **0.850** | **0.782** | **0.950** | **meets the rule** |
+  | vector — vector similarity alone | 0.350 | 0.550 | 0.550 | 0.479 | 0.850 | rejected, MRR falls |
+  | rrf — fusion of vector and BM25 | 0.550 | 0.750 | 0.800 | 0.651 | 0.950 | rejected, MRR falls by 0.011 |
+  | **rrf+keyword** — fused pool, keyword rerank | 0.600 | **0.800** | **0.900** | **0.717** | **0.950** | **meets the rule** |
+
+  **cloudflare (opt-in), dev, 20 questions, mean pooling, clip 2,000**
+
+  | arrangement | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 | verdict |
+  |---|---|---|---|---|---|---|
+  | current | 0.650 | 0.950 | 1.000 | **0.804** | 1.000 | baseline |
+  | bm25 | 0.750 | 0.800 | 0.850 | 0.782 | 0.950 | rejected, MRR falls |
+  | vector | 0.650 | 0.750 | 0.900 | 0.732 | 1.000 | rejected, MRR falls |
+  | rrf | 0.650 | 0.750 | 0.950 | 0.742 | 1.000 | rejected, MRR falls |
+  | rrf+keyword | 0.600 | 0.850 | 0.950 | 0.725 | 1.000 | rejected, MRR falls |
+
+  **Nothing beats the current pipeline for cloudflare. Two things beat it for hash, and the bigger win is BM25 on its own.**
+
+  Per repository, and this is where the result actually lives:
+
+  | | hash current | hash bm25 | cloudflare current | cloudflare bm25 |
+  |---|---|---|---|---|
+  | itsdangerous MRR@10 | 0.692 | 0.663 | 0.758 | 0.663 |
+  | flask MRR@10 | 0.633 | **0.900** | 0.850 | 0.900 |
+  | flask recall@20 | 0.800 | **1.000** | 1.000 | 1.000 |
+
+  **The whole of hash's gain is flask, and BM25 is slightly worse than hash on itsdangerous.** That is the shape the earlier recall@20 work predicted: hash's losses on flask were records it never found, not records it mis-ordered, and a real lexical retriever finds them. On itsdangerous, where hash already had recall@20 0.900, there was nothing for BM25 to recover and its different ranking costs a little.
+
+  **recall@20 and recall at the candidate pool depth are the same number in every row**, because the pool depth is 20 — the default `CODEATLAS_RETRIEVAL_CANDIDATES`. Both are printed so that a run at a different depth cannot quietly relabel one as the other
+- Command: `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/experiment_retrieval.py --embedder hash --split dev --json eval/results/experiments/arrangements-dev-hash.json --expect-current mrr@10=0.6625 --expect-current hit@5=0.75` (3.6 s) and `python scripts/experiment_retrieval.py --embedder cloudflare --split dev --json eval/results/experiments/arrangements-dev-cloudflare.json` (3.0 s); `python -m pytest tests/ -q` -> 1010 passed, 1 skipped (`tests/test_arrangements.py`, 14 new: all five described, every arrangement returning records with no duplicate, an unknown name rejected, `current` being the server's own settings rather than a reimplementation, `vector` and `rrf+keyword` carrying the settings they claim, BM25 alone finding a file the vectors rank last, the fused list holding both pools' first choices, depth honoured, the arrangements not all collapsing to one list, and four on the offline cache: a cached text served, a miss stopping the run with a count and no text, the signature, and `known`); `ruff check codeatlas/ tests/ scripts/experiment_retrieval.py`, `ruff format codeatlas/ tests/ --check`; in `codementor-ui`: `npm test` (51 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, same 28 warnings as before). Defaults unchanged: `python scripts/eval_retrieval.py --split test` still prints overall hit@5 0.750, MRR@10 0.645
+- Dataset/repo: `eval/questions/*.json`, the 20 dev questions, at 672971d66a2e and d73fa1cdcbd8
+- Date: 2026-10-11
+- Commit: 9a7a94d
+- Notes: **cost: zero neurons and zero tokens.** The cloudflare numbers come from `.codeatlas/eval-vectors/98332e737349d50a.json`, 1,805 vectors paid for at 149dac1 and b1bbfd4. Before running, all 1,864 document texts and all 40 dev and held-out questions were confirmed present in that file by hashing them against it; the run then served 1,864 + 20 lookups with **0 embedded**. `OfflineVectorCache` has no inner embedder to fall through to, so a miss raises instead of spending, and the run was made with every provider variable removed from the environment.
+  **Two independent consistency checks passed, and they are what make the rest of the table believable.** `current` for hash printed MRR@10 0.6625 and hit@5 0.750 — the committed dev figures, asserted by `--expect-current`. `current` for cloudflare printed hit@1 0.650, hit@3 0.950, hit@5 1.000, MRR@10 0.8042, recall@20 1.000, which is `eval/results/cloudflare/dev.json` for mean-2000/keyword exactly; `vector` printed 0.732, also exactly. So the offline cache reproduces the paid run, and `current` is the server's pipeline rather than a lookalike.
+  **The rejections are close, and one is very close.** `rrf` for hash is MRR 0.651 against 0.662 — 0.011, which on 20 questions is one question moving a couple of ranks. It is rejected because the rule says so, and the rule was fixed first; it is not evidence that fusion hurts.
+  **What this cannot say.** Twenty questions, two repositories, and the two arrangements that meet the rule do so on the strength of ten flask questions. BM25's advantage over hash is not a surprising finding - hash is a bag of words with no semantics, so a properly weighted lexical retriever ought to beat it - and the honest reading is that **this measures how weak the hash embedder is**, not that BM25 is a good retriever in general. The cloudflare column is the one that tests BM25 against something competent, and there it loses on every arrangement.
+  Nothing has been decided here and nothing held out has been scored. The choice is the next entry
