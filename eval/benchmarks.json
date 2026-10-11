@@ -1,0 +1,556 @@
+{
+  "schema": 1,
+  "generated_by": "scripts/build_benchmarks.py",
+  "heading_note": "Recorded results on small fixed question sets, not live accuracy.",
+  "end_to_end_note": "End-to-end latency is not shown. It depends on the model provider and is not benchmarked here.",
+  "repos": {
+    "itsdangerous": {
+      "url": "https://github.com/pallets/itsdangerous",
+      "commit": "672971d66a2e"
+    },
+    "flask": {
+      "url": "https://github.com/pallets/flask",
+      "commit": "d73fa1cdcbd8"
+    }
+  },
+  "retrieval": {
+    "title": "Retrieval",
+    "question_set": "eval/questions/*.json \u2014 40 questions, 20 per repository, fixed into two splits before any run",
+    "scored": "The retrieval step of the chat: embed the question, take the nearest records, rerank them by keyword overlap. A record counts as relevant when its file is one of the question's expected files.",
+    "metrics": [
+      "hit@1",
+      "hit@3",
+      "hit@5",
+      "p@3",
+      "mrr@10",
+      "recall@20"
+    ],
+    "providers": [
+      {
+        "id": "hash",
+        "label": "hash",
+        "default": true,
+        "embedder": "hash (HashEmbeddingService, 384 dims, subtokens, hashed bag of words, not semantic)",
+        "note": "The server's default. A hashed bag of words over identifier subtokens, not a semantic embedding.",
+        "splits": [
+          {
+            "id": "development",
+            "questions": 20,
+            "source": "eval/results/dev.json",
+            "recorded": {
+              "commit": "016c655",
+              "date": "2026-10-11",
+              "results_entry": "Change: the committed hash retrieval results carry recall@20"
+            },
+            "result_file_commit": "016c655",
+            "rows": [
+              {
+                "scope": "itsdangerous",
+                "questions": 10,
+                "hit@1": 0.6,
+                "hit@3": 0.7,
+                "hit@5": 0.8,
+                "p@3": 0.5,
+                "mrr@10": 0.6917,
+                "recall@20": 0.9
+              },
+              {
+                "scope": "flask",
+                "questions": 10,
+                "hit@1": 0.6,
+                "hit@3": 0.7,
+                "hit@5": 0.7,
+                "p@3": 0.4667,
+                "mrr@10": 0.6333,
+                "recall@20": 0.8
+              },
+              {
+                "scope": "overall",
+                "questions": 20,
+                "hit@1": 0.6,
+                "hit@3": 0.7,
+                "hit@5": 0.75,
+                "p@3": 0.4833,
+                "mrr@10": 0.6625,
+                "recall@20": 0.85
+              }
+            ]
+          },
+          {
+            "id": "held-out",
+            "questions": 20,
+            "source": "eval/results/test.json",
+            "recorded": {
+              "commit": "016c655",
+              "date": "2026-10-11",
+              "results_entry": "Change: the committed hash retrieval results carry recall@20"
+            },
+            "result_file_commit": "016c655",
+            "rows": [
+              {
+                "scope": "itsdangerous",
+                "questions": 10,
+                "hit@1": 0.8,
+                "hit@3": 0.8,
+                "hit@5": 0.9,
+                "p@3": 0.7,
+                "mrr@10": 0.82,
+                "recall@20": 1.0
+              },
+              {
+                "scope": "flask",
+                "questions": 10,
+                "hit@1": 0.4,
+                "hit@3": 0.5,
+                "hit@5": 0.6,
+                "p@3": 0.3667,
+                "mrr@10": 0.47,
+                "recall@20": 0.6
+              },
+              {
+                "scope": "overall",
+                "questions": 20,
+                "hit@1": 0.6,
+                "hit@3": 0.65,
+                "hit@5": 0.75,
+                "p@3": 0.5333,
+                "mrr@10": 0.645,
+                "recall@20": 0.8
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "cloudflare",
+        "label": "cloudflare (opt-in)",
+        "default": false,
+        "embedder": "cloudflare (@cf/baai/bge-small-en-v1.5, mean pooling, clip 2,000 characters)",
+        "settings": {
+          "pooling": "mean",
+          "max_chars": 2000,
+          "ordering": "keyword"
+        },
+        "note": "Off unless CODEATLAS_EMBEDDING_PROVIDER=cloudflare. Ordered by keyword overlap, as the server orders. Every record longer than 2,000 characters was embedded by its opening alone, so this is the server running this provider rather than the embedder in isolation. P@3 was not computed on the development run.",
+        "splits": [
+          {
+            "id": "development",
+            "questions": 20,
+            "source": "eval/results/cloudflare/dev.json",
+            "recorded": {
+              "commit": "149dac1",
+              "date": "2026-10-09",
+              "results_entry": "Check: three Cloudflare configurations on the dev split, three orderings each"
+            },
+            "rows": [
+              {
+                "scope": "itsdangerous",
+                "questions": 10,
+                "hit@1": 0.6,
+                "hit@3": 0.9,
+                "hit@5": 1.0,
+                "p@3": null,
+                "mrr@10": 0.7583,
+                "recall@20": 1.0
+              },
+              {
+                "scope": "flask",
+                "questions": 10,
+                "hit@1": 0.7,
+                "hit@3": 1.0,
+                "hit@5": 1.0,
+                "p@3": null,
+                "mrr@10": 0.85,
+                "recall@20": 1.0
+              },
+              {
+                "scope": "overall",
+                "questions": 20,
+                "hit@1": 0.65,
+                "hit@3": 0.95,
+                "hit@5": 1.0,
+                "p@3": null,
+                "mrr@10": 0.8042,
+                "recall@20": 1.0
+              }
+            ]
+          },
+          {
+            "id": "held-out",
+            "questions": 20,
+            "source": "eval/results/cloudflare/test.json",
+            "recorded": {
+              "commit": "b1bbfd4",
+              "date": "2026-10-10",
+              "results_entry": "Check: the held-out split, run once, for the default configuration"
+            },
+            "rows": [
+              {
+                "scope": "itsdangerous",
+                "questions": 10,
+                "hit@1": 0.8,
+                "hit@3": 0.9,
+                "hit@5": 0.9,
+                "p@3": 0.7667,
+                "mrr@10": 0.8643,
+                "recall@20": 1.0
+              },
+              {
+                "scope": "flask",
+                "questions": 10,
+                "hit@1": 0.8,
+                "hit@3": 0.9,
+                "hit@5": 0.9,
+                "p@3": 0.6667,
+                "mrr@10": 0.8433,
+                "recall@20": 1.0
+              },
+              {
+                "scope": "overall",
+                "questions": 20,
+                "hit@1": 0.8,
+                "hit@3": 0.9,
+                "hit@5": 0.9,
+                "p@3": 0.7167,
+                "mrr@10": 0.8538,
+                "recall@20": 1.0
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "structural": {
+    "title": "Structural analysis against Python's ast",
+    "language": "python",
+    "note": "Python only. `ast` is a different parser by a different author, so the two agree or they do not. Precision of 1.000 is partly structural: the graph only claims a target it resolved through imports and scope, and pays for that quiet in recall.",
+    "source": "eval/results/structural/all.json",
+    "recorded": {
+      "commit": "28fb0e2",
+      "date": "2026-10-11",
+      "results_entry": "Change: the structural eval can write a result file, and that file is committed"
+    },
+    "result_file_commit": "bf5f6d5-dirty",
+    "questions": 49,
+    "overall": {
+      "questions": 49,
+      "precision": 1.0,
+      "recall": 0.9673,
+      "exact": 45
+    },
+    "by_split": {
+      "development": {
+        "questions": 26,
+        "precision": 1.0,
+        "recall": 0.9641,
+        "exact": 23
+      },
+      "held-out": {
+        "questions": 23,
+        "precision": 1.0,
+        "recall": 0.971,
+        "exact": 22
+      }
+    },
+    "by_repo": {
+      "flask": {
+        "questions": 25,
+        "precision": 1.0,
+        "recall": 0.992,
+        "exact": 24
+      },
+      "itsdangerous": {
+        "questions": 24,
+        "precision": 1.0,
+        "recall": 0.9417,
+        "exact": 21
+      }
+    },
+    "by_kind": {
+      "who_calls": {
+        "questions": 14,
+        "precision": 1.0,
+        "recall": 0.8857,
+        "exact": 10
+      },
+      "who_imports": {
+        "questions": 12,
+        "precision": 1.0,
+        "recall": 1.0,
+        "exact": 12
+      },
+      "where_defined": {
+        "questions": 23,
+        "precision": 1.0,
+        "recall": 1.0,
+        "exact": 23
+      }
+    },
+    "disagreements": [
+      {
+        "repo": "itsdangerous",
+        "split": "development",
+        "kind": "who_calls",
+        "subject": "derive_key",
+        "note": "called through self inside Signer",
+        "ast_found_graph_missed": [
+          "tests/test_itsdangerous/test_signer.py:78"
+        ],
+        "graph_found_ast_did_not": []
+      },
+      {
+        "repo": "itsdangerous",
+        "split": "development",
+        "kind": "who_calls",
+        "subject": "get_signature",
+        "note": "dispatched through self on a base class",
+        "ast_found_graph_missed": [
+          "src/itsdangerous/signer.py:219",
+          "tests/test_itsdangerous/test_signer.py:109"
+        ],
+        "graph_found_ast_did_not": []
+      },
+      {
+        "repo": "itsdangerous",
+        "split": "held-out",
+        "kind": "who_calls",
+        "subject": "load_payload",
+        "note": "method dispatched through self",
+        "ast_found_graph_missed": [
+          "src/itsdangerous/timed.py:207",
+          "src/itsdangerous/url_safe.py:53",
+          "tests/test_itsdangerous/test_serializer.py:78",
+          "tests/test_itsdangerous/test_timed.py:111"
+        ],
+        "graph_found_ast_did_not": []
+      },
+      {
+        "repo": "flask",
+        "split": "development",
+        "kind": "who_calls",
+        "subject": "send_file",
+        "note": "called from helpers and tests",
+        "ast_found_graph_missed": [
+          "src/flask/helpers.py:528"
+        ],
+        "graph_found_ast_did_not": []
+      }
+    ],
+    "disagreements_note": "All of them are misses: no disagreement has the graph claiming a call that `ast` did not find. Two of the four are `ast` over-counting, because it matches a call by its trailing name and is not type-aware."
+  },
+  "system": {
+    "title": "System facts",
+    "endpoints": {
+      "routers": 11,
+      "routes": 19,
+      "open": 10,
+      "need_a_key": 9,
+      "rate_limited": 5,
+      "source": "scripts/count_endpoints.py, over this repository's own app",
+      "note": "Counted from create_app(). Nothing is started and no request is made.",
+      "recorded": {
+        "commit": "7831330",
+        "date": "2026-10-11",
+        "results_entry": "Feature: a read-only GET /eval/benchmarks that serves recorded results"
+      }
+    },
+    "call_graph": {
+      "recorded": {
+        "commit": "8336875",
+        "date": "2026-10-05",
+        "results_entry": "Feature: deterministic call graph for Python, and an analyst that answers from it"
+      },
+      "source": "docs/RESULTS.md, CallGraph.build() over the two pinned checkouts",
+      "repos": {
+        "itsdangerous": {
+          "modules": 15,
+          "definitions": 135,
+          "call_sites": 378,
+          "resolved": 91,
+          "resolved_share": 0.241,
+          "import_cycle_groups": 0,
+          "build_seconds": 0.03
+        },
+        "flask": {
+          "modules": 83,
+          "definitions": 1580,
+          "call_sites": 3906,
+          "resolved": 742,
+          "resolved_share": 0.19,
+          "import_cycle_groups": 1,
+          "build_seconds": 0.17
+        }
+      },
+      "note": "The resolved share is not an accuracy figure. Most call sites in any repository target the standard library or a dependency, and those are correctly outside the graph."
+    }
+  },
+  "timing": {
+    "title": "Model-free chat timing",
+    "label": "excludes the language model",
+    "units": "milliseconds, median",
+    "excludes_the_model": true,
+    "end_to_end_note": "End-to-end latency is not shown. It depends on the model provider and is not benchmarked here.",
+    "current": {
+      "recorded": {
+        "commit": "513641c",
+        "date": "2026-10-05",
+        "results_entry": "Measurement: retrieval tuning experiments (dev set), confirmed on the held-out test set"
+      },
+      "source": "docs/RESULTS.md, scripts/time_stages.py",
+      "note": "At the settings the server ships (search depth 20), one warm itsdangerous chat question takes 45 ms with the model excluded, of which the rerank is 19 ms.",
+      "warm_total_ms": 45.0,
+      "rerank_ms": 19.0,
+      "repo": "itsdangerous"
+    },
+    "stages": {
+      "recorded": {
+        "commit": "64c7ae6",
+        "date": "2026-10-04",
+        "results_entry": "Feature: per-stage timing for indexing and chat"
+      },
+      "source": "docs/RESULTS.md, scripts/time_stages.py, 3 processes cold / 6 runs warm",
+      "note": "Measured before search depth rose from 10 to 20, so the totals here are lower than the shipped settings give; the breakdown is what the stages cost relative to one another. The model was not timed: no provider key was set, so a stand-in answered instantly and the llm figure is LangChain overhead only.",
+      "columns": [
+        "embed_query",
+        "search",
+        "rerank",
+        "llm_stand_in",
+        "first_token_sent",
+        "total"
+      ],
+      "rows": [
+        {
+          "case": "itsdangerous cold",
+          "values": [
+            0.4,
+            3.5,
+            5.7,
+            11.0,
+            27.0,
+            37.0
+          ]
+        },
+        {
+          "case": "itsdangerous warm",
+          "values": [
+            0.3,
+            0.4,
+            4.7,
+            3.1,
+            12.2,
+            25.5
+          ]
+        },
+        {
+          "case": "flask cold",
+          "values": [
+            0.3,
+            4.1,
+            7.1,
+            7.9,
+            24.9,
+            34.4
+          ]
+        },
+        {
+          "case": "flask warm",
+          "values": [
+            0.3,
+            0.6,
+            6.5,
+            3.0,
+            15.5,
+            32.8
+          ]
+        }
+      ]
+    }
+  },
+  "limitations": {
+    "title": "Limitations and weak checks",
+    "collapsed": true,
+    "smoke_check": {
+      "title": "Answer smoke check",
+      "weak": true,
+      "what_it_is": "Two string tests per answer: is the expected file among the citations, and does the answer contain one short hand-written word. There is no judge model and nothing reads whether the explanation is correct, complete or well reasoned. A wrong answer can pass; a good one fails on a synonym.",
+      "questions": 15,
+      "model": "openai/gpt-oss-20b",
+      "modes": [
+        {
+          "mode": "fast",
+          "passed": 8,
+          "of": 15,
+          "expected_file_cited": 9,
+          "fact_present": 13,
+          "right_fact_wrong_file": 5,
+          "recorded": {
+            "commit": "f67b5d4",
+            "date": "2026-10-06",
+            "results_entry": "Check: deep-mode answer smoke test rerun, with the quota damage removed"
+          }
+        },
+        {
+          "mode": "deep",
+          "passed": 3,
+          "of": 15,
+          "expected_file_cited": 7,
+          "fact_present": 9,
+          "right_fact_wrong_file": 6,
+          "recorded": {
+            "commit": "d01ecba",
+            "date": "2026-10-06",
+            "results_entry": "Check: deep-mode smoke test after the mentor-first fix \u2014 **the score did not improve**"
+          }
+        }
+      ],
+      "note": "The last complete pass of each mode. A third deep pass reached only 8 of the 15 questions before the provider's daily limit stopped it, and is not comparable with either. Deep mode is worse than fast mode on this check and the reason is not settled.",
+      "partial_pass": {
+        "commit": "32a9aba",
+        "date": "2026-10-06",
+        "results_entry": "Check: third deep smoke pass"
+      }
+    },
+    "sample_sizes": [
+      {
+        "what": "retrieval",
+        "questions": 40,
+        "detail": "20 per repository, 10 development and 10 held out each"
+      },
+      {
+        "what": "structural",
+        "questions": 49,
+        "detail": "24 itsdangerous and 25 flask, 26 development / 23 held out"
+      },
+      {
+        "what": "answer smoke check",
+        "questions": 15,
+        "detail": "run in each of the two chat modes"
+      }
+    ],
+    "sample_size_note": "On a split of 20 questions one question is 0.05 of a hit rate, so a difference of two or three questions is not a result. The subjects were chosen by hand, which is a bias a held-out split narrows but does not remove.",
+    "repos": [
+      {
+        "name": "itsdangerous",
+        "url": "https://github.com/pallets/itsdangerous",
+        "commit": "672971d66a2e"
+      },
+      {
+        "name": "flask",
+        "url": "https://github.com/pallets/flask",
+        "commit": "d73fa1cdcbd8"
+      }
+    ],
+    "repos_note": "Two Python libraries by the same authors. Nothing here says how the system behaves on another language, a larger repository, or code written in a different style.",
+    "document_cap": {
+      "documents": 600,
+      "applies_to": "the semantic (cloudflare) provider",
+      "recorded": {
+        "commit": "6933310",
+        "date": "2026-10-11",
+        "results_entry": "Check: what a full 1,705-document flask index would cost, with the cap left at 600"
+      },
+      "note": "A capped index keeps the first 600 documents in collection order - every file record, then functions - which is not a random sample. Every retrieval figure above was measured on the uncapped corpus; what a capped index would score has not been measured."
+    }
+  }
+}

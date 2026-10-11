@@ -27,6 +27,10 @@ RUN if [ "$INSTALL_FASTEMBED" = "1" ]; then \
 COPY codeatlas ./codeatlas
 # Retrieval eval results, read at startup into the codeatlas_retrieval_* gauges on /metrics.
 COPY eval/results ./eval/results
+# The recorded-results summary GET /eval/benchmarks serves. Without it that route answers
+# available: false and the website's Benchmarks section says so, so the build still runs - but
+# the section is empty, which is not what a deployed image should show.
+COPY eval/benchmarks.json ./eval/benchmarks.json
 COPY README.md .
 
 EXPOSE 8000
