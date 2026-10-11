@@ -57,9 +57,12 @@ DEFAULT_CLOUDFLARE_MAX_DOCUMENTS = 600
 # The probe accepted 101 texts in one array, so the circulated 100-item cap is not current;
 # 50 is well inside whatever the real limit is and makes a failed batch cheap to re-send.
 DEFAULT_CLOUDFLARE_BATCH_SIZE = 50
-# Of the 10,000 free neurons a day, leaving 2,000 unspent so that a day of indexing cannot
-# take the allowance a visitor's questions need.
-DEFAULT_CLOUDFLARE_DAILY_NEURONS = 8000
+# A quarter of the 10,000 free neurons a day, which is lower than the headroom alone would
+# ask for. The reason is the ledger: it lives on local disk, a free host wipes that on every
+# restart, and after a restart the guard believes nothing has been spent today and will allow
+# a further full budget. At 2,500 four restart-cycles still fit inside the day's allowance -
+# and 2,500 is about nine capped repositories, which is a reasonable day for a demo.
+DEFAULT_CLOUDFLARE_DAILY_NEURONS = 2500
 DEFAULT_CLOUDFLARE_TIMEOUT_SECONDS = 30.0
 DEFAULT_CLOUDFLARE_RETRIES = 2
 DEFAULT_CLOUDFLARE_FAILURE_THRESHOLD = 3

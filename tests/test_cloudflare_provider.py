@@ -107,7 +107,7 @@ def test_the_defaults_are_the_ones_that_were_decided() -> None:
     assert settings.max_chars == DEFAULT_CLOUDFLARE_MAX_CHARS == 2000
     assert settings.max_documents == DEFAULT_CLOUDFLARE_MAX_DOCUMENTS == 600
     assert settings.batch_size == DEFAULT_CLOUDFLARE_BATCH_SIZE == 50
-    assert settings.daily_neurons == DEFAULT_CLOUDFLARE_DAILY_NEURONS == 8000
+    assert settings.daily_neurons == DEFAULT_CLOUDFLARE_DAILY_NEURONS == 2500
 
 
 def test_the_indexing_options_follow_the_provider() -> None:
