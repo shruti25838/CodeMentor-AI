@@ -1218,3 +1218,24 @@ Every number or claim here comes from a command that can be re-run.
   It sits in a subfolder, like the fastembed and cloudflare results, because `load_eval_results` globs `*.json` in `eval/results` itself and labels each gauge by the file's `split`; this file has no single split and would be skipped with a warning. The glob is not recursive, so nothing else reads it. `eval/results/structural/README.md` says the same in place.
   **The recorded commit reads `bf5f6d5-dirty`**, which is the commit before this one plus the uncommitted `--json` flag that this commit contains. The same thing happened to the retrieval result files at 97242ac and it is recorded there too; the alternative is a second commit whose only purpose is to make a string look tidier.
   **What the file does not contain:** no account id, no key, no budget or neuron figure, and no visitor text. The subjects in it are Python identifiers from the two public repositories, which the question set already names, and the `note` on each is my own one-line description of why that question is interesting
+### Change: the committed hash retrieval results carry recall@20
+- Value: `eval/results/{dev,test,all}.json` were written at 97242ac, before recall@20 was added to the eval at fa0db11, so the only record of hash's recall@20 was the table in this file. The three files were regenerated and **every figure already in them is byte-identical**; the runs added recall@20 per question, per repository and overall, and the per-repository clipping block (0 clipped, 100.0% of characters kept — hash has no clip)
+
+  | split | repo | n | hit@1 | hit@3 | hit@5 | P@1 | P@3 | P@5 | MRR@10 | recall@20 |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | dev | itsdangerous | 10 | 0.600 | 0.700 | 0.800 | 0.600 | 0.500 | 0.400 | 0.692 | 0.900 |
+  | dev | flask | 10 | 0.600 | 0.700 | 0.700 | 0.600 | 0.467 | 0.360 | 0.633 | 0.800 |
+  | dev | overall | 20 | 0.600 | 0.700 | 0.750 | 0.600 | 0.483 | 0.380 | 0.662 | 0.850 |
+  | test (held out) | itsdangerous | 10 | 0.800 | 0.800 | 0.900 | 0.800 | 0.700 | 0.560 | 0.820 | 1.000 |
+  | test (held out) | flask | 10 | 0.400 | 0.500 | 0.600 | 0.400 | 0.367 | 0.280 | 0.470 | 0.600 |
+  | test (held out) | overall | 20 | 0.600 | 0.650 | 0.750 | 0.600 | 0.533 | 0.420 | 0.645 | 0.800 |
+  | all | overall | 40 | 0.600 | 0.675 | 0.750 | 0.600 | 0.508 | 0.400 | 0.654 | 0.825 |
+
+  The dev and held-out recall@20 figures are the ones recorded at fa0db11, reproduced four days later on the same machine. `all` is dev and test together and is not a third measurement; its recall@20 of 0.825 appears here for the first time. Runs took 3.3 s, 3.7 s and 6.2 s
+- Command: `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/eval_retrieval.py --split dev --json eval/results/dev.json`, the same for `--split test` and `--split all`; `python -m pytest tests/test_metrics.py tests/test_retrieval_eval.py tests/test_eval_stats.py -q` -> 27 passed. No model key is set and no API is called; hash runs entirely locally
+- Dataset/repo: https://github.com/pallets/itsdangerous at 672971d66a2ef9f85151e53283113f33d642dabd (15 files, 159 records); https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35 (83 files, 1,705 records); the 40 questions in `eval/questions/*.json`
+- Date: 2026-10-11
+- Commit: c05e439
+- Notes: **nothing was re-measured and nothing moved.** The check was mechanical: both files were loaded, `seconds`, `codementor_commit`, the new `recall@20` keys and the new `clipped` block were removed from each, and the remainder compared as parsed JSON. All three compared equal. Had any hit rate, precision or MRR differed, this entry would be reporting that instead.
+  The files now record commit `016c655` rather than `97242ac`, and none of them says `-dirty`: each split was written into a scratch folder first and copied in afterwards, so the working tree was clean for all three runs. The retrieval gauges on `/metrics` read these three files and are unaffected — `load_eval_results` reads only `split`, `overall.hit_rate`, `overall.mrr@10`, the commit and the embedder.
+  **Why this was worth a commit of its own.** The benchmarks summary is built from committed result files and is checked by regenerating it; a figure that lives only in the prose of this file cannot be part of that. recall@20 is also the most informative number hash has — on held-out flask it is 0.600 against hit@5 0.600, which says the losses there are the embedder never finding the file, not the reranker mis-ordering it
