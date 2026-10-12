@@ -1,0 +1,410 @@
+{
+  "codementor_commit": "909f98d",
+  "embedder": "hash (HashEmbeddingService, 384 dims, subtokens, hashed bag of words, not semantic), records structured",
+  "signature": "hash:384:lowercase=0:subtokens=1|records=structured",
+  "environment": [
+    {
+      "name": "CODEATLAS_EMBEDDING_PROVIDER",
+      "set": "hash",
+      "effective": "hash",
+      "from_default": false
+    },
+    {
+      "name": "CODEATLAS_RECORD_FORMAT",
+      "set": "structured",
+      "effective": "structured",
+      "from_default": false
+    },
+    {
+      "name": "CODEATLAS_BM25",
+      "set": "true",
+      "effective": "true",
+      "from_default": false
+    },
+    {
+      "name": "CODEATLAS_RECORD_WINDOW_CHARS",
+      "set": null,
+      "effective": 2000,
+      "from_default": true
+    },
+    {
+      "name": "CODEATLAS_RECORD_WINDOW_OVERLAP",
+      "set": null,
+      "effective": 200,
+      "from_default": true
+    },
+    {
+      "name": "CODEATLAS_RETRIEVAL_CANDIDATES",
+      "set": null,
+      "effective": 20,
+      "from_default": true
+    },
+    {
+      "name": "CODEATLAS_RERANK_WEIGHT",
+      "set": null,
+      "effective": 1.0,
+      "from_default": true
+    },
+    {
+      "name": "CODEATLAS_BM25_K1",
+      "set": null,
+      "effective": 1.2,
+      "from_default": true
+    },
+    {
+      "name": "CODEATLAS_BM25_B",
+      "set": null,
+      "effective": 0.75,
+      "from_default": true
+    },
+    {
+      "name": "CODEATLAS_BM25_RRF_K",
+      "set": null,
+      "effective": 60,
+      "from_default": true
+    },
+    {
+      "name": "CODEATLAS_BM25_DEPTH",
+      "set": null,
+      "effective": 0,
+      "from_default": true
+    },
+    {
+      "name": "CODEATLAS_DROP_STOPWORDS",
+      "set": null,
+      "effective": "true",
+      "from_default": true
+    },
+    {
+      "name": "CODEATLAS_EMBED_PREFIX_METADATA",
+      "set": null,
+      "effective": "true",
+      "from_default": true
+    },
+    {
+      "name": "CODEATLAS_EMBED_MAX_CHARS",
+      "set": null,
+      "effective": 0,
+      "from_default": true
+    }
+  ],
+  "retrieval_settings": {
+    "candidates": 20,
+    "rerank_weight": 1.0,
+    "rerank_subtokens": false,
+    "drop_stopwords": true,
+    "skip_tests": false,
+    "bm25_enabled": true,
+    "bm25_k1": 1.2,
+    "bm25_b": 0.75,
+    "bm25_rrf_k": 60,
+    "bm25_depth": 0
+  },
+  "splits": [
+    {
+      "split": "dev",
+      "expected_source": "eval/results/experiments/structured-dev-hash.json",
+      "arrangement": "rrf+keyword",
+      "rows": [
+        {
+          "scope": "itsdangerous",
+          "measured": {
+            "questions": 10,
+            "hit@1": 0.6,
+            "hit@3": 0.7,
+            "hit@5": 0.8,
+            "mrr@10": 0.685,
+            "recall@20": 1.0
+          },
+          "expected": {
+            "questions": 10,
+            "hit@1": 0.6,
+            "hit@3": 0.7,
+            "hit@5": 0.8,
+            "mrr@10": 0.685,
+            "recall@20": 1.0,
+            "recall@candidates(20)": 1.0
+          },
+          "differences": []
+        },
+        {
+          "scope": "flask",
+          "measured": {
+            "questions": 10,
+            "hit@1": 0.6,
+            "hit@3": 1.0,
+            "hit@5": 1.0,
+            "mrr@10": 0.8,
+            "recall@20": 1.0
+          },
+          "expected": {
+            "questions": 10,
+            "hit@1": 0.6,
+            "hit@3": 1.0,
+            "hit@5": 1.0,
+            "mrr@10": 0.8,
+            "recall@20": 1.0,
+            "recall@candidates(20)": 1.0
+          },
+          "differences": []
+        },
+        {
+          "scope": "overall",
+          "measured": {
+            "questions": 20,
+            "hit@1": 0.6,
+            "hit@3": 0.85,
+            "hit@5": 0.9,
+            "mrr@10": 0.7425,
+            "recall@20": 1.0
+          },
+          "expected": {
+            "questions": 20,
+            "hit@1": 0.6,
+            "hit@3": 0.85,
+            "hit@5": 0.9,
+            "mrr@10": 0.7425,
+            "recall@20": 1.0,
+            "recall@candidates(20)": 1.0
+          },
+          "differences": []
+        }
+      ]
+    },
+    {
+      "split": "test",
+      "expected_source": "eval/results/experiments/chosen-heldout-hash.json",
+      "arrangement": "rrf+keyword",
+      "rows": [
+        {
+          "scope": "itsdangerous",
+          "measured": {
+            "questions": 10,
+            "hit@1": 0.8,
+            "hit@3": 0.8,
+            "hit@5": 0.8,
+            "mrr@10": 0.8278,
+            "recall@20": 1.0
+          },
+          "expected": {
+            "questions": 10,
+            "hit@1": 0.8,
+            "hit@3": 0.8,
+            "hit@5": 0.8,
+            "mrr@10": 0.8278,
+            "recall@20": 1.0,
+            "recall@candidates(20)": 1.0
+          },
+          "differences": []
+        },
+        {
+          "scope": "flask",
+          "measured": {
+            "questions": 10,
+            "hit@1": 0.6,
+            "hit@3": 0.9,
+            "hit@5": 0.9,
+            "mrr@10": 0.7292,
+            "recall@20": 1.0
+          },
+          "expected": {
+            "questions": 10,
+            "hit@1": 0.6,
+            "hit@3": 0.9,
+            "hit@5": 0.9,
+            "mrr@10": 0.7292,
+            "recall@20": 1.0,
+            "recall@candidates(20)": 1.0
+          },
+          "differences": []
+        },
+        {
+          "scope": "overall",
+          "measured": {
+            "questions": 20,
+            "hit@1": 0.7,
+            "hit@3": 0.85,
+            "hit@5": 0.85,
+            "mrr@10": 0.7785,
+            "recall@20": 1.0
+          },
+          "expected": {
+            "questions": 20,
+            "hit@1": 0.7,
+            "hit@3": 0.85,
+            "hit@5": 0.85,
+            "mrr@10": 0.7785,
+            "recall@20": 1.0,
+            "recall@candidates(20)": 1.0
+          },
+          "differences": []
+        }
+      ]
+    },
+    {
+      "split": "holdout2",
+      "expected_source": "eval/results/experiments/holdout2-chosen-hash.json",
+      "arrangement": "rrf+keyword",
+      "rows": [
+        {
+          "scope": "itsdangerous",
+          "measured": {
+            "questions": 10,
+            "hit@1": 0.6,
+            "hit@3": 0.6,
+            "hit@5": 0.8,
+            "mrr@10": 0.65,
+            "recall@20": 0.8
+          },
+          "expected": {
+            "questions": 10,
+            "hit@1": 0.6,
+            "hit@3": 0.6,
+            "hit@5": 0.8,
+            "mrr@10": 0.65,
+            "recall@20": 0.8,
+            "recall@candidates(20)": 0.8
+          },
+          "differences": []
+        },
+        {
+          "scope": "flask",
+          "measured": {
+            "questions": 10,
+            "hit@1": 0.4,
+            "hit@3": 0.5,
+            "hit@5": 0.7,
+            "mrr@10": 0.5025,
+            "recall@20": 0.9
+          },
+          "expected": {
+            "questions": 10,
+            "hit@1": 0.4,
+            "hit@3": 0.5,
+            "hit@5": 0.7,
+            "mrr@10": 0.5025,
+            "recall@20": 0.9,
+            "recall@candidates(20)": 0.9
+          },
+          "differences": []
+        },
+        {
+          "scope": "overall",
+          "measured": {
+            "questions": 20,
+            "hit@1": 0.5,
+            "hit@3": 0.55,
+            "hit@5": 0.75,
+            "mrr@10": 0.5763,
+            "recall@20": 0.85
+          },
+          "expected": {
+            "questions": 20,
+            "hit@1": 0.5,
+            "hit@3": 0.55,
+            "hit@5": 0.75,
+            "mrr@10": 0.5763,
+            "recall@20": 0.85,
+            "recall@candidates(20)": 0.85
+          },
+          "differences": []
+        }
+      ]
+    }
+  ],
+  "index_cost": [
+    {
+      "repo": "itsdangerous",
+      "record_format": "whole",
+      "signature": "hash:384:lowercase=0:subtokens=1",
+      "source_files": 15,
+      "parsed_functions": 144,
+      "records": 159,
+      "file_records": 15,
+      "function_records": 144,
+      "index_bytes": 829500,
+      "index_seconds": 0.231
+    },
+    {
+      "repo": "itsdangerous",
+      "record_format": "structured",
+      "signature": "hash:384:lowercase=0:subtokens=1|records=structured",
+      "source_files": 15,
+      "parsed_functions": 144,
+      "records": 177,
+      "file_records": 15,
+      "function_records": 162,
+      "index_bytes": 926012,
+      "index_seconds": 0.22
+    },
+    {
+      "repo": "flask",
+      "record_format": "whole",
+      "signature": "hash:384:lowercase=0:subtokens=1",
+      "source_files": 83,
+      "parsed_functions": 1622,
+      "records": 1705,
+      "file_records": 83,
+      "function_records": 1622,
+      "index_bytes": 8889386,
+      "index_seconds": 2.736
+    },
+    {
+      "repo": "flask",
+      "record_format": "structured",
+      "signature": "hash:384:lowercase=0:subtokens=1|records=structured",
+      "source_files": 83,
+      "parsed_functions": 1622,
+      "records": 1862,
+      "file_records": 83,
+      "function_records": 1779,
+      "index_bytes": 9744779,
+      "index_seconds": 2.236
+    }
+  ],
+  "index_guard": {
+    "repo": "itsdangerous",
+    "question_id": "itsd-01",
+    "cases": [
+      {
+        "index_built_as": "whole",
+        "server_configured_as": "whole",
+        "stored_signature": "hash:384:lowercase=0:subtokens=1",
+        "server_signature": "hash:384:lowercase=0:subtokens=1",
+        "records_returned": 5,
+        "index_cache_reuses_it": true,
+        "refused": false
+      },
+      {
+        "index_built_as": "whole",
+        "server_configured_as": "structured",
+        "stored_signature": "hash:384:lowercase=0:subtokens=1",
+        "server_signature": "hash:384:lowercase=0:subtokens=1|records=structured",
+        "records_returned": 0,
+        "index_cache_reuses_it": false,
+        "refused": true
+      },
+      {
+        "index_built_as": "structured",
+        "server_configured_as": "whole",
+        "stored_signature": "hash:384:lowercase=0:subtokens=1|records=structured",
+        "server_signature": "hash:384:lowercase=0:subtokens=1",
+        "records_returned": 0,
+        "index_cache_reuses_it": false,
+        "refused": true
+      },
+      {
+        "index_built_as": "structured",
+        "server_configured_as": "structured",
+        "stored_signature": "hash:384:lowercase=0:subtokens=1|records=structured",
+        "server_signature": "hash:384:lowercase=0:subtokens=1|records=structured",
+        "records_returned": 5,
+        "index_cache_reuses_it": true,
+        "refused": false
+      }
+    ],
+    "passes": true
+  },
+  "matches_experiments": true,
+  "seconds": 20.4
+}
