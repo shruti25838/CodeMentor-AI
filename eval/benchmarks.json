@@ -25,6 +25,7 @@
       "mrr@10",
       "recall@20"
     ],
+    "splits_note": "The original held-out split was reused: it has been scored in at least six recorded entries since it was written, so it has informed choices before and is a weak confirmation rather than a clean one. holdout2 was written after those runs and scored once. It is the fresher estimate of the two, and it is the lower one: on this question set the same code scores markedly worse. Both sets are compared in the Experiments panel.",
     "providers": [
       {
         "id": "hash",
@@ -43,6 +44,8 @@
               "results_entry": "Change: the committed hash retrieval results carry recall@20"
             },
             "result_file_commit": "016c655",
+            "reused": false,
+            "note": "",
             "rows": [
               {
                 "scope": "itsdangerous",
@@ -86,6 +89,8 @@
               "results_entry": "Change: the committed hash retrieval results carry recall@20"
             },
             "result_file_commit": "016c655",
+            "reused": true,
+            "note": "The original held-out split was reused: it has been scored in at least six recorded entries since it was written, so it has informed choices before and is a weak confirmation rather than a clean one.",
             "rows": [
               {
                 "scope": "itsdangerous",
@@ -142,6 +147,8 @@
               "date": "2026-10-09",
               "results_entry": "Check: three Cloudflare configurations on the dev split, three orderings each"
             },
+            "reused": false,
+            "note": "",
             "rows": [
               {
                 "scope": "itsdangerous",
@@ -184,6 +191,8 @@
               "date": "2026-10-10",
               "results_entry": "Check: the held-out split, run once, for the default configuration"
             },
+            "reused": true,
+            "note": "The original held-out split was reused: it has been scored in at least six recorded entries since it was written, so it has informed choices before and is a weak confirmation rather than a clean one.",
             "rows": [
               {
                 "scope": "itsdangerous",
@@ -469,7 +478,7 @@
   },
   "experiments": {
     "title": "Experiments",
-    "note": "Every retrieval arrangement this batch scored, kept and rejected. The fresh split (holdout2) was written after the dev and held-out sets had been used repeatedly and was scored once, after the configuration was chosen.",
+    "note": "Every retrieval arrangement this batch scored, kept and rejected. Two held-out sets are shown, and they are not equally good evidence.",
     "keep_rule": "Kept only if dev MRR@10 rises and dev hit@5 does not fall.",
     "metrics": [
       "hit@5",
@@ -477,10 +486,13 @@
       "recall@20"
     ],
     "splits": {
-      "dev": "development",
-      "held_out": "held out (used before)",
-      "holdout2": "fresh, scored once"
+      "dev": "development - what the choice was made from",
+      "held_out": "held out - reused, scored many times before",
+      "holdout2": "fresh - written later, scored once"
     },
+    "reused_split_note": "The original held-out split was reused: it has been scored in at least six recorded entries since it was written, so it has informed choices before and is a weak confirmation rather than a clean one.",
+    "fresh_split_note": "holdout2 was written after those runs and scored once. It is the fresher estimate of the two, and it is the lower one: on this question set the same code scores markedly worse.",
+    "both_splits_note": "Both are shown side by side wherever a held-out number appears. Where they disagree, holdout2 is the one to believe.",
     "source": "eval/results/experiments/",
     "rows": [
       {
@@ -934,11 +946,74 @@
         "result_file_commit": "7046e81-dirty"
       }
     ],
+    "splits_compared": {
+      "title": "The two held-out sets, side by side",
+      "metric": "mrr@10",
+      "note": "The original held-out split was reused: it has been scored in at least six recorded entries since it was written, so it has informed choices before and is a weak confirmation rather than a clean one. holdout2 was written after those runs and scored once. It is the fresher estimate of the two, and it is the lower one: on this question set the same code scores markedly worse. Both are shown side by side wherever a held-out number appears. Where they disagree, holdout2 is the one to believe.",
+      "columns": [
+        "dev",
+        "held out (reused)",
+        "fresh (holdout2)",
+        "difference"
+      ],
+      "rows": [
+        {
+          "embedder": "hash",
+          "configuration": "today's default",
+          "change": "whole records, current",
+          "verdict": "baseline",
+          "dev": 0.6625,
+          "held_out": 0.645,
+          "holdout2": 0.3956,
+          "difference": -0.2494,
+          "held_out_source": "eval/results/test.json",
+          "holdout2_source": "eval/results/experiments/holdout2-default-hash.json"
+        },
+        {
+          "embedder": "hash",
+          "configuration": "chosen",
+          "change": "structured records, rrf+keyword",
+          "verdict": "chosen",
+          "dev": 0.7425,
+          "held_out": 0.7785,
+          "holdout2": 0.5763,
+          "difference": -0.2022,
+          "held_out_source": "eval/results/experiments/chosen-heldout-hash.json",
+          "holdout2_source": "eval/results/experiments/holdout2-chosen-hash.json"
+        },
+        {
+          "embedder": "cloudflare",
+          "configuration": "today's default",
+          "change": "whole records, current",
+          "verdict": "baseline",
+          "dev": 0.8042,
+          "held_out": 0.8538,
+          "holdout2": 0.5867,
+          "difference": -0.2671,
+          "held_out_source": "eval/results/cloudflare/test.json",
+          "holdout2_source": "eval/results/experiments/holdout2-default-cloudflare.json"
+        },
+        {
+          "embedder": "cloudflare",
+          "configuration": "chosen",
+          "change": "structured records, current",
+          "verdict": "chosen",
+          "dev": 0.825,
+          "held_out": 0.8729,
+          "holdout2": 0.6408,
+          "difference": -0.2321,
+          "held_out_source": "eval/results/experiments/chosen-heldout-cloudflare.json",
+          "holdout2_source": "eval/results/experiments/holdout2-chosen-cloudflare.json"
+        }
+      ]
+    },
     "chat_modes": {
       "title": "Chat mode: legacy against grounded",
       "label": "one local run, one model, one question set - not a benchmark",
       "model": "groq / openai/gpt-oss-20b",
       "questions": 15,
+      "runs": 30,
+      "scale_note": "15 questions, 30 runs - each mode answered every question once. A shorter trial run exists in the result folder and is deliberately not shown here.",
       "weak_check": "Two string tests per answer: is the expected file cited, and is one hand-written word present. No judge model, and nothing reads whether the explanation is correct.",
       "stopped_early": "",
       "source": "eval/results/experiments/chat-modes.json",

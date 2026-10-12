@@ -58,9 +58,18 @@ HOLDOUT2_SOURCES = {
     ("cloudflare", "default"): "holdout2-default-cloudflare.json",
     ("cloudflare", "chosen"): "holdout2-chosen-cloudflare.json",
 }
-# The chat-mode comparison, if one has been run. The full run is preferred; a short trial is
-# read when it is all there is, and the row says how many questions it covered either way.
-CHAT_MODE_SOURCES = ("chat-modes.json", "chat-modes-trial.json")
+# The chat-mode comparison: the full run and **only** the full run. A two-question trial was made
+# first, while the token accounting was still being fixed, and `chat-modes-trial.json` is kept as
+# the record of it - but it is deliberately not a source here. Falling back to it would put a
+# two-question, four-run block on the page under the same heading, the same badge and the same
+# column names as the fifteen-question, thirty-run comparison, and the only thing distinguishing
+# them would be a number a reader has to notice. If the full run is missing the panel shows no
+# chat-mode block at all, which is the honest outcome.
+CHAT_MODE_SOURCES = ("chat-modes.json",)
+# How many questions and runs the full comparison is, so the block can say so rather than relying
+# on a reader to multiply. A file that does not match these is not the full run.
+CHAT_MODE_QUESTIONS = 15
+CHAT_MODE_RUNS = 30
 
 # What the server runs today, and what the decision entry chose, per embedder.
 BASELINE = ("whole", "current")
@@ -160,6 +169,25 @@ METRICS = ["hit@1", "hit@3", "hit@5", "p@3", "mrr@10", "recall@20"]
 
 SPLIT_LABELS = {"dev": "development", "test": "held-out"}
 
+# Said once, here, and carried by every panel that shows a held-out number. The original held-out
+# split was written at the same time as dev and has been scored in entry after entry since, so a
+# configuration doing well on it is not being tested on code the process has never seen. holdout2
+# was written after those runs and scored once, so it is the fresher of the two estimates - which
+# is why it is the lower one.
+REUSED_SPLIT_NOTE = (
+    "The original held-out split was reused: it has been scored in at least six recorded entries "
+    "since it was written, so it has informed choices before and is a weak confirmation rather "
+    "than a clean one."
+)
+FRESH_SPLIT_NOTE = (
+    "holdout2 was written after those runs and scored once. It is the fresher estimate of the two, "
+    "and it is the lower one: on this question set the same code scores markedly worse."
+)
+BOTH_SPLITS_NOTE = (
+    "Both are shown side by side wherever a held-out number appears. Where they disagree, holdout2 "
+    "is the one to believe."
+)
+
 
 def _read(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -217,6 +245,8 @@ def hash_retrieval() -> dict:
                 "source": f"eval/results/{name}.json",
                 "recorded": PROVENANCE["retrieval.hash"],
                 "result_file_commit": data["codementor_commit"],
+                "reused": name == "test",
+                "note": REUSED_SPLIT_NOTE if name == "test" else "",
                 "rows": rows,
             }
         )
@@ -247,6 +277,8 @@ def cloudflare_retrieval() -> dict:
                 "questions": chosen["overall"][ordering]["questions"],
                 "source": f"eval/results/cloudflare/{name}.json",
                 "recorded": PROVENANCE[key],
+                "reused": name == "test",
+                "note": REUSED_SPLIT_NOTE if name == "test" else "",
                 "rows": rows,
             }
         )
@@ -279,6 +311,7 @@ def retrieval() -> dict:
             "keyword overlap. A record counts as relevant when its file is one of the question's expected files."
         ),
         "metrics": METRICS,
+        "splits_note": f"{REUSED_SPLIT_NOTE} {FRESH_SPLIT_NOTE} Both sets are compared in the Experiments panel.",
         "providers": [hash_retrieval(), cloudflare_retrieval()],
     }
 
@@ -477,16 +510,85 @@ def experiments() -> dict:
     return {
         "title": "Experiments",
         "note": (
-            "Every retrieval arrangement this batch scored, kept and rejected. The fresh split "
-            "(holdout2) was written after the dev and held-out sets had been used repeatedly and "
-            "was scored once, after the configuration was chosen."
+            "Every retrieval arrangement this batch scored, kept and rejected. Two held-out sets "
+            "are shown, and they are not equally good evidence."
         ),
         "keep_rule": "Kept only if dev MRR@10 rises and dev hit@5 does not fall.",
         "metrics": EXPERIMENT_METRICS,
-        "splits": {"dev": "development", "held_out": "held out (used before)", "holdout2": "fresh, scored once"},
+        "splits": {
+            "dev": "development - what the choice was made from",
+            "held_out": "held out - reused, scored many times before",
+            "holdout2": "fresh - written later, scored once",
+        },
+        "reused_split_note": REUSED_SPLIT_NOTE,
+        "fresh_split_note": FRESH_SPLIT_NOTE,
+        "both_splits_note": BOTH_SPLITS_NOTE,
         "source": "eval/results/experiments/",
         "rows": rows,
+        "splits_compared": splits_compared(dev_runs, held_out, holdout2),
         "chat_modes": chat_modes(),
+    }
+
+
+def splits_compared(dev_runs: dict, held_out: dict, holdout2: dict) -> dict:
+    """The two held-out sets beside each other, for the four configurations scored on both.
+
+    The chosen rows carry both numbers themselves. A baseline's held-out figure does not live in
+    the experiment files - it is the recorded retrieval run in the panel above - so it is read
+    from there and the source of each number is named, rather than one of them being quietly
+    filled in from somewhere a reader cannot check.
+    """
+    hash_held_out = _read(RESULTS / "test.json")["overall"]["mrr@10"]
+    cloudflare_held_out = next(
+        r for r in _read(RESULTS / "cloudflare" / "test.json")["results"] if r["config"] == "mean-2000"
+    )["overall"]["keyword"]["mrr@10"]
+    baseline_held_out = {
+        "hash": (hash_held_out, "eval/results/test.json"),
+        "cloudflare": (cloudflare_held_out, "eval/results/cloudflare/test.json"),
+    }
+
+    rows = []
+    for embedder in ("hash", "cloudflare"):
+        records, arrangement = CHOSEN[embedder]
+        reused, source = baseline_held_out[embedder]
+        fresh = holdout2[(embedder, "default")]["overall"][BASELINE[1]]["mrr@10"]
+        rows.append(
+            {
+                "embedder": embedder,
+                "configuration": "today's default",
+                "change": f"{BASELINE[0]} records, {BASELINE[1]}",
+                "verdict": "baseline",
+                "dev": dev_runs[(embedder, BASELINE[0])]["overall"][BASELINE[1]]["mrr@10"],
+                "held_out": reused,
+                "holdout2": fresh,
+                "difference": round(fresh - reused, 4),
+                "held_out_source": source,
+                "holdout2_source": f"eval/results/experiments/{HOLDOUT2_SOURCES[(embedder, 'default')]}",
+            }
+        )
+        reused = held_out[embedder]["overall"][arrangement]["mrr@10"]
+        fresh = holdout2[(embedder, "chosen")]["overall"][arrangement]["mrr@10"]
+        rows.append(
+            {
+                "embedder": embedder,
+                "configuration": "chosen",
+                "change": f"{records} records, {arrangement}",
+                "verdict": "chosen",
+                "dev": dev_runs[(embedder, records)]["overall"][arrangement]["mrr@10"],
+                "held_out": reused,
+                "holdout2": fresh,
+                "difference": round(fresh - reused, 4),
+                "held_out_source": f"eval/results/experiments/{HELD_OUT_SOURCES[embedder]}",
+                "holdout2_source": f"eval/results/experiments/{HOLDOUT2_SOURCES[(embedder, 'chosen')]}",
+            }
+        )
+
+    return {
+        "title": "The two held-out sets, side by side",
+        "metric": "mrr@10",
+        "note": f"{REUSED_SPLIT_NOTE} {FRESH_SPLIT_NOTE} {BOTH_SPLITS_NOTE}",
+        "columns": ["dev", "held out (reused)", "fresh (holdout2)", "difference"],
+        "rows": rows,
     }
 
 
@@ -501,11 +603,21 @@ def chat_modes() -> dict | None:
         return None
 
     summary = data["summary"]
+    runs = sum(block["runs"] for block in summary.values())
+    if data["questions"] != CHAT_MODE_QUESTIONS or runs != CHAT_MODE_RUNS:
+        # Not the full comparison. Rather than drawing a smaller run under the same heading and
+        # trusting a reader to spot the question count, the block is left out entirely.
+        return None
     return {
         "title": "Chat mode: legacy against grounded",
         "label": "one local run, one model, one question set - not a benchmark",
         "model": data["model"],
         "questions": data["questions"],
+        "runs": runs,
+        "scale_note": (
+            f"{data['questions']} questions, {runs} runs - each mode answered every question once. "
+            "A shorter trial run exists in the result folder and is deliberately not shown here."
+        ),
         "weak_check": data["weak_check"],
         "stopped_early": data.get("stopped_early", ""),
         "source": f"eval/results/experiments/{path.name}",
