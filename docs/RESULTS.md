@@ -1735,3 +1735,22 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **what passing the rule does and does not do.** It makes a default change *proposable*, not applied. Changing `CODEATLAS_RECORD_FORMAT` or `CODEATLAS_BM25` in the committed configuration would rebuild every existing index (the format is in the embedder signature and therefore in the index-format guard) and would move the two numbers the held-out guard asserts, so it is its own change with its own entry, and this batch does not make it.
   **The sample is twenty questions.** One question is 0.05 of a hit rate and about 0.05 of MRR, so a rule written on "higher" and "not lower" can turn on a single question moving two ranks. That is a known weakness of deciding from twenty questions and it is why the rule is two conditions rather than one, and why the per-repository table is reported beside the overall one: two repositories that disagree are worth seeing even when the average passes.
   **What could still go wrong even if everything passes.** holdout3's questions are mine, written from the same two Python libraries at the same two commits by the same method as the other sixty, so "fresh" means unseen by the tuning process, not independent of the person who wrote it. And retrieval is not answers: nothing in this rule says a visitor's answer gets better
+### Change: the experiment script can score a question set named on the command line
+- Value: an enabler for the entry below, committed separately because it changes a script and that should be reviewable on its own. `scripts/experiment_retrieval.py` carried exactly two question lists, `original` and `holdout2`, and named their files in its source. A set written later cannot be added to that source: `test_holdout3_is_not_wired_into_any_default_question_list` asserts that neither eval script contains the string, which is what stops a default run reaching an unscored set by accident. The consequence was that such a set could not be scored **at all** by this script — and the Cloudflare half of any scoring run has to go through it, because it is the only path with the offline vector cache, the spend plan and the neuron ledger.
+
+  `--set` names a question file, is repeatable, and **replaces** the list `--questions` names rather than adding to it. The result file is then labelled by the folder those files live in — computed from the paths, so the script still carries no list of sets that will exist later.
+
+  | run | files scored | `"questions"` in the result file |
+  |---|---|---|
+  | no flag | `eval/questions/*.json` | `original` |
+  | `--questions holdout2` | `eval/questions/holdout2/*.json` | `holdout2` |
+  | `--set a/x.json --set a/y.json` | exactly those two | `a` |
+  | files from two folders | exactly those | `mixed` |
+
+  Nothing about a run without `--set` changes, and the guard test still passes unchanged: scoring a later set is a deliberate act with the paths written out in the command line and in this file
+- Command: `python -m pytest tests/ -q` -> **1133 passed**, 1 skipped (6 new in `tests/test_experiment_retrieval_script.py`: the two built-in lists, a run with no flag keeping them, a named set replacing the list entirely under either `--questions`, the folder label, the `mixed` label for files from two folders, and a relative path labelled like an absolute one); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (186 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; in `codementor-ui`: `npm test` (74 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none for the tests (paths only, nothing is read or scored). The guard eval is `eval/questions/*.json` at the two pinned commits. **No provider was called**
+- Date: 2026-10-12
+- Commit: fac69a4
+- Notes: **no measurement is in this entry** and nothing was scored by it.
+  **Why not a `--questions holdout3` choice instead.** That is the one thing that cannot be done: the string would be in the script's source and the guard test exists precisely to forbid it. Naming the files on the command line keeps the set reachable only from a command somebody wrote down
