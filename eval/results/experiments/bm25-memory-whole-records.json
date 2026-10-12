@@ -1,0 +1,63 @@
+{
+  "codementor_commit": "87d8f57",
+  "platform": "win32",
+  "record_format": "whole",
+  "bm25_enabled": true,
+  "bm25_max_indexes": 4,
+  "bm25_own_bytes_total": 4748727,
+  "repos": [
+    {
+      "repo": "itsdangerous",
+      "commit": "672971d66a2e",
+      "files": 15,
+      "records": 159,
+      "repo_id": "eval-itsdangerous"
+    },
+    {
+      "repo": "flask",
+      "commit": "d73fa1cdcbd8",
+      "files": 83,
+      "records": 1705,
+      "repo_id": "eval-flask"
+    }
+  ],
+  "bm25_indexes": [
+    {
+      "repo": "itsdangerous",
+      "repo_id": "eval-itsdangerous",
+      "records": 159,
+      "terms": 877,
+      "postings_bytes": 532163,
+      "lengths_bytes": 3812,
+      "record_pointers_bytes": 1336,
+      "own_bytes": 537359,
+      "shared_record_bytes": 7632
+    },
+    {
+      "repo": "flask",
+      "repo_id": "eval-flask",
+      "records": 1705,
+      "terms": 4121,
+      "postings_bytes": 4175640,
+      "lengths_bytes": 21976,
+      "record_pointers_bytes": 13704,
+      "own_bytes": 4211368,
+      "shared_record_bytes": 81840
+    }
+  ],
+  "steps": [
+    {
+      "after": "imports and configuration",
+      "working_set_bytes": 141131776
+    },
+    {
+      "after": "both repositories indexed",
+      "working_set_bytes": 181374976
+    },
+    {
+      "after": "one question against each",
+      "working_set_bytes": 187015168
+    }
+  ],
+  "seconds": 3.5
+}
