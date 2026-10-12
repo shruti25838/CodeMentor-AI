@@ -428,6 +428,69 @@ test("both held-out sets are shown side by side, with the gap between them", () 
     }
 });
 
+test("holdout3 is drawn as its own block, labelled as scored once", () => {
+    const holdout3 = experimentsView(SUMMARY)!.holdout3!;
+
+    assert.match(holdout3.label, /scored once/);
+    assert.equal(holdout3.questions, 20);
+    assert.deepEqual(holdout3.metrics, ["hit@1", "hit@3", "hit@5", "mrr@10", "recall@20"]);
+    assert.match(holdout3.rule, /before holdout3 was scored/);
+    assert.match(holdout3.note, /not applied|proposable/);
+    assert.ok(holdout3.recordedLabel.includes("recorded"));
+    for (const row of holdout3.rows) {
+        assert.equal(row.cells.length, holdout3.metrics.length, `${row.key} is missing a metric`);
+        assert.ok(row.verdict.length > 0, `${row.key} has no verdict`);
+        assert.ok(row.source.startsWith("eval/results/"), `${row.key} must name its result file`);
+    }
+});
+
+test("the configuration the rule barred from selection is shown and marked ineligible", () => {
+    // Leaving it out would hide where the hash gain comes from; drawing it like a candidate
+    // would let a reader think it was one. It is drawn, and it says it is not eligible.
+    const holdout3 = experimentsView(SUMMARY)!.holdout3!;
+    const ineligible = holdout3.rows.filter((r) => !r.eligible);
+
+    assert.equal(ineligible.length, 1);
+    assert.match(ineligible[0].verdict, /not eligible/);
+    assert.equal(ineligible[0].passes, false, "an ineligible row must never be marked as passing");
+});
+
+test("a holdout3 verdict is the server's, read rather than decided here", () => {
+    const holdout3 = experimentsView(SUMMARY)!.holdout3!;
+
+    for (const row of holdout3.rows) {
+        assert.equal(row.passes, row.verdict.startsWith("passes"), `${row.key}`);
+    }
+    assert.equal(holdout3.rows.filter((r) => r.passes).length, 2, "one candidate per embedder passed");
+});
+
+test("the never-used split has a column of its own in both experiment tables", () => {
+    const view = experimentsView(SUMMARY)!;
+
+    assert.match(view.neverUsedLabel, /never used/);
+    for (const row of view.rows) {
+        if (row.verdict === "chosen" || row.verdict === "baseline") {
+            assert.ok(row.holdout3, `${row.key} was scored on holdout3 and should show it`);
+        } else {
+            assert.equal(row.holdout3, null, `${row.key} must not claim a holdout3 score`);
+        }
+    }
+    for (const row of view.splitsCompared!.rows) {
+        assert.match(row.holdout3, /^\d\.\d{3}$/, `${row.key} must show its holdout3 number`);
+        assert.ok(row.sources.includes("holdout3-"), `${row.key} must name the holdout3 file it read`);
+    }
+});
+
+test("the page no longer tells a reader that one fresh set settles it", () => {
+    // Two sets that were each scored once disagree with each other by more than either
+    // disagrees with dev, which is a fact about twenty-question sets, not about one set.
+    const view = experimentsView(SUMMARY)!;
+
+    assert.match(view.freshSplitNote, /do not agree/);
+    assert.match(view.bothSplitsNote, /All three/);
+    assert.match(view.bothSplitsNote, /no single set/);
+});
+
 test("the side-by-side table keeps showing that the fresh split scores worse", () => {
     // The relationship, not the numbers: a question set that was never used scores lower than
     // one that was. If that ever stops being true the wording above has to change with it.

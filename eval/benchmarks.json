@@ -25,7 +25,7 @@
       "mrr@10",
       "recall@20"
     ],
-    "splits_note": "The original held-out split was reused: it has been scored in at least six recorded entries since it was written, so it has informed choices before and is a weak confirmation rather than a clean one. holdout2 was written after those runs and scored once. It is the fresher estimate of the two, and it is the lower one: on this question set the same code scores markedly worse. Both sets are compared in the Experiments panel.",
+    "splits_note": "The original held-out split was reused: it has been scored in at least six recorded entries since it was written, so it has informed choices before and is a weak confirmation rather than a clean one. holdout2 and holdout3 were each written after those runs and each scored once. They are the fresher estimates, and they do not agree with one another: holdout2 is the lowest of the four sets and holdout3 lands between it and the reused split. All three are compared in the Experiments panel.",
     "providers": [
       {
         "id": "hash",
@@ -488,11 +488,12 @@
     "splits": {
       "dev": "development - what the choice was made from",
       "held_out": "held out - reused, scored many times before",
-      "holdout2": "fresh - written later, scored once"
+      "holdout2": "fresh - written later, scored once",
+      "holdout3": "never used - written after holdout2 was scored, scored once here"
     },
     "reused_split_note": "The original held-out split was reused: it has been scored in at least six recorded entries since it was written, so it has informed choices before and is a weak confirmation rather than a clean one.",
-    "fresh_split_note": "holdout2 was written after those runs and scored once. It is the fresher estimate of the two, and it is the lower one: on this question set the same code scores markedly worse.",
-    "both_splits_note": "Both are shown side by side wherever a held-out number appears. Where they disagree, holdout2 is the one to believe.",
+    "fresh_split_note": "holdout2 and holdout3 were each written after those runs and each scored once. They are the fresher estimates, and they do not agree with one another: holdout2 is the lowest of the four sets and holdout3 lands between it and the reused split.",
+    "both_splits_note": "All three are shown side by side wherever a held-out number appears. The two fresh sets differ from each other by up to 0.217 of MRR@10 on the same code, so no single set of twenty questions settles a comparison on its own.",
     "source": "eval/results/experiments/",
     "rows": [
       {
@@ -513,6 +514,12 @@
           "hit@5": 0.5,
           "mrr@10": 0.3956,
           "recall@20": 0.75
+        },
+        "holdout3": {
+          "questions": 20,
+          "hit@5": 0.65,
+          "mrr@10": 0.5517,
+          "recall@20": 0.7
         },
         "recorded": {
           "commit": "5edf06e",
@@ -535,6 +542,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -556,6 +564,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -577,6 +586,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -598,6 +608,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -619,6 +630,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -640,6 +652,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -661,6 +674,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -682,6 +696,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -713,6 +728,12 @@
           "mrr@10": 0.5763,
           "recall@20": 0.85
         },
+        "holdout3": {
+          "questions": 20,
+          "hit@5": 0.8,
+          "mrr@10": 0.69,
+          "recall@20": 0.85
+        },
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -739,6 +760,12 @@
           "mrr@10": 0.5867,
           "recall@20": 0.95
         },
+        "holdout3": {
+          "questions": 20,
+          "hit@5": 0.95,
+          "mrr@10": 0.8042,
+          "recall@20": 0.95
+        },
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -760,6 +787,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -781,6 +809,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -802,6 +831,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -823,6 +853,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -854,6 +885,12 @@
           "mrr@10": 0.6408,
           "recall@20": 0.9
         },
+        "holdout3": {
+          "questions": 20,
+          "hit@5": 0.9,
+          "mrr@10": 0.8113,
+          "recall@20": 0.95
+        },
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -875,6 +912,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -896,6 +934,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -917,6 +956,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -938,6 +978,7 @@
         },
         "held_out": null,
         "holdout2": null,
+        "holdout3": null,
         "recorded": {
           "commit": "5edf06e",
           "date": "2026-10-11",
@@ -947,14 +988,15 @@
       }
     ],
     "splits_compared": {
-      "title": "The two held-out sets, side by side",
+      "title": "The three held-out sets, side by side",
       "metric": "mrr@10",
-      "note": "The original held-out split was reused: it has been scored in at least six recorded entries since it was written, so it has informed choices before and is a weak confirmation rather than a clean one. holdout2 was written after those runs and scored once. It is the fresher estimate of the two, and it is the lower one: on this question set the same code scores markedly worse. Both are shown side by side wherever a held-out number appears. Where they disagree, holdout2 is the one to believe.",
+      "note": "The original held-out split was reused: it has been scored in at least six recorded entries since it was written, so it has informed choices before and is a weak confirmation rather than a clean one. holdout2 and holdout3 were each written after those runs and each scored once. They are the fresher estimates, and they do not agree with one another: holdout2 is the lowest of the four sets and holdout3 lands between it and the reused split. All three are shown side by side wherever a held-out number appears. The two fresh sets differ from each other by up to 0.217 of MRR@10 on the same code, so no single set of twenty questions settles a comparison on its own.",
       "columns": [
         "dev",
         "held out (reused)",
-        "fresh (holdout2)",
-        "difference"
+        "holdout2 (fresh)",
+        "holdout3 (never used)",
+        "holdout2 - held out"
       ],
       "rows": [
         {
@@ -965,9 +1007,11 @@
           "dev": 0.6625,
           "held_out": 0.645,
           "holdout2": 0.3956,
+          "holdout3": 0.5517,
           "difference": -0.2494,
           "held_out_source": "eval/results/test.json",
-          "holdout2_source": "eval/results/experiments/holdout2-default-hash.json"
+          "holdout2_source": "eval/results/experiments/holdout2-default-hash.json",
+          "holdout3_source": "eval/results/experiments/holdout3-default-hash.json"
         },
         {
           "embedder": "hash",
@@ -977,9 +1021,11 @@
           "dev": 0.7425,
           "held_out": 0.7785,
           "holdout2": 0.5763,
+          "holdout3": 0.69,
           "difference": -0.2022,
           "held_out_source": "eval/results/experiments/chosen-heldout-hash.json",
-          "holdout2_source": "eval/results/experiments/holdout2-chosen-hash.json"
+          "holdout2_source": "eval/results/experiments/holdout2-chosen-hash.json",
+          "holdout3_source": "eval/results/experiments/holdout3-chosen-hash.json"
         },
         {
           "embedder": "cloudflare",
@@ -989,9 +1035,11 @@
           "dev": 0.8042,
           "held_out": 0.8538,
           "holdout2": 0.5867,
+          "holdout3": 0.8042,
           "difference": -0.2671,
           "held_out_source": "eval/results/cloudflare/test.json",
-          "holdout2_source": "eval/results/experiments/holdout2-default-cloudflare.json"
+          "holdout2_source": "eval/results/experiments/holdout2-default-cloudflare.json",
+          "holdout3_source": "eval/results/experiments/holdout3-default-cloudflare.json"
         },
         {
           "embedder": "cloudflare",
@@ -1001,9 +1049,108 @@
           "dev": 0.825,
           "held_out": 0.8729,
           "holdout2": 0.6408,
+          "holdout3": 0.8113,
           "difference": -0.2321,
           "held_out_source": "eval/results/experiments/chosen-heldout-cloudflare.json",
-          "holdout2_source": "eval/results/experiments/holdout2-chosen-cloudflare.json"
+          "holdout2_source": "eval/results/experiments/holdout2-chosen-cloudflare.json",
+          "holdout3_source": "eval/results/experiments/holdout3-chosen-cloudflare.json"
+        }
+      ]
+    },
+    "holdout3": {
+      "title": "holdout3: a question set that had never been scored, spent once",
+      "label": "scored once, and not retuned on",
+      "scored_once": true,
+      "questions": 20,
+      "metrics": [
+        "hit@1",
+        "hit@3",
+        "hit@5",
+        "mrr@10",
+        "recall@20"
+      ],
+      "rule": "Written down before holdout3 was scored. The hash candidate replaces the default only if its holdout3 MRR@10 is higher and its hit@5 is not lower; cloudflare structured replaces cloudflare whole only if its MRR@10 is higher and its recall@20 is not lower.",
+      "guards": {
+        "hash": "hit@5",
+        "cloudflare": "recall@20"
+      },
+      "note": "One run per candidate, each made once, with no setting changed afterwards and nothing re-scored. The verdicts below are computed from the committed result files against that rule. Passing it makes a default change proposable, not applied: the server still runs whole records with BM25 off.",
+      "source": "eval/results/experiments/",
+      "recorded": {
+        "commit": "ecf3744",
+        "date": "2026-10-12",
+        "results_entry": "Check: holdout3, scored once for each candidate, and the rule applied"
+      },
+      "rows": [
+        {
+          "embedder": "hash",
+          "configuration": "today's default",
+          "change": "whole records, current",
+          "questions": 20,
+          "hit@1": 0.5,
+          "hit@3": 0.6,
+          "hit@5": 0.65,
+          "mrr@10": 0.5517,
+          "recall@20": 0.7,
+          "eligible": true,
+          "verdict": "the incumbent",
+          "source": "eval/results/experiments/holdout3-default-hash.json"
+        },
+        {
+          "embedder": "hash",
+          "configuration": "candidate",
+          "change": "structured records, rrf+keyword",
+          "questions": 20,
+          "hit@1": 0.6,
+          "hit@3": 0.75,
+          "hit@5": 0.8,
+          "mrr@10": 0.69,
+          "recall@20": 0.85,
+          "eligible": true,
+          "verdict": "passes: MRR@10 higher, hit@5 not lower",
+          "source": "eval/results/experiments/holdout3-chosen-hash.json"
+        },
+        {
+          "embedder": "hash",
+          "configuration": "information only",
+          "change": "whole records, rrf+keyword",
+          "questions": 20,
+          "hit@1": 0.55,
+          "hit@3": 0.75,
+          "hit@5": 0.8,
+          "mrr@10": 0.6571,
+          "recall@20": 0.95,
+          "eligible": false,
+          "verdict": "not eligible - the rule barred it from selection before it was scored",
+          "source": "eval/results/experiments/holdout3-whole-bm25-hash.json"
+        },
+        {
+          "embedder": "cloudflare",
+          "configuration": "today's default",
+          "change": "whole records, current",
+          "questions": 20,
+          "hit@1": 0.7,
+          "hit@3": 0.9,
+          "hit@5": 0.95,
+          "mrr@10": 0.8042,
+          "recall@20": 0.95,
+          "eligible": true,
+          "verdict": "the incumbent",
+          "source": "eval/results/experiments/holdout3-default-cloudflare.json"
+        },
+        {
+          "embedder": "cloudflare",
+          "configuration": "candidate",
+          "change": "structured records, current",
+          "questions": 20,
+          "hit@1": 0.75,
+          "hit@3": 0.85,
+          "hit@5": 0.9,
+          "mrr@10": 0.8113,
+          "recall@20": 0.95,
+          "eligible": true,
+          "verdict": "passes: MRR@10 higher, recall@20 not lower",
+          "source": "eval/results/experiments/holdout3-chosen-cloudflare.json"
         }
       ]
     },
