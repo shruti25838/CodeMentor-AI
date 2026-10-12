@@ -1802,3 +1802,30 @@ Every number or claim here comes from a command that can be re-run.
   **What "scored once" means here, precisely.** Five runs, one each. `--arrangement` was passed on every one, so the four arrangements not under consideration were never computed on holdout3 — they would have cost nothing, which is exactly why not computing them had to be deliberate. The two `--plan-only` runs computed no score. This entry is the first time any holdout3 number appears anywhere, and holdout3 is now spent: it has been scored, and the next time a setting needs choosing it will need a fourth set.
   **No default is changed by this entry.** `CODEATLAS_RECORD_FORMAT` is still `whole` and `CODEATLAS_BM25` is still off in the committed configuration. What the rule supports is proposed in a later entry and applied in neither.
   **Limits.** Twenty questions per set: one question is 0.05 of a hit rate, so cloudflare's +0.0071 of MRR is well inside the noise a single question makes, and point 4 above is a measurement of that noise rather than an aside. The questions are mine, written from the same two Python libraries at the same two commits as the other sixty. And this is retrieval only — no model, no prompt, no citation, and nothing here says a visitor's answer is better
+### Change: holdout3 on the Benchmarks page, with the rule it was scored under
+- Value: the summary and the page carried two held-out sets. They now carry three, and the newest one is drawn with the rule that was fixed before it was spent rather than with a sentence written afterwards.
+
+  **A block of its own, above the older tables.** Five rows — each embedder's incumbent and candidate, plus the one configuration the rule barred from selection — with all five metrics, the question count, and the file each number came from:
+
+  | embedder | configuration | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 | verdict |
+  |---|---|---|---|---|---|---|---|
+  | hash | today's default | 0.500 | 0.600 | 0.650 | 0.552 | 0.700 | the incumbent |
+  | hash | candidate | 0.600 | 0.750 | 0.800 | 0.690 | 0.850 | **passes: MRR@10 higher, hit@5 not lower** |
+  | hash | information only | 0.550 | 0.750 | 0.800 | 0.657 | 0.950 | not eligible — barred before it was scored |
+  | cloudflare | today's default | 0.700 | 0.900 | 0.950 | 0.804 | 0.950 | the incumbent |
+  | cloudflare | candidate | 0.750 | 0.850 | 0.900 | 0.811 | 0.950 | **passes: MRR@10 higher, recall@20 not lower** |
+
+  **Every verdict in that table is computed by the builder** from the committed result files, against the two guard metrics as data (`hash` → hit@5, `cloudflare` → recall@20). None of them is a sentence typed beside a number, so a result file that changed would change the verdict rather than leave a stale claim next to a new figure. A test recomputes all five from the numbers, and another reads every metric back out of the file its row names.
+
+  **The ineligible row is drawn, and says so.** Whole records with BM25 fusion has the best recall@20 of any hash run on holdout3 (0.950) and was forbidden from being selected before it was scored. Leaving it off the page would hide where the hash gain comes from; drawing it like a candidate would let a reader think it was one. It is drawn, greyed, and labelled *not eligible*.
+
+  **holdout3 also gets a column** in the experiments table — filled only for the rows actually scored on it, dashed everywhere else — and in the side-by-side block, which is now **three** held-out sets. The `difference` column is unchanged and its heading now names which two sets it compares.
+
+  **And the page stops telling a reader which fresh set to believe.** It said *"where they disagree, holdout2 is the one to believe"*, which was fair when holdout2 was the only never-used set. It now says that holdout2 and holdout3 are both fresh, that they **do not agree with one another — by up to 0.217 of MRR@10 on the same code** — and that no single set of twenty questions settles a comparison on its own. Two tests assert that wording, and the ones asserting that the reused split is flagged and that holdout2 is the lower of the first two still pass unchanged
+- Command: `python scripts/build_benchmarks.py` then `python scripts/build_benchmarks.py --check` -> up to date; `python -m pytest tests/ -q` -> **1139 passed**, 1 skipped (`tests/test_build_benchmarks.py` gains 6: the block and its label, the rule recomputed with both guard metrics, the ineligible row, every number read back from the file its row names, the column in both tables with a number claimed only where it was scored, and the wording about the two fresh sets); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (186 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; in `codementor-ui`: `npm test` (**79 passed**, 5 new in `lib/benchmarks.test.ts`), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before), `npm run build`
+- Dataset/repo: the committed result files in `eval/results/` and `eval/results/experiments/`. **Nothing was re-scored and no number changed**; the five holdout3 files are the ones committed at ecf3744
+- Date: 2026-10-12
+- Commit: d056989
+- Notes: **the regeneration guard still holds.** `eval/benchmarks.json` is still a pure function of its inputs with no timestamp, and the byte-for-byte rebuild test passes.
+  **No measurement is in this entry.** Every figure above was recorded at ecf3744. What changed is which numbers sit beside each other and what the page says about them.
+  **What this does not fix.** The per-row `recorded` label in the experiments table still names one entry (5edf06e) for a row that now carries dev, held-out, holdout2 **and** holdout3 numbers recorded in different entries; the holdout3 block carries its own correct provenance, and splitting the row-level label per column is a larger change than this one. The side-by-side block is still MRR@10 only, because five metrics across four splits does not fit a phone. And the "at least six" reuse count is still a sentence written by hand rather than something the builder counts
