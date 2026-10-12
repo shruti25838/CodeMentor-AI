@@ -1,8 +1,8 @@
 name: Retrieval Eval
 
-# Fails if retrieval on the itsdangerous question set (20 questions, pinned commit) drops below the
-# numbers recorded in docs/RESULTS.md. No model key is used. Not a required check unless it is
-# added to branch protection.
+# Fails if retrieval on either pinned question set (20 questions each, pinned commits) drops
+# below the numbers recorded in docs/RESULTS.md for the configuration the server ships. No model
+# key is used. Not a required check unless it is added to branch protection.
 
 on:
   push:
@@ -24,13 +24,26 @@ on:
 
 jobs:
   retrieval-eval:
-    name: Retrieval hit rate
+    name: Retrieval MRR and recall
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      # Recorded for itsdangerous, all 20 questions, at 513641c (docs/RESULTS.md, tuning entry).
-      MIN_HIT_AT_5: '0.85'
-      MIN_HIT_AT_1: '0.70'
+      # Recorded for the hash default - structured records, BM25 fusion on - over all 20
+      # questions of each set, `--split all`. See docs/RESULTS.md, "Change: the retrieval-eval
+      # workflow gates on MRR@10 and recall@20, per repository".
+      #
+      # Every threshold is the recorded value exactly. There is no slack in these numbers and
+      # none is wanted: a gate set below what was measured passes a regression it was put there
+      # to catch, and the size of the margin would be a number nobody had measured anything
+      # about. A deliberate improvement is expected to move these lines up in the same commit.
+      #
+      # Per repository rather than overall, because the two do not move together: on this split
+      # the previous default scored itsdangerous 0.7558 of MRR@10 and flask 0.5517, so an
+      # overall threshold could stay green while one of them collapsed and the other rose.
+      MIN_MRR_ITSDANGEROUS: '0.7564'
+      MIN_RECALL_ITSDANGEROUS: '1.0'
+      MIN_MRR_FLASK: '0.7646'
+      MIN_RECALL_FLASK: '1.0'
 
     steps:
       - name: Checkout code
@@ -51,6 +64,9 @@ jobs:
         run: >
           python scripts/eval_retrieval.py
           --set eval/questions/itsdangerous.json
+          --set eval/questions/flask.json
           --split all
-          --min-hit-rate 5=$MIN_HIT_AT_5
-          --min-hit-rate 1=$MIN_HIT_AT_1
+          --min-mrr itsdangerous=$MIN_MRR_ITSDANGEROUS
+          --min-recall itsdangerous=$MIN_RECALL_ITSDANGEROUS
+          --min-mrr flask=$MIN_MRR_FLASK
+          --min-recall flask=$MIN_RECALL_FLASK
