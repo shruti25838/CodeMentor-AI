@@ -327,6 +327,92 @@ def test_the_side_by_side_numbers_come_from_the_committed_result_files(committed
         assert fresh["overall"][arrangement]["mrr@10"] == row["holdout2"], row
 
 
+def test_holdout3_is_a_block_of_its_own_labelled_as_scored_once(committed):
+    """The set that had never been scored: five rows, five metrics, and where each came from."""
+    block = committed["experiments"]["holdout3"]
+
+    assert block["scored_once"] is True
+    assert "scored once" in block["label"]
+    assert block["questions"] == 20
+    assert block["metrics"] == ["hit@1", "hit@3", "hit@5", "mrr@10", "recall@20"]
+    assert len(block["rows"]) == 5
+    assert block["recorded"]["commit"] and block["recorded"]["date"] == "2026-10-12"
+    for row in block["rows"]:
+        assert row["source"].startswith("eval/results/experiments/holdout3-"), row
+        assert all(row[metric] is not None for metric in block["metrics"]), row
+
+
+def test_the_holdout3_rule_is_applied_rather_than_asserted(committed):
+    """Every verdict recomputed here from the numbers, against the rule as it was written down.
+
+    The two guard metrics differ by embedder on purpose, and that asymmetry is the part most
+    likely to be quietly lost, so it is recomputed rather than read.
+    """
+    block = committed["experiments"]["holdout3"]
+    guards = block["guards"]
+    assert guards == {"hash": "hit@5", "cloudflare": "recall@20"}
+
+    for embedder, guard in guards.items():
+        rows = [r for r in block["rows"] if r["embedder"] == embedder]
+        incumbent = next(r for r in rows if r["configuration"] == "today's default")
+        candidate = next(r for r in rows if r["configuration"] == "candidate")
+        passes = candidate["mrr@10"] > incumbent["mrr@10"] and candidate[guard] >= incumbent[guard]
+
+        assert candidate["verdict"].startswith("passes") == passes, candidate
+        assert guard in candidate["verdict"], candidate
+        assert incumbent["verdict"] == "the incumbent"
+
+
+def test_the_ineligible_configuration_is_shown_and_says_it_is_ineligible(committed):
+    """Hiding it would hide where the hash gain comes from; showing it unmarked would mislead."""
+    rows = committed["experiments"]["holdout3"]["rows"]
+    ineligible = [r for r in rows if r["eligible"] is False]
+
+    assert len(ineligible) == 1
+    assert ineligible[0] == next(r for r in rows if r["change"] == "whole records, rrf+keyword")
+    assert "not eligible" in ineligible[0]["verdict"]
+    assert not ineligible[0]["verdict"].startswith("passes")
+
+
+def test_every_holdout3_number_comes_from_the_file_its_row_names(committed):
+    """None of them is typed in: each is read back out of the committed result file."""
+    for row in committed["experiments"]["holdout3"]["rows"]:
+        data = json.loads((ROOT / row["source"]).read_text(encoding="utf-8"))
+        arrangement = row["change"].rsplit(", ", 1)[1]
+        scored = data["overall"][arrangement]
+
+        assert data["split"] == "holdout3" and data["questions"] == "holdout3", row
+        for metric in committed["experiments"]["holdout3"]["metrics"]:
+            assert scored[metric] == row[metric], (row, metric)
+
+
+def test_holdout3_has_a_column_in_both_experiment_tables(committed):
+    """A number is claimed only for the rows that were actually scored on it."""
+    assert "never used" in committed["experiments"]["splits"]["holdout3"]
+    for row in committed["experiments"]["rows"]:
+        if row["verdict"] in ("baseline", "chosen"):
+            assert row["holdout3"], row
+        else:
+            assert row["holdout3"] is None, row
+
+    for row in committed["experiments"]["splits_compared"]["rows"]:
+        assert row["holdout3"] is not None, row
+        assert "holdout3-" in row["holdout3_source"], row
+        fresh = json.loads((ROOT / row["holdout3_source"]).read_text(encoding="utf-8"))
+        arrangement = row["change"].rsplit(", ", 1)[1]
+        assert fresh["overall"][arrangement]["mrr@10"] == row["holdout3"], row
+
+
+def test_the_page_does_not_say_one_fresh_set_settles_it(committed):
+    """Two sets scored once disagree with each other; the wording has to say so, not pick one."""
+    experiments = committed["experiments"]
+
+    assert "do not agree" in experiments["fresh_split_note"]
+    assert "All three" in experiments["both_splits_note"]
+    assert "no single set" in experiments["both_splits_note"]
+    assert "holdout3" in experiments["splits_compared"]["note"]
+
+
 def test_the_two_question_trial_is_not_a_source_for_the_page(committed):
     """It is kept as a record and must not be drawn under the full comparison's heading."""
     assert build_benchmarks.CHAT_MODE_SOURCES == ("chat-modes.json",)

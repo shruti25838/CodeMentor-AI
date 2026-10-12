@@ -58,6 +58,22 @@ HOLDOUT2_SOURCES = {
     ("cloudflare", "default"): "holdout2-default-cloudflare.json",
     ("cloudflare", "chosen"): "holdout2-chosen-cloudflare.json",
 }
+# holdout3, the set that had never been scored at all until the entry that spent it. Four
+# candidates, one run each, and one more scored for information that the rule barred from being
+# selected - carried here too, because leaving it out would hide where the hash gain comes from.
+HOLDOUT3_SOURCES = {
+    ("hash", "default"): "holdout3-default-hash.json",
+    ("hash", "chosen"): "holdout3-chosen-hash.json",
+    ("cloudflare", "default"): "holdout3-default-cloudflare.json",
+    ("cloudflare", "chosen"): "holdout3-chosen-cloudflare.json",
+}
+HOLDOUT3_INFORMATION = ("hash", "whole", "rrf+keyword", "holdout3-whole-bm25-hash.json")
+# The metric each embedder's candidate must not go backwards on, fixed in docs/RESULTS.md before
+# holdout3 was scored. Two different metrics on purpose: each embedder is guarded on the one this
+# repository had already recorded the candidate costing it.
+HOLDOUT3_GUARD = {"hash": "hit@5", "cloudflare": "recall@20"}
+HOLDOUT3_METRICS = ["hit@1", "hit@3", "hit@5", "mrr@10", "recall@20"]
+
 # The chat-mode comparison: the full run and **only** the full run. A two-question trial was made
 # first, while the token accounting was still being fixed, and `chat-modes-trial.json` is kept as
 # the record of it - but it is deliberately not a source here. Falling back to it would put a
@@ -153,6 +169,11 @@ PROVENANCE = {
         "date": "2026-10-11",
         "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2",
     },
+    "holdout3": {
+        "commit": "ecf3744",
+        "date": "2026-10-12",
+        "results_entry": "Check: holdout3, scored once for each candidate, and the rule applied",
+    },
     "chat_modes": {
         "commit": "075a613",
         "date": "2026-10-11",
@@ -180,12 +201,14 @@ REUSED_SPLIT_NOTE = (
     "than a clean one."
 )
 FRESH_SPLIT_NOTE = (
-    "holdout2 was written after those runs and scored once. It is the fresher estimate of the two, "
-    "and it is the lower one: on this question set the same code scores markedly worse."
+    "holdout2 and holdout3 were each written after those runs and each scored once. They are the "
+    "fresher estimates, and they do not agree with one another: holdout2 is the lowest of the four "
+    "sets and holdout3 lands between it and the reused split."
 )
 BOTH_SPLITS_NOTE = (
-    "Both are shown side by side wherever a held-out number appears. Where they disagree, holdout2 "
-    "is the one to believe."
+    "All three are shown side by side wherever a held-out number appears. The two fresh sets differ "
+    "from each other by up to 0.217 of MRR@10 on the same code, so no single set of twenty questions "
+    "settles a comparison on its own."
 )
 
 
@@ -311,7 +334,7 @@ def retrieval() -> dict:
             "keyword overlap. A record counts as relevant when its file is one of the question's expected files."
         ),
         "metrics": METRICS,
-        "splits_note": f"{REUSED_SPLIT_NOTE} {FRESH_SPLIT_NOTE} Both sets are compared in the Experiments panel.",
+        "splits_note": f"{REUSED_SPLIT_NOTE} {FRESH_SPLIT_NOTE} All three are compared in the Experiments panel.",
         "providers": [hash_retrieval(), cloudflare_retrieval()],
     }
 
@@ -479,6 +502,7 @@ def experiments() -> dict:
     dev_runs = {key: _read(EXPERIMENTS / name) for key, name in DEV_SOURCES.items()}
     held_out = {key: _read(EXPERIMENTS / name) for key, name in HELD_OUT_SOURCES.items()}
     holdout2 = {key: _read(EXPERIMENTS / name) for key, name in HOLDOUT2_SOURCES.items()}
+    holdout3_runs = {key: _read(EXPERIMENTS / name) for key, name in HOLDOUT3_SOURCES.items()}
 
     rows = []
     for embedder in ("hash", "cloudflare"):
@@ -497,14 +521,17 @@ def experiments() -> dict:
                     "dev": _scores(dev),
                     "held_out": None,
                     "holdout2": None,
+                    "holdout3": None,
                     "recorded": PROVENANCE["experiments"],
                     "result_file_commit": run["codementor_commit"],
                 }
                 if verdict == "chosen":
                     row["held_out"] = _scores(held_out[embedder]["overall"][arrangement])
                     row["holdout2"] = _scores(holdout2[(embedder, "chosen")]["overall"][arrangement])
+                    row["holdout3"] = _scores(holdout3_runs[(embedder, "chosen")]["overall"][arrangement])
                 elif verdict == "baseline":
                     row["holdout2"] = _scores(holdout2[(embedder, "default")]["overall"][arrangement])
+                    row["holdout3"] = _scores(holdout3_runs[(embedder, "default")]["overall"][arrangement])
                 rows.append(row)
 
     return {
@@ -519,24 +546,26 @@ def experiments() -> dict:
             "dev": "development - what the choice was made from",
             "held_out": "held out - reused, scored many times before",
             "holdout2": "fresh - written later, scored once",
+            "holdout3": "never used - written after holdout2 was scored, scored once here",
         },
         "reused_split_note": REUSED_SPLIT_NOTE,
         "fresh_split_note": FRESH_SPLIT_NOTE,
         "both_splits_note": BOTH_SPLITS_NOTE,
         "source": "eval/results/experiments/",
         "rows": rows,
-        "splits_compared": splits_compared(dev_runs, held_out, holdout2),
+        "splits_compared": splits_compared(dev_runs, held_out, holdout2, holdout3_runs),
+        "holdout3": holdout3(holdout3_runs),
         "chat_modes": chat_modes(),
     }
 
 
-def splits_compared(dev_runs: dict, held_out: dict, holdout2: dict) -> dict:
-    """The two held-out sets beside each other, for the four configurations scored on both.
+def splits_compared(dev_runs: dict, held_out: dict, holdout2: dict, holdout3_runs: dict) -> dict:
+    """The three held-out sets beside each other, for the four configurations scored on all of them.
 
-    The chosen rows carry both numbers themselves. A baseline's held-out figure does not live in
-    the experiment files - it is the recorded retrieval run in the panel above - so it is read
-    from there and the source of each number is named, rather than one of them being quietly
-    filled in from somewhere a reader cannot check.
+    The chosen rows carry their own numbers. A baseline's held-out figure does not live in the
+    experiment files - it is the recorded retrieval run in the panel above - so it is read from
+    there and the source of each number is named, rather than one of them being quietly filled
+    in from somewhere a reader cannot check.
     """
     hash_held_out = _read(RESULTS / "test.json")["overall"]["mrr@10"]
     cloudflare_held_out = next(
@@ -561,9 +590,11 @@ def splits_compared(dev_runs: dict, held_out: dict, holdout2: dict) -> dict:
                 "dev": dev_runs[(embedder, BASELINE[0])]["overall"][BASELINE[1]]["mrr@10"],
                 "held_out": reused,
                 "holdout2": fresh,
+                "holdout3": holdout3_runs[(embedder, "default")]["overall"][BASELINE[1]]["mrr@10"],
                 "difference": round(fresh - reused, 4),
                 "held_out_source": source,
                 "holdout2_source": f"eval/results/experiments/{HOLDOUT2_SOURCES[(embedder, 'default')]}",
+                "holdout3_source": f"eval/results/experiments/{HOLDOUT3_SOURCES[(embedder, 'default')]}",
             }
         )
         reused = held_out[embedder]["overall"][arrangement]["mrr@10"]
@@ -577,19 +608,121 @@ def splits_compared(dev_runs: dict, held_out: dict, holdout2: dict) -> dict:
                 "dev": dev_runs[(embedder, records)]["overall"][arrangement]["mrr@10"],
                 "held_out": reused,
                 "holdout2": fresh,
+                "holdout3": holdout3_runs[(embedder, "chosen")]["overall"][arrangement]["mrr@10"],
                 "difference": round(fresh - reused, 4),
                 "held_out_source": f"eval/results/experiments/{HELD_OUT_SOURCES[embedder]}",
                 "holdout2_source": f"eval/results/experiments/{HOLDOUT2_SOURCES[(embedder, 'chosen')]}",
+                "holdout3_source": f"eval/results/experiments/{HOLDOUT3_SOURCES[(embedder, 'chosen')]}",
             }
         )
 
     return {
-        "title": "The two held-out sets, side by side",
+        "title": "The three held-out sets, side by side",
         "metric": "mrr@10",
         "note": f"{REUSED_SPLIT_NOTE} {FRESH_SPLIT_NOTE} {BOTH_SPLITS_NOTE}",
-        "columns": ["dev", "held out (reused)", "fresh (holdout2)", "difference"],
+        # The difference is holdout2 against the reused split, which is the gap the wording above
+        # is about; the heading names which two, because there are now three numbers beside it.
+        "columns": ["dev", "held out (reused)", "holdout2 (fresh)", "holdout3 (never used)", "holdout2 - held out"],
         "rows": rows,
     }
+
+
+def holdout3(runs: dict) -> dict:
+    """The set that had never been scored, spent once, with the rule it was spent under applied.
+
+    Every verdict here is **computed from the committed result files** against the rule as it was
+    written down before any of them existed (docs/RESULTS.md, "Decision: the rule holdout3 will be
+    read by"). Nothing in this block is a sentence somebody typed beside a number: if a file
+    changed, the verdict would change with it rather than going quietly stale.
+    """
+    information = _read(EXPERIMENTS / HOLDOUT3_INFORMATION[3])
+    rows = []
+    for embedder in ("hash", "cloudflare"):
+        guard = HOLDOUT3_GUARD[embedder]
+        incumbent = runs[(embedder, "default")]["overall"][BASELINE[1]]
+        records, arrangement = CHOSEN[embedder]
+        candidate = runs[(embedder, "chosen")]["overall"][arrangement]
+        rows.append(
+            _holdout3_row(
+                embedder,
+                "today's default",
+                f"{BASELINE[0]} records, {BASELINE[1]}",
+                incumbent,
+                eligible=True,
+                verdict="the incumbent",
+                source=HOLDOUT3_SOURCES[(embedder, "default")],
+            )
+        )
+        rows.append(
+            _holdout3_row(
+                embedder,
+                "candidate",
+                f"{records} records, {arrangement}",
+                candidate,
+                eligible=True,
+                verdict=_holdout3_verdict(candidate, incumbent, guard),
+                source=HOLDOUT3_SOURCES[(embedder, "chosen")],
+            )
+        )
+        if embedder == HOLDOUT3_INFORMATION[0]:
+            rows.append(
+                _holdout3_row(
+                    embedder,
+                    "information only",
+                    f"{HOLDOUT3_INFORMATION[1]} records, {HOLDOUT3_INFORMATION[2]}",
+                    information["overall"][HOLDOUT3_INFORMATION[2]],
+                    eligible=False,
+                    verdict="not eligible - the rule barred it from selection before it was scored",
+                    source=HOLDOUT3_INFORMATION[3],
+                )
+            )
+
+    return {
+        "title": "holdout3: a question set that had never been scored, spent once",
+        "label": "scored once, and not retuned on",
+        "scored_once": True,
+        "questions": rows[0]["questions"],
+        "metrics": HOLDOUT3_METRICS,
+        "rule": (
+            "Written down before holdout3 was scored. The hash candidate replaces the default only if "
+            "its holdout3 MRR@10 is higher and its hit@5 is not lower; cloudflare structured replaces "
+            "cloudflare whole only if its MRR@10 is higher and its recall@20 is not lower."
+        ),
+        "guards": HOLDOUT3_GUARD,
+        "note": (
+            "One run per candidate, each made once, with no setting changed afterwards and nothing "
+            "re-scored. The verdicts below are computed from the committed result files against that "
+            "rule. Passing it makes a default change proposable, not applied: the server still runs "
+            "whole records with BM25 off."
+        ),
+        "source": "eval/results/experiments/",
+        "recorded": PROVENANCE["holdout3"],
+        "rows": rows,
+    }
+
+
+def _holdout3_row(embedder: str, configuration: str, change: str, metrics: dict, **rest) -> dict:
+    return {
+        "embedder": embedder,
+        "configuration": configuration,
+        "change": change,
+        "questions": metrics["questions"],
+        **{name: metrics.get(name) for name in HOLDOUT3_METRICS},
+        "eligible": rest["eligible"],
+        "verdict": rest["verdict"],
+        "source": f"eval/results/experiments/{rest['source']}",
+    }
+
+
+def _holdout3_verdict(candidate: dict, incumbent: dict, guard: str) -> str:
+    """The rule, applied: a higher MRR@10 and a guard metric that has not fallen."""
+    better = candidate["mrr@10"] > incumbent["mrr@10"]
+    held = candidate[guard] >= incumbent[guard]
+    if better and held:
+        return f"passes: MRR@10 higher, {guard} not lower"
+    if not better:
+        return "fails: MRR@10 is not higher"
+    return f"fails: {guard} is lower"
 
 
 def chat_modes() -> dict | None:

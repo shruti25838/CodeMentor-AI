@@ -160,7 +160,34 @@ export interface ExperimentRow {
     dev?: ExperimentScores | null;
     held_out?: ExperimentScores | null;
     holdout2?: ExperimentScores | null;
+    /** The third held-out set, which had never been scored until the entry that spent it. */
+    holdout3?: ExperimentScores | null;
     recorded?: Recorded;
+}
+
+export interface Holdout3Row {
+    embedder?: string;
+    configuration?: string;
+    change?: string;
+    questions?: number;
+    eligible?: boolean;
+    /** The rule, applied by the builder to the committed result files - not a typed-in sentence. */
+    verdict?: string;
+    source?: string;
+    [key: string]: string | number | boolean | null | undefined;
+}
+
+export interface Holdout3Block {
+    title?: string;
+    label?: string;
+    scored_once?: boolean;
+    questions?: number;
+    metrics?: string[];
+    rule?: string;
+    note?: string;
+    source?: string;
+    recorded?: Recorded;
+    rows?: Holdout3Row[];
 }
 
 export interface ChatModeRow {
@@ -186,9 +213,11 @@ export interface SplitsComparedRow {
     dev?: number | null;
     held_out?: number | null;
     holdout2?: number | null;
+    holdout3?: number | null;
     difference?: number | null;
     held_out_source?: string;
     holdout2_source?: string;
+    holdout3_source?: string;
 }
 
 export interface ExperimentsBlock {
@@ -202,6 +231,7 @@ export interface ExperimentsBlock {
     both_splits_note?: string;
     source?: string;
     rows?: ExperimentRow[];
+    holdout3?: Holdout3Block | null;
     splits_compared?: {
         title?: string;
         metric?: string;
@@ -591,8 +621,31 @@ export interface ExperimentView {
     dev: string[];
     heldOut: string[] | null;
     holdout2: string[] | null;
+    holdout3: string[] | null;
     questions: number;
     recordedLabel: string;
+}
+
+export interface Holdout3View {
+    title: string;
+    label: string;
+    questions: number;
+    metrics: string[];
+    rule: string;
+    note: string;
+    recordedLabel: string;
+    rows: {
+        key: string;
+        embedder: string;
+        configuration: string;
+        change: string;
+        /** False for a configuration the rule barred from selection before it was scored. */
+        eligible: boolean;
+        passes: boolean;
+        verdict: string;
+        cells: string[];
+        source: string;
+    }[];
 }
 
 export interface ChatModeView {
@@ -633,6 +686,7 @@ export interface SplitsComparedView {
         dev: string;
         heldOut: string;
         holdout2: string;
+        holdout3: string;
         difference: string;
         /** True when the fresh split scores lower, which on today's data is every row. */
         worseOnFresh: boolean;
@@ -652,7 +706,10 @@ export interface ExperimentsView {
     bothSplitsNote: string;
     heldOutLabel: string;
     freshLabel: string;
+    /** The third set's column heading: never used before the run that spent it. */
+    neverUsedLabel: string;
     rows: ExperimentView[];
+    holdout3: Holdout3View | null;
     splitsCompared: SplitsComparedView | null;
     chatModes: ChatModeView | null;
 }
@@ -682,6 +739,7 @@ export function experimentsView(summary?: Summary): ExperimentsView | null {
         bothSplitsNote: block.both_splits_note ?? "",
         heldOutLabel: block.splits?.held_out ?? "held out",
         freshLabel: block.splits?.holdout2 ?? "fresh",
+        neverUsedLabel: block.splits?.holdout3 ?? "never used",
         rows: block.rows.map((row) => ({
             key: `${row.embedder}-${row.records}-${row.arrangement}`,
             embedder: row.embedder ?? "",
@@ -693,11 +751,48 @@ export function experimentsView(summary?: Summary): ExperimentsView | null {
             dev: cells(row.dev, metrics) ?? metrics.map(() => NOT_MEASURED),
             heldOut: cells(row.held_out, metrics),
             holdout2: cells(row.holdout2, metrics),
+            holdout3: cells(row.holdout3, metrics),
             questions: row.dev?.questions ?? 0,
             recordedLabel: recordedLabel(row.recorded),
         })),
+        holdout3: holdout3View(block.holdout3),
         splitsCompared: splitsComparedView(block.splits_compared),
         chatModes: chatModesView(block.chat_modes),
+    };
+}
+
+/**
+ * The set that had never been scored, with the rule it was spent under.
+ *
+ * The verdict is the server's: it is computed there from the committed result files against a
+ * rule written down before any of them existed. Nothing is decided here - this only reads
+ * whether a verdict says "passes", so that a passing row can be marked without the wording
+ * being invented twice.
+ */
+function holdout3View(block: ExperimentsBlock["holdout3"]): Holdout3View | null {
+    if (!block?.rows?.length) return null;
+    const metrics = block.metrics ?? [];
+
+    return {
+        title: block.title ?? "holdout3",
+        // Required wording: one run per candidate, and no tuning after it.
+        label: block.label ?? "scored once, and not retuned on",
+        questions: block.questions ?? 0,
+        metrics,
+        rule: block.rule ?? "",
+        note: block.note ?? "",
+        recordedLabel: recordedLabel(block.recorded),
+        rows: block.rows.map((row) => ({
+            key: `${row.embedder}-${row.change}`,
+            embedder: row.embedder ?? "",
+            configuration: row.configuration ?? "",
+            change: row.change ?? "",
+            eligible: row.eligible !== false,
+            passes: (row.verdict ?? "").startsWith("passes"),
+            verdict: row.verdict ?? "",
+            cells: metrics.map((metric) => formatMetric(row[metric])),
+            source: row.source ?? "",
+        })),
     };
 }
 
@@ -723,9 +818,10 @@ function splitsComparedView(block: ExperimentsBlock["splits_compared"]): SplitsC
             dev: formatMetric(row.dev),
             heldOut: formatMetric(row.held_out),
             holdout2: formatMetric(row.holdout2),
+            holdout3: formatMetric(row.holdout3),
             difference: signed(row.difference),
             worseOnFresh: typeof row.difference === "number" && Number.isFinite(row.difference) && row.difference < 0,
-            sources: [row.held_out_source, row.holdout2_source].filter(Boolean).join(" - "),
+            sources: [row.held_out_source, row.holdout2_source, row.holdout3_source].filter(Boolean).join(" - "),
         })),
     };
 }

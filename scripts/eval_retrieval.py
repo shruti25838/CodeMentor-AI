@@ -8,6 +8,12 @@ Needs no model key: only retrieval runs. The embedder is the one the server woul
 Each repository is fetched at the commit pinned in its question file into --cache-dir
 (default .codeatlas/eval-repos, ignored by git) and reused on later runs.
 
+**The index is built with the server's own index settings**, read from `di.index_options`, and
+that includes what a record *is* (CODEATLAS_RECORD_FORMAT and its two window settings). The
+effective record format is printed before the run. If it disagrees with the format named in the
+embedder's signature the run stops with status 1 rather than scoring a pair the server would
+refuse: an index and the embedder that built it are one thing.
+
 recall@20 is the share of questions whose expected file is anywhere in the 20 candidates the
 reranker chooses from. It is the embedder's own score: the reranker can only reorder that pool,
 so a question whose file is not in it cannot be answered well however the ordering is tuned.
@@ -36,6 +42,7 @@ from codeatlas.app.di import get_config, get_embedder, get_retrieval_settings, i
 from codeatlas.services.eval.basic_eval import RECALL_DEPTH  # noqa: E402
 from codeatlas.services.eval.retrieval_eval import RANKED_DEPTH, SPLITS, EvalSettings, IndexSettings, run  # noqa: E402
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService  # noqa: E402
+from codeatlas.services.retrieval.record_format import WHOLE, with_record_format  # noqa: E402
 
 DEFAULT_SETS = [ROOT / "eval" / "questions" / "itsdangerous.json", ROOT / "eval" / "questions" / "flask.json"]
 
@@ -60,6 +67,13 @@ def main() -> int:
     args = parser.parse_args()
 
     settings, embedder = _settings(args)
+    index = settings.index
+    print(f"record format: {index.record_format} (window {index.window_chars}, overlap {index.window_overlap})")
+    problem = mismatch(embedder, settings)
+    if problem:
+        print(problem)
+        return 1
+
     result = run(args.sets or DEFAULT_SETS, embedder, args.split, args.cache_dir, settings=settings)
     result = {"codementor_commit": _commit(), **result}
 
@@ -119,17 +133,68 @@ def _settings(args) -> tuple[EvalSettings, object]:
         "skip_tests": _on(args.skip_tests),
     }
     retrieval = replace(get_retrieval_settings(), **{k: v for k, v in changes.items() if v is not None})
-    # The server's indexing options for the selected provider (fastembed has its own).
+    # The server's indexing options for the selected provider (fastembed has its own). Every one
+    # of them is taken from here, including the three that say what a record is: the embedder is
+    # the server's, and an index built under other settings is not the index it would search.
     options = index_options(config)
     max_chars = options["max_chars"] if args.embed_max_chars is None else (args.embed_max_chars or None)
     prefix = options["prefix_metadata"] if args.prefix_metadata is None else _on(args.prefix_metadata)
     embedder = get_embedder()
-    if isinstance(embedder, HashEmbeddingService) and (args.hash_lowercase or args.hash_subtokens):
-        lowercase = embedder._lowercase if args.hash_lowercase is None else _on(args.hash_lowercase)
-        subtokens = embedder._subtokens if args.hash_subtokens is None else _on(args.hash_subtokens)
-        embedder = HashEmbeddingService(lowercase=lowercase, subtokens=subtokens)
-    index = IndexSettings(max_chars=max_chars, prefix_metadata=prefix, batch_size=options.get("batch_size", 64))
+    if isinstance(_inner(embedder), HashEmbeddingService) and (args.hash_lowercase or args.hash_subtokens):
+        hash_embedder = _inner(embedder)
+        lowercase = hash_embedder._lowercase if args.hash_lowercase is None else _on(args.hash_lowercase)
+        subtokens = hash_embedder._subtokens if args.hash_subtokens is None else _on(args.hash_subtokens)
+        # Rebuilt, then wrapped again in the record format it was wrapped in, so that changing a
+        # hash option cannot quietly drop the format out of the signature.
+        embedder = with_record_format(
+            HashEmbeddingService(lowercase=lowercase, subtokens=subtokens), options["record_format"]
+        )
+    index = IndexSettings(
+        max_chars=max_chars,
+        prefix_metadata=prefix,
+        batch_size=options.get("batch_size", 64),
+        record_format=options["record_format"],
+        window_chars=options["window_chars"],
+        window_overlap=options["window_overlap"],
+    )
     return EvalSettings(retrieval=retrieval, index=index), embedder
+
+
+def _inner(embedder):
+    """The provider inside a record-format wrapper, or the embedder itself when there is none."""
+    return getattr(embedder, "inner", embedder)
+
+
+def signed_record_format(embedder) -> str:
+    """The record format named in the embedder's signature; WHOLE when it names none.
+
+    `with_record_format` wraps only a non-default format, so an unwrapped signature means
+    `whole` - the same reading `embedder_mismatch` gives a signature stored with an index.
+    """
+    signature = embedder.signature()
+    marker = "|records="
+    return signature.rsplit(marker, 1)[-1] if marker in signature else WHOLE
+
+
+def mismatch(embedder, settings: EvalSettings) -> str:
+    """Why this run would measure something other than what is configured; "" when it would not.
+
+    The trap this closes is recorded in docs/RESULTS.md at ce05005: the script took three of the
+    index settings from the server and let the record format fall back to `whole`, while the
+    embedder it used was the server's and signed itself `|records=structured`. The run printed a
+    real number for a pair the server refuses to put together.
+    """
+    signed = signed_record_format(embedder)
+    configured = settings.index.record_format
+    if signed == configured:
+        return ""
+    return (
+        f"FAIL: the embedder signs itself records={signed}, but the index here would be built as "
+        f"record_format={configured}. An index and the embedder that built it are one thing: a server "
+        f"refuses that pair rather than searching it (CodeIndexService.has_index), so a score for it "
+        f"would describe a configuration nothing can be set to. Check CODEATLAS_RECORD_FORMAT, and any "
+        f"--hash-lowercase or --hash-subtokens flag, which rebuilds the embedder."
+    )
 
 
 def _on(value: str | None) -> bool | None:

@@ -1678,3 +1678,191 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **the regeneration guard still holds.** `eval/benchmarks.json` is still a pure function of its inputs with no timestamp, and the byte-for-byte rebuild test passes.
   **No measurement is in this entry.** Every figure above was already recorded — at 5edf06e for holdout2, at 016c655 and b1bbfd4 for the two held-out retrieval runs. What changed is which of them sit next to each other and what the page says about them.
   **What this does not fix.** The side-by-side table is MRR@10 only, because four metrics across three splits does not fit a phone; the rest is in the result files and in the entries above. The reuse count — "at least six" — is a statement about this file written by hand, not something the builder counts, so it will go stale if the split is scored again without the sentence being updated. And saying holdout2 is the fresher estimate is already slightly untrue of today: it has now been scored seven times in all, including in the adoption check above, which is why holdout3 was written and left alone
+### Fix: the eval script builds its index with the server's record settings, and refuses a mismatched pair
+- Value: the trap recorded in the note at ce05005 is closed. `scripts/eval_retrieval.py` took three of its index settings from `di.index_options` and let the record format fall back to `whole`, while the embedder it scored with was `di.get_embedder()` — which under `CODEATLAS_RECORD_FORMAT=structured` **is** wrapped and signs itself `|records=structured`. The run printed `"record_format":"whole"` beside a structured signature and scored a pair the server refuses to put together.
+
+  **The same two environment variables, before and after.** `CODEATLAS_RECORD_FORMAT=structured` and `CODEATLAS_BM25=true`, held-out split, overall:
+
+  | | MRR@10 | hit@5 | recall@20 | what it was really measuring |
+  |---|---|---|---|---|
+  | before (recorded at ce05005) | 0.799 | — | — | **whole** records fused with BM25, under a structured signature |
+  | after | **0.778** | **0.850** | **1.000** | structured records fused with BM25 |
+
+  The second row is the configuration those variables name, and it is **the same to four decimal places as `scripts/adoption_check.py` and `eval/results/experiments/chosen-heldout-hash.json`**: itsdangerous MRR@10 0.828, flask 0.729, overall hit@1 0.700, hit@3 0.850, hit@5 0.850, MRR@10 0.7785, recall@20 1.000. Three different paths through the same settings now print one number instead of two.
+
+  **Three changes, and the first is the whole fix.**
+
+  1. `record_format`, `window_chars` and `window_overlap` come from `di.index_options` with the rest of the index settings, so the eval indexes what the server would index.
+  2. **The effective record format is printed before the run** — `record format: structured (window 2000, overlap 200)` — rather than only inside the settings JSON, where it was previously the dataclass default rather than anything that had been read.
+  3. **A signature that disagrees with the settings stops the run with status 1** and names both sides. It is a backstop, not a flag: with the fix in place no command line can produce a disagreement, because the one path that rebuilt the embedder (`--hash-lowercase`, `--hash-subtokens`) now wraps the rebuilt one in the same format again. It is driven in both directions by tests instead.
+
+  `describe_embedder` also looks inside the wrapper, so a structured run reports `hash (HashEmbeddingService, 384 dims, subtokens, …), records structured` instead of `RecordFormatEmbedder`, which named no provider at all
+- Command: `python scripts/eval_retrieval.py --split test` -> `record format: whole (window 2000, overlap 200)`, overall hit@5 **0.750**, MRR@10 **0.645**, unchanged; `$env:CODEATLAS_RECORD_FORMAT = "structured"` then the same command -> `record format: structured`, overall hit@5 0.750, MRR@10 **0.688**; with `$env:CODEATLAS_BM25 = "true"` as well -> overall hit@5 0.850, MRR@10 **0.778**, recall@20 1.000; both variables then removed from the environment. `python -m pytest tests/ -q` -> **1127 passed**, 1 skipped (13 new: `tests/test_eval_retrieval_script.py` 12, `tests/test_retrieval_eval.py` 1); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (185 files); in `codementor-ui`: `npm test` (74 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: `eval/questions/*.json` held-out split, at https://github.com/pallets/itsdangerous 672971d66a2e and https://github.com/pallets/flask d73fa1cdcbd8, from the checkouts already in `.codeatlas/eval-repos`. **No provider was called and no API key was read**
+- Date: 2026-10-12
+- Commit: 04a0295
+- Notes: **no default moved.** With nothing set the format is `whole`, the window settings are 2000/200, and the held-out guard still prints 0.750 / 0.645 — the two numbers every entry in this file has checked since the format existed.
+  **What the tests cover.** Every index setting compared field by field against `di.index_options` under both formats; the format and both window settings read from the environment; a rebuilt hash embedder keeping the format in its signature; an unwrapped signature reading as `whole`; the message naming both sides and the variable to look at; the guard driven in each direction; and `main` returning 1 **and never calling `run`** on a mismatched pair, so a disagreement cannot produce a number at all.
+  **What this does not fix.** The structured figure of 0.688 above is a new number on the *reused* held-out split, which this file already says is a weak confirmation; it is here as evidence that the script now measures what it is told to, not as a result. And the inconsistency recorded at fce9e2a is untouched: under `structured` the embedder sees a file's header while the keyword rerank and BM25 still read the file's whole text
+### Decision: the rule holdout3 will be read by, written before holdout3 was scored
+- Value: **no number on holdout3 exists when this entry is committed**, and that is the point of it. holdout3 was written at 3ace1de and banked unscored; it is about to be spent, and the rule it is spent under is fixed here first so that the order cannot be argued about afterwards.
+
+  **The candidates. Four are eligible, one is scored for information only.**
+
+  | # | embedder | candidate | settings | eligible |
+  |---|---|---|---|---|
+  | 1 | hash | **today's default** — whole records, no BM25 | none set | the incumbent |
+  | 2 | hash | **structured records + BM25 fusion** — the dev choice at 9a7a94d | `CODEATLAS_RECORD_FORMAT=structured`, `CODEATLAS_BM25=on` | **yes** |
+  | 3 | cloudflare | **today's default** — whole records | `CODEATLAS_EMBEDDING_PROVIDER=cloudflare` | the incumbent |
+  | 4 | cloudflare | **structured records**, BM25 off — the dev choice | + `CODEATLAS_RECORD_FORMAT=structured` | **yes** |
+  | 5 | hash | whole records + BM25 fusion | `CODEATLAS_BM25=on` | **no — information only** |
+
+  **The rule, metric by metric.**
+
+  * **The hash candidate (2) replaces the default (1) only if its holdout3 MRR@10 is higher *and* its holdout3 hit@5 is not lower.** Both conditions, on holdout3, overall.
+  * **cloudflare structured (4) replaces cloudflare whole (3) only if its holdout3 MRR@10 is higher *and* its holdout3 recall@20 is not lower.** Both conditions, on holdout3, overall.
+  * **Row 5 is not eligible for selection whatever it scores.** It is scored because it separates the two halves of candidate 2 — whether a gain is the record format or the fusion — and a reader who sees only the chosen pair cannot tell. A number that is not allowed to decide anything is still worth having, and saying so in advance is the only thing that keeps it that way.
+
+  **Why the two guards are different metrics, and it is not an arbitrary choice.** Each embedder is guarded on the metric this file has already recorded the candidate *costing* it. For hash the risk is ranking: the entry at 5edf06e records hit@5 moving 0.500 → 0.750 on holdout2, so hit@5 is what must not go backwards. For cloudflare the recorded cost of `structured` is **recall** — 1.000 → 0.950 on the original held-out split and 0.950 → 0.900 on holdout2, because a file record that is a header is a worse net for a question whose words are in a body the header does not quote. recall@20 is the pool the reranker chooses from, so a candidate that ranks better out of a smaller pool is buying the gain with coverage, and the guard refuses that trade.
+
+  **What is reported, for every candidate:** hit@1, hit@3, hit@5, MRR@10 and recall@20, per repository and overall.
+
+  **holdout3 is scored once and never retuned.** One run per candidate, the numbers that come back are the numbers, and no setting is changed afterwards and re-scored on it. If a candidate fails the rule it is not adjusted and tried again — that would make holdout3 a development set, which is exactly what happened to the original held-out split and then to holdout2. Any further tuning needs a fourth question set, written after these numbers are read
+- Command: no run. This entry decides nothing from data; it fixes the rule the next entry's data will be read by
+- Dataset/repo: `eval/questions/holdout3/*.json`, 20 questions at https://github.com/pallets/itsdangerous 672971d66a2e and https://github.com/pallets/flask d73fa1cdcbd8. **Not yet scored under anything.** No result file names holdout3 and no number on it appears anywhere in this file above this line
+- Date: 2026-10-12
+- Commit: decided at 56a9c35 and committed on top of it; no code changed by this entry
+- Notes: **what passing the rule does and does not do.** It makes a default change *proposable*, not applied. Changing `CODEATLAS_RECORD_FORMAT` or `CODEATLAS_BM25` in the committed configuration would rebuild every existing index (the format is in the embedder signature and therefore in the index-format guard) and would move the two numbers the held-out guard asserts, so it is its own change with its own entry, and this batch does not make it.
+  **The sample is twenty questions.** One question is 0.05 of a hit rate and about 0.05 of MRR, so a rule written on "higher" and "not lower" can turn on a single question moving two ranks. That is a known weakness of deciding from twenty questions and it is why the rule is two conditions rather than one, and why the per-repository table is reported beside the overall one: two repositories that disagree are worth seeing even when the average passes.
+  **What could still go wrong even if everything passes.** holdout3's questions are mine, written from the same two Python libraries at the same two commits by the same method as the other sixty, so "fresh" means unseen by the tuning process, not independent of the person who wrote it. And retrieval is not answers: nothing in this rule says a visitor's answer gets better
+### Change: the experiment script can score a question set named on the command line
+- Value: an enabler for the entry below, committed separately because it changes a script and that should be reviewable on its own. `scripts/experiment_retrieval.py` carried exactly two question lists, `original` and `holdout2`, and named their files in its source. A set written later cannot be added to that source: `test_holdout3_is_not_wired_into_any_default_question_list` asserts that neither eval script contains the string, which is what stops a default run reaching an unscored set by accident. The consequence was that such a set could not be scored **at all** by this script — and the Cloudflare half of any scoring run has to go through it, because it is the only path with the offline vector cache, the spend plan and the neuron ledger.
+
+  `--set` names a question file, is repeatable, and **replaces** the list `--questions` names rather than adding to it. The result file is then labelled by the folder those files live in — computed from the paths, so the script still carries no list of sets that will exist later.
+
+  | run | files scored | `"questions"` in the result file |
+  |---|---|---|
+  | no flag | `eval/questions/*.json` | `original` |
+  | `--questions holdout2` | `eval/questions/holdout2/*.json` | `holdout2` |
+  | `--set a/x.json --set a/y.json` | exactly those two | `a` |
+  | files from two folders | exactly those | `mixed` |
+
+  Nothing about a run without `--set` changes, and the guard test still passes unchanged: scoring a later set is a deliberate act with the paths written out in the command line and in this file
+- Command: `python -m pytest tests/ -q` -> **1133 passed**, 1 skipped (6 new in `tests/test_experiment_retrieval_script.py`: the two built-in lists, a run with no flag keeping them, a named set replacing the list entirely under either `--questions`, the folder label, the `mixed` label for files from two folders, and a relative path labelled like an absolute one); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (186 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; in `codementor-ui`: `npm test` (74 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none for the tests (paths only, nothing is read or scored). The guard eval is `eval/questions/*.json` at the two pinned commits. **No provider was called**
+- Date: 2026-10-12
+- Commit: fac69a4
+- Notes: **no measurement is in this entry** and nothing was scored by it.
+  **Why not a `--questions holdout3` choice instead.** That is the one thing that cannot be done: the string would be in the script's source and the guard test exists precisely to forbid it. Naming the files on the command line keeps the set reachable only from a command somebody wrote down
+### Check: holdout3, scored once for each candidate, and the rule applied
+- Value: five runs, each made one time, under the rule committed at 16464d2 before any of them existed. **No setting was changed after any run and nothing was re-scored.**
+
+  **Overall, 20 questions.** The verdict column is the rule, not a judgement.
+
+  | # | embedder | candidate | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 | verdict |
+  |---|---|---|---|---|---|---|---|---|
+  | 1 | hash | today's default — whole, no BM25 | 0.500 | 0.600 | 0.650 | 0.5517 | 0.700 | the incumbent |
+  | 2 | hash | **structured + BM25 fusion** | **0.600** | **0.750** | **0.800** | **0.6900** | **0.850** | **passes: MRR +0.1383, hit@5 +0.150** |
+  | 5 | hash | whole + BM25 fusion | 0.550 | 0.750 | 0.800 | 0.6571 | **0.950** | not eligible — information only |
+  | 3 | cloudflare | today's default — whole | 0.700 | **0.900** | **0.950** | 0.8042 | 0.950 | the incumbent |
+  | 4 | cloudflare | **structured, no BM25** | **0.750** | 0.850 | 0.900 | **0.8113** | 0.950 | **passes: MRR +0.0071, recall@20 equal** |
+
+  Per repository, which is where both verdicts get uncomfortable:
+
+  | | hash default | hash chosen | hash whole+BM25 | cloudflare default | cloudflare chosen |
+  |---|---|---|---|---|---|
+  | itsdangerous MRR@10 | 0.683 | **0.780** | 0.760 | **0.900** | 0.883 |
+  | itsdangerous recall@20 | 0.900 | **1.000** | **1.000** | **1.000** | **1.000** |
+  | flask MRR@10 | 0.420 | **0.600** | 0.554 | 0.708 | **0.739** |
+  | flask recall@20 | 0.500 | 0.700 | **0.900** | 0.900 | 0.900 |
+
+  **Both candidates pass the rule. Four things a reader should see anyway.**
+
+  **1. The hash result is large and consistent.** +0.138 of MRR and +0.150 of hit@5 overall, better on both repositories, and flask — where the default is weakest on this set (MRR 0.420, recall@20 0.500) — gains most. This is the third held-out set in a row where the chosen hash configuration beats the default, after +0.133 on the original split and +0.180 on holdout2.
+
+  **2. The cloudflare result is one question wide.** +0.0071 of MRR is a single question moving a rank or two. It passes because the rule is MRR and recall, and on both it does; but **hit@3 falls 0.900 → 0.850 and hit@5 falls 0.950 → 0.900**, and on itsdangerous MRR falls 0.900 → 0.883. The whole of the overall gain is flask (0.708 → 0.739). A rule written on two metrics was always going to be able to pass while a third fell — that is what choosing the metrics in advance costs, and the alternative, picking the metric after seeing the numbers, is worse.
+
+  **3. The information-only row says where hash's gain comes from, and it is mostly not the record format.** Whole records fused with BM25 — row 5, which the rule forbade from being selected — scores MRR 0.657 against the default's 0.552. So **fusion is worth about +0.105 of the +0.138, and the structured format about +0.033 on top of it.** And row 5 has the **best recall@20 of any hash run, 0.950 against the chosen configuration's 0.850**: `structured` costs hash recall here exactly as it was recorded costing cloudflare recall at 5edf06e. The chosen configuration ranks better out of a smaller pool. Had the hash rule been written on recall rather than hit@5 the chosen candidate would have failed and row 5, which is not eligible, would have been the only candidate that passed.
+
+  **4. holdout3 does not repeat holdout2's collapse, so "a fresh set scores worse" is not what the earlier finding showed.** MRR@10 for the same configuration across all four sets:
+
+  | configuration | dev | held out (reused) | holdout2 (fresh) | **holdout3 (never used)** |
+  |---|---|---|---|---|
+  | hash default | 0.662 | 0.645 | 0.396 | **0.552** |
+  | hash chosen | 0.743 | 0.779 | 0.576 | **0.690** |
+  | cloudflare default | 0.804 | 0.854 | 0.587 | **0.804** |
+  | cloudflare chosen | 0.825 | 0.873 | 0.641 | **0.811** |
+
+  The entry at 5edf06e read holdout2's gap as the reused splits flattering the system. holdout3 is a *different* never-looked-at set by the same author from the same two repositories, and it lands between holdout2 and the reused splits — cloudflare's default lands exactly on its dev figure. **The honest reading is that a twenty-question set varies by this much**: the two fresh sets differ from each other by 0.114 (hash chosen) to 0.217 (cloudflare default) of MRR. That is a statement about the size of these question sets, not about which set is virtuous, and it should temper every single-set comparison in this file, including the ones above it
+- Command: for each candidate, `python scripts/experiment_retrieval.py --split holdout3 --set eval/questions/holdout3/itsdangerous.json --set eval/questions/holdout3/flask.json --json eval/results/experiments/holdout3-<name>.json` with: `--embedder hash --record-format whole --arrangement current` (default-hash, 4.4 s); `--embedder hash --record-format structured --arrangement rrf+keyword` (chosen-hash, 5.6 s); `--embedder hash --record-format whole --arrangement rrf+keyword` (whole-bm25-hash, 5.1 s); `--embedder cloudflare --record-format whole --arrangement current --allow-spend` (default-cloudflare, 27.0 s); `--embedder cloudflare --record-format structured --arrangement current` (chosen-cloudflare, 3.1 s, no `--allow-spend` and no API call). Each cloudflare run was preceded by the same command with `--plan-only`. Then `python -m pytest tests/ -q` -> 1133 passed, 1 skipped; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (186 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; in `codementor-ui`: `npm test` (74 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: `eval/questions/holdout3/*.json`, 20 questions, at https://github.com/pallets/itsdangerous 672971d66a2e and https://github.com/pallets/flask d73fa1cdcbd8, from the checkouts already in `.codeatlas/eval-repos`
+- Date: 2026-10-12
+- Commit: ecf3744 (the five result files); the runs were made at ef754c6 with a clean tree, which is the commit recorded inside each file
+- Notes: **cost, in full. 0.71 estimated neurons.** The plan for the whole-records cloudflare run was 1,864 documents of which **20 were not yet cached** — exactly the twenty holdout3 question vectors — for a planned 0.96; recorded 0.7069 over 20 calls. The structured run then planned **2,039 documents, 0 uncached, 0.00 neurons** and was served entirely from the offline cache with **no API call**, because its documents were paid for at c92cb5b and its questions had just been paid for by the run before it. **Today's ledger: 0.71 estimated neurons of the 2,500 budget, 20 calls, 2,499.29 remaining.** Both plans were printed and read before anything was sent.
+  **What "scored once" means here, precisely.** Five runs, one each. `--arrangement` was passed on every one, so the four arrangements not under consideration were never computed on holdout3 — they would have cost nothing, which is exactly why not computing them had to be deliberate. The two `--plan-only` runs computed no score. This entry is the first time any holdout3 number appears anywhere, and holdout3 is now spent: it has been scored, and the next time a setting needs choosing it will need a fourth set.
+  **No default is changed by this entry.** `CODEATLAS_RECORD_FORMAT` is still `whole` and `CODEATLAS_BM25` is still off in the committed configuration. What the rule supports is proposed in a later entry and applied in neither.
+  **Limits.** Twenty questions per set: one question is 0.05 of a hit rate, so cloudflare's +0.0071 of MRR is well inside the noise a single question makes, and point 4 above is a measurement of that noise rather than an aside. The questions are mine, written from the same two Python libraries at the same two commits as the other sixty. And this is retrieval only — no model, no prompt, no citation, and nothing here says a visitor's answer is better
+### Change: holdout3 on the Benchmarks page, with the rule it was scored under
+- Value: the summary and the page carried two held-out sets. They now carry three, and the newest one is drawn with the rule that was fixed before it was spent rather than with a sentence written afterwards.
+
+  **A block of its own, above the older tables.** Five rows — each embedder's incumbent and candidate, plus the one configuration the rule barred from selection — with all five metrics, the question count, and the file each number came from:
+
+  | embedder | configuration | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 | verdict |
+  |---|---|---|---|---|---|---|---|
+  | hash | today's default | 0.500 | 0.600 | 0.650 | 0.552 | 0.700 | the incumbent |
+  | hash | candidate | 0.600 | 0.750 | 0.800 | 0.690 | 0.850 | **passes: MRR@10 higher, hit@5 not lower** |
+  | hash | information only | 0.550 | 0.750 | 0.800 | 0.657 | 0.950 | not eligible — barred before it was scored |
+  | cloudflare | today's default | 0.700 | 0.900 | 0.950 | 0.804 | 0.950 | the incumbent |
+  | cloudflare | candidate | 0.750 | 0.850 | 0.900 | 0.811 | 0.950 | **passes: MRR@10 higher, recall@20 not lower** |
+
+  **Every verdict in that table is computed by the builder** from the committed result files, against the two guard metrics as data (`hash` → hit@5, `cloudflare` → recall@20). None of them is a sentence typed beside a number, so a result file that changed would change the verdict rather than leave a stale claim next to a new figure. A test recomputes all five from the numbers, and another reads every metric back out of the file its row names.
+
+  **The ineligible row is drawn, and says so.** Whole records with BM25 fusion has the best recall@20 of any hash run on holdout3 (0.950) and was forbidden from being selected before it was scored. Leaving it off the page would hide where the hash gain comes from; drawing it like a candidate would let a reader think it was one. It is drawn, greyed, and labelled *not eligible*.
+
+  **holdout3 also gets a column** in the experiments table — filled only for the rows actually scored on it, dashed everywhere else — and in the side-by-side block, which is now **three** held-out sets. The `difference` column is unchanged and its heading now names which two sets it compares.
+
+  **And the page stops telling a reader which fresh set to believe.** It said *"where they disagree, holdout2 is the one to believe"*, which was fair when holdout2 was the only never-used set. It now says that holdout2 and holdout3 are both fresh, that they **do not agree with one another — by up to 0.217 of MRR@10 on the same code** — and that no single set of twenty questions settles a comparison on its own. Two tests assert that wording, and the ones asserting that the reused split is flagged and that holdout2 is the lower of the first two still pass unchanged
+- Command: `python scripts/build_benchmarks.py` then `python scripts/build_benchmarks.py --check` -> up to date; `python -m pytest tests/ -q` -> **1139 passed**, 1 skipped (`tests/test_build_benchmarks.py` gains 6: the block and its label, the rule recomputed with both guard metrics, the ineligible row, every number read back from the file its row names, the column in both tables with a number claimed only where it was scored, and the wording about the two fresh sets); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (186 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; in `codementor-ui`: `npm test` (**79 passed**, 5 new in `lib/benchmarks.test.ts`), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before), `npm run build`
+- Dataset/repo: the committed result files in `eval/results/` and `eval/results/experiments/`. **Nothing was re-scored and no number changed**; the five holdout3 files are the ones committed at ecf3744
+- Date: 2026-10-12
+- Commit: d056989
+- Notes: **the regeneration guard still holds.** `eval/benchmarks.json` is still a pure function of its inputs with no timestamp, and the byte-for-byte rebuild test passes.
+  **No measurement is in this entry.** Every figure above was recorded at ecf3744. What changed is which numbers sit beside each other and what the page says about them.
+  **What this does not fix.** The per-row `recorded` label in the experiments table still names one entry (5edf06e) for a row that now carries dev, held-out, holdout2 **and** holdout3 numbers recorded in different entries; the holdout3 block carries its own correct provenance, and splitting the row-level label per column is a larger change than this one. The side-by-side block is still MRR@10 only, because five metrics across four splits does not fit a phone. And the "at least six" reuse count is still a sentence written by hand rather than something the builder counts
+### Proposal: the default changes holdout3 supports, and everything each one would move
+- Value: **proposed and not applied. No default is changed by this entry, no file outside `docs/RESULTS.md` is touched by it, and nothing here has been set anywhere.** Both candidates passed the rule fixed at 16464d2, which makes exactly this proposable and nothing more.
+
+  | variable | today | proposed | what passed the rule |
+  |---|---|---|---|
+  | `CODEATLAS_RECORD_FORMAT` | `whole` | **`structured`** | hash: MRR@10 0.552 → 0.690 with hit@5 0.650 → 0.800. cloudflare: 0.804 → 0.811 with recall@20 unchanged at 0.950 |
+  | `CODEATLAS_BM25` | `off` | **`on`** — only while the provider is `hash` | the hash candidate is the pair; the format alone is not what was scored |
+
+  **The two candidates share one variable and disagree about the other.** `CODEATLAS_RECORD_FORMAT` is global, and both candidates want `structured`, so that one is a clean proposal. `CODEATLAS_BM25` is global too, and BM25 **on** is the hash candidate while BM25 **off** is the cloudflare one — fusion cost cloudflare 0.031 of dev MRR at c92cb5b, because an embedder with recall@20 1.000 has nothing for a lexical retriever to rescue. Render runs `CODEATLAS_EMBEDDING_PROVIDER=hash`, so `on` is right there today; **switching that service to cloudflare would have to turn BM25 off in the same change**, and nothing in the code enforces that pairing. A provider-aware default would be a different change, and it is not proposed here.
+
+  **1. The index format guard, and what it refuses.** Under `structured` the embedder is wrapped and signs itself `hash:384:lowercase=0:subtokens=1|records=structured`. That string is `CodeIndexService.index_format` and the value `embedder_mismatch` compares, so **every index already on disk is refused rather than searched** — `has_index` says no, the index cache misses, and the repository is reindexed on its next analysis. That is the designed behaviour (driven in both directions at ce05005) and it is also the whole operational cost: nothing silently answers from the old vectors.
+
+  **2. Existing indexes rebuilt — cheap here, expensive on the other provider.** For `hash` a rebuild is local arithmetic: 0.22 s for itsdangerous and 2.24 s for flask under `structured`, with the index on disk growing 11.6% and 9.6% (measured at ce05005). On the free Render plan there is **no persistent disk**, so indexes are already wiped on every restart and the practical cost is zero; if the disk proposed at b157fe5 is ever mounted, each repository is rebuilt once, on its next analysis, and then stays. **Under `cloudflare` the same flip is not cheap**: a record format changes every document, so every vector would have to be paid for again — about 276 estimated neurons per capped repository.
+
+  **3. The hash held-out guard numbers, and this is the part with a real casualty.**
+
+  | what asserts it | today | under the proposal |
+  |---|---|---|
+  | `.github/workflows/retrieval-eval.yml`, itsdangerous, 20 questions, `MIN_HIT_AT_5=0.85` | hit@5 **0.850** — passes with **zero margin** | hit@5 **0.800** — **the workflow fails** |
+  | the same workflow, `MIN_HIT_AT_1=0.70` | hit@1 **0.700** — passes with zero margin | hit@1 **0.700** — still passes, still with zero margin |
+  | the same run's other metrics | MRR@10 0.756, recall@20 0.950 | MRR@10 **0.756** (identical), recall@20 **1.000** |
+  | `eval/results/test.json`, which `/metrics` and the Benchmarks retrieval panel read | hit@5 0.750, MRR@10 0.645 | hit@5 **0.850**, MRR@10 **0.7785** once regenerated; stale and wrong until it is |
+  | `eval/results/dev.json`, the same | hit@5 0.750, MRR@10 0.6625 | hit@5 **0.900**, MRR@10 **0.7425** once regenerated |
+  | the line every entry in this file carries — *"`--split test` -> 0.750 / 0.645, unchanged"* | the guard | **no longer the guard**; a new pair would have to be adopted deliberately, in the entry that changes the default |
+
+  **The CI workflow is the thing to look at before anything else.** The proposed configuration retrieves *better* overall on every held-out set and **worse on the one 20-question slice that CI happens to assert**: itsdangerous keeps its MRR exactly (0.756) and trades a hit@5 for a recall@20 — the file moves out of the top five and into the pool. Applying the default change therefore means editing a guard downwards in the same commit, which is the one move this file should never make quietly. It is also worth recording that **both thresholds pass today by exactly 0.000**, so that workflow has been one question away from red since it was written.
+
+  **4. What else moves, all of it downstream of the files above.** Regenerating `eval/results/{dev,test}.json` moves the `codeatlas_retrieval_hit_rate` and `codeatlas_retrieval_mrr` gauges (`split="test"`: 0.750 → 0.850 and 0.645 → 0.7785), the hash rows of the Benchmarks retrieval panel, and the hash baseline row of the side-by-side block (held-out 0.645 → 0.7785, its difference −0.2494 → −0.2022). The Benchmarks builder would also need changing rather than just rebuilding: `BASELINE = ("whole", "current")` is labelled *"today's default"* in two panels, and after the flip the chosen configuration **is** the default, so the baseline and the candidate would be the same row. `tests/test_build_benchmarks.py` compares the summary byte for byte, so it fails until the summary is rebuilt; `tests/test_metrics.py` reads the result file rather than a literal, so it follows quietly — which is exactly why the result files have to be regenerated deliberately rather than left behind.
+
+  **5. One cost that is not a number anywhere yet.** With BM25 on, `AnswerService` builds a lexical index **in process, on the first question about a repository, and keeps it** until that repository is reindexed — the full text of every record, 1,862 of them for flask under `structured`, in a dictionary keyed by repository that nothing evicts. On a free Render instance that is memory which grows with the number of repositories a visitor has analysed. **It has not been measured**, and it should be before this is applied
+- Command: the two runs this entry adds are `python scripts/eval_retrieval.py --set eval/questions/itsdangerous.json --split all --min-hit-rate 5=0.85 --min-hit-rate 1=0.70` — which is the CI workflow's own command — first with nothing set (`ok: 0.8500 >= 0.8500`, `ok: 0.7000 >= 0.7000`), then with `$env:CODEATLAS_RECORD_FORMAT = "structured"` and `$env:CODEATLAS_BM25 = "true"` (`FAIL: overall hit@5 0.8000 is below the minimum 0.8500`, exit status 1), both variables then removed from the environment. Everything else here is read from entries above. `python -m pytest tests/ -q` -> 1139 passed, 1 skipped; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (186 files); `python scripts/build_benchmarks.py --check` -> up to date; `python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; in `codementor-ui`: `npm test` (79 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: `eval/questions/itsdangerous.json`, all 20 questions, at https://github.com/pallets/itsdangerous 672971d66a2e. **No provider was called; the holdout3 figures quoted are the ones recorded at ecf3744 and nothing was re-scored**
+- Date: 2026-10-12
+- Commit: d056989 (the state this proposal describes)
+- Notes: **approval required before any of this is set**, and applying it is at least four things in one change: the two variables, a regeneration of the two hash result files and the summary, an edit to the Benchmarks builder's notion of a baseline, and a decision about `MIN_HIT_AT_5` in CI. That is why it is a proposal and not a commit.
+  **What the rule did not say, and this entry will not say either.** Passing on holdout3 is one twenty-question set. The same entry that recorded the pass also recorded that two freshly written sets disagree with each other by up to 0.217 of MRR@10, that cloudflare's margin is +0.0071 with hit@3 and hit@5 both falling, and that most of hash's gain is the BM25 fusion rather than the record format. A reader who wants to apply only the half with the large, consistent effect could turn **BM25 on and leave the record format alone**: that is the ineligible row on holdout3 (MRR 0.657 against the default's 0.552, hit@5 0.800, **recall@20 0.950, the best of any hash run**), and the rule deliberately forbade *selecting* it. Proposing it would need its own decision entry and its own fresh question set, because choosing it now would be choosing from numbers that have already been looked at.
+  **Nothing here is about answers.** Every figure is retrieval: which files come back and in what order. No model, no prompt, no citation, and the inconsistency recorded at fce9e2a still stands — under `structured` the embedder sees a file's header while the keyword rerank and BM25 read the file's whole text

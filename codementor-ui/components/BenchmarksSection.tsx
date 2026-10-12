@@ -482,6 +482,7 @@ function Experiments({ view }: { view: ExperimentsView }) {
                     )}
                 </div>
             )}
+            {view.holdout3 && <Holdout3 view={view.holdout3} />}
             {view.splitsCompared && <SplitsCompared view={view.splitsCompared} />}
 
             <Scroller>
@@ -498,6 +499,7 @@ function Experiments({ view }: { view: ExperimentsView }) {
                             ))}
                             <th className="text-right px-3 py-2 font-bold text-muted/60">{view.heldOutLabel}</th>
                             <th className="text-right px-3 py-2 font-bold text-muted/60">{view.freshLabel}</th>
+                            <th className="text-right px-3 py-2 font-bold text-muted/60">{view.neverUsedLabel}</th>
                             <th className="text-left px-3 py-2 font-bold text-muted/60">verdict</th>
                         </tr>
                     </thead>
@@ -535,6 +537,13 @@ function Experiments({ view }: { view: ExperimentsView }) {
                                         <span className="text-muted/40">{NOT_MEASURED}</span>
                                     )}
                                 </td>
+                                <td className="text-right px-3 py-2">
+                                    {row.holdout3 ? (
+                                        row.holdout3[1]
+                                    ) : (
+                                        <span className="text-muted/40">{NOT_MEASURED}</span>
+                                    )}
+                                </td>
                                 <td className="text-left px-3 py-2">
                                     <span
                                         className={
@@ -561,12 +570,87 @@ function Experiments({ view }: { view: ExperimentsView }) {
                 </button>
                 <span className="text-[10px] mono text-muted/60">
                     held out = the original split, scored many times before; fresh = holdout2, written later and
-                    scored once. Both columns show MRR@10.
+                    scored once; never used = holdout3, which no choice in this table was made from. All three
+                    columns show MRR@10.
                 </span>
             </div>
 
             {view.chatModes && <ChatModes view={view.chatModes} />}
         </Panel>
+    );
+}
+
+function Holdout3({ view }: { view: NonNullable<ExperimentsView["holdout3"]> }) {
+    return (
+        <div className="space-y-2 p-3 rounded-lg bg-emerald-400/[0.05] border border-emerald-400/20">
+            <div className="flex flex-wrap items-baseline gap-2">
+                <h4 className="text-[10px] font-bold uppercase tracking-widest text-muted/60">{view.title}</h4>
+                <span className="px-2 py-0.5 rounded-full border text-[10px] bg-emerald-400/10 text-emerald-300 border-emerald-400/20">
+                    {view.label}
+                </span>
+                <span className="text-[10px] mono text-muted/60">
+                    {view.questions} questions · {view.recordedLabel}
+                </span>
+            </div>
+            <p className="text-[11px] text-muted leading-relaxed">{view.rule}</p>
+            <Scroller>
+                <table className="w-full min-w-[720px] text-[11px] mono border border-white/5 rounded-lg">
+                    <thead>
+                        <tr className="bg-white/[0.03]">
+                            <th className="text-left px-3 py-2 font-bold text-muted/60">embedder</th>
+                            <th className="text-left px-3 py-2 font-bold text-muted/60">configuration</th>
+                            {view.metrics.map((metric) => (
+                                <th key={metric} className="text-right px-3 py-2 font-bold text-muted/60">
+                                    {metric}
+                                </th>
+                            ))}
+                            <th className="text-left px-3 py-2 font-bold text-muted/60">verdict</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {view.rows.map((row) => (
+                            <tr
+                                key={row.key}
+                                className={
+                                    row.eligible
+                                        ? "border-t border-white/10 text-foreground"
+                                        : "border-t border-white/5 text-foreground/60"
+                                }
+                            >
+                                <td className="text-left px-3 py-2">{row.embedder}</td>
+                                <td className="text-left px-3 py-2 break-words max-w-[220px]">
+                                    {row.configuration}
+                                    <span className="block text-[10px] text-muted/60">{row.change}</span>
+                                </td>
+                                {row.cells.map((cell, i) => (
+                                    <td
+                                        key={view.metrics[i]}
+                                        className={
+                                            row.passes ? "text-right px-3 py-2 font-bold" : "text-right px-3 py-2"
+                                        }
+                                    >
+                                        {cell}
+                                    </td>
+                                ))}
+                                <td className="text-left px-3 py-2 break-words max-w-[260px]">
+                                    <span
+                                        className={
+                                            "inline-block px-2 py-0.5 rounded-full border text-[10px] " +
+                                            (row.passes
+                                                ? "bg-emerald-400/10 text-emerald-300 border-emerald-400/20"
+                                                : "bg-white/5 text-muted border-white/10")
+                                        }
+                                    >
+                                        {row.verdict}
+                                    </span>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </Scroller>
+            <p className="text-[11px] text-muted leading-relaxed">{view.note}</p>
+        </div>
     );
 }
 
@@ -604,7 +688,8 @@ function SplitsCompared({ view }: { view: NonNullable<ExperimentsView["splitsCom
                                 </td>
                                 <td className="text-right px-3 py-2">{row.dev}</td>
                                 <td className="text-right px-3 py-2">{row.heldOut}</td>
-                                <td className="text-right px-3 py-2 font-bold">{row.holdout2}</td>
+                                <td className="text-right px-3 py-2">{row.holdout2}</td>
+                                <td className="text-right px-3 py-2 font-bold">{row.holdout3}</td>
                                 <td
                                     className={
                                         row.worseOnFresh
