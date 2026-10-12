@@ -15,7 +15,10 @@ import {
     GitFork,
 } from "lucide-react";
 import Link from "next/link";
-import { fetchEvalStats } from "@/lib/api";
+import { fetchBenchmarks, fetchEvalStats } from "@/lib/api";
+import type { BenchmarksResponse } from "@/lib/benchmarks";
+import { benchmarksView } from "@/lib/benchmarks";
+import BenchmarksSection from "@/components/BenchmarksSection";
 import { cn } from "@/lib/utils";
 
 /* ---- Metric Card ---- */
@@ -73,6 +76,9 @@ export default function EvalDashboard() {
     const [stats, setStats] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    // Recorded results are fetched separately from the live session stats, so a server that
+    // cannot answer one still shows the other. benchmarksView copes with null.
+    const [benchmarks, setBenchmarks] = useState<BenchmarksResponse | null>(null);
 
     const loadStats = async () => {
         setLoading(true);
@@ -84,6 +90,12 @@ export default function EvalDashboard() {
             setError(err.message);
         } finally {
             setLoading(false);
+        }
+        try {
+            setBenchmarks(await fetchBenchmarks());
+        } catch {
+            // No recorded results from this server; the section says so itself.
+            setBenchmarks(null);
         }
     };
 
@@ -348,6 +360,9 @@ export default function EvalDashboard() {
                         )}
                     </>
                 ) : null}
+
+                {/* ---- Recorded results, under the live session telemetry above ---- */}
+                <BenchmarksSection view={benchmarksView(benchmarks)} />
             </main>
         </div>
     );

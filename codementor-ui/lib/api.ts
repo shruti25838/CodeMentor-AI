@@ -184,3 +184,10 @@ export async function fetchEvalStats() {
     if (!response.ok) throw await responseError(response, "Failed to fetch eval stats");
     return response.json();
 }
+
+/** Recorded benchmark results, read from a committed file on the server. Never measured live. */
+export async function fetchBenchmarks() {
+    const response = await serverFetch(`${BASE_URL}/eval/benchmarks`, undefined, READ);
+    if (!response.ok) throw await responseError(response, "Failed to fetch recorded results");
+    return response.json();
+}

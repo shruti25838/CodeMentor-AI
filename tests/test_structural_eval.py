@@ -14,6 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import structural_eval  # noqa: E402
 from structural_eval import QUESTIONS, REPOS, Scored, Truth, module_name, score  # noqa: E402
 
 from codeatlas.services.analysis.call_graph import CallGraph  # noqa: E402
@@ -150,3 +151,66 @@ def test_the_eval_script_makes_no_model_call() -> None:
     assert "LlmProvider" not in names
     for banned in ("langchain", "openai", "get_chat_model"):
         assert banned not in source, f"the evaluation must not use {banned}"
+
+
+# ---------------------------------------------------------------- the committed result file
+
+
+class _Args:
+    """What as_result reads off the parsed arguments."""
+
+    split = "all"
+    repo = "all"
+
+
+def _scored(kind: str, subject: str, predicted: set[str], expected: set[str], **extra) -> Scored:
+    question = {"repo": "itsdangerous", "split": "development", "kind": kind, "subject": subject, **extra}
+    return Scored(question, predicted, expected)
+
+
+def test_as_result_groups_by_split_repo_and_kind() -> None:
+    rows = [
+        _scored("where_defined", "Signer", {"a.py:1"}, {"a.py:1"}),
+        _scored("who_calls", "sign", {"a.py:2"}, {"a.py:2", "a.py:3"}, split="held-out"),
+    ]
+    result = structural_eval.as_result(rows, _Args())
+
+    assert result["overall"] == {"questions": 2, "precision": 1.0, "recall": 0.75, "exact": 1}
+    assert result["by_split"]["development"]["questions"] == 1
+    assert result["by_split"]["held-out"]["exact"] == 0
+    assert result["by_repo"]["itsdangerous"]["questions"] == 2
+    assert result["by_kind"]["where_defined"]["exact"] == 1
+    assert result["by_kind"]["who_imports"] == {"questions": 0, "precision": None, "recall": None, "exact": 0}
+
+
+def test_as_result_lists_each_disagreement_with_both_directions() -> None:
+    rows = [
+        _scored("where_defined", "Signer", {"a.py:1"}, {"a.py:1"}),
+        _scored("who_calls", "sign", {"b.py:9"}, {"a.py:2"}, note="dispatched through self"),
+    ]
+    result = structural_eval.as_result(rows, _Args())
+
+    assert len(result["disagreements"]) == 1
+    only = result["disagreements"][0]
+    assert only["subject"] == "sign"
+    assert only["note"] == "dispatched through self"
+    assert only["ast_found_graph_missed"] == ["a.py:2"]
+    assert only["graph_found_ast_did_not"] == ["b.py:9"]
+
+
+def test_as_result_records_the_pinned_repository_commits() -> None:
+    result = structural_eval.as_result([], _Args())
+    assert result["repos"] == {name: {"commit": commit} for name, (_, commit) in REPOS.items()}
+    assert result["ground_truth"] == "python ast"
+    assert result["language"] == "python"
+
+
+def test_the_committed_result_file_matches_the_recorded_figures() -> None:
+    """The file the benchmarks summary reads, against the entry in docs/RESULTS.md."""
+    result = json.loads((ROOT / "eval" / "results" / "structural" / "all.json").read_text(encoding="utf-8"))
+    assert result["overall"] == {"questions": 49, "precision": 1.0, "recall": 0.9673, "exact": 45}
+    assert result["by_split"]["development"]["questions"] == 26
+    assert result["by_split"]["held-out"]["questions"] == 23
+    assert len(result["disagreements"]) == 4
+    # Every disagreement is a miss; the graph never claimed a call that ast did not find.
+    assert all(not d["graph_found_ast_did_not"] for d in result["disagreements"])

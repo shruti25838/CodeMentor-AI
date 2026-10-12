@@ -34,6 +34,7 @@ USER_FACING = {
     ("GET", "/repos"),
     ("POST", "/dependencies/graph"),
     ("GET", "/eval/stats"),
+    ("GET", "/eval/benchmarks"),
 }
 
 ADMIN = {

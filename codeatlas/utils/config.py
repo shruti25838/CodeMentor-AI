@@ -140,6 +140,10 @@ class AppConfig:
     cloudflare_index_dir: str = ".codeatlas/indexes-cloudflare"
     # Folder of scripts/eval_retrieval.py --json results; read at startup into the retrieval gauges.
     eval_results_dir: str = "eval/results"
+    # The recorded-results summary scripts/build_benchmarks.py writes, served read-only by
+    # GET /eval/benchmarks. Read per request, not at startup, so a missing file is a quiet
+    # "not available" rather than a boot failure.
+    benchmarks_file: str = "eval/benchmarks.json"
 
 
 def unknown_pooling_message(pooling: str) -> str:
@@ -204,6 +208,7 @@ def load_config() -> AppConfig:
         chat_session_ttl_seconds=int(os.getenv("CODEATLAS_CHAT_SESSION_TTL_SECONDS", "1800")),
         chat_max_sessions=int(os.getenv("CODEATLAS_CHAT_MAX_SESSIONS", "1000")),
         eval_results_dir=os.getenv("CODEATLAS_EVAL_RESULTS_DIR", "eval/results"),
+        benchmarks_file=os.getenv("CODEATLAS_BENCHMARKS_FILE", "eval/benchmarks.json"),
         # Retrieval and indexing, all seven with the defaults that docs/RESULTS.md measured.
         # Changing one of the last two means earlier indexes are not reused by the index cache.
         retrieval_candidates=_positive_int("CODEATLAS_RETRIEVAL_CANDIDATES", 20),
