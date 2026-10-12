@@ -91,6 +91,7 @@ function Retrieval({ view }: { view: RetrievalView }) {
 
             <p className="text-[11px] mono text-foreground/70 break-words">{provider.embedder}</p>
             {provider.note && <p className="text-[11px] text-muted leading-relaxed">{provider.note}</p>}
+            {view.splitsNote && <p className="text-[11px] text-amber-300/80 leading-relaxed">{view.splitsNote}</p>}
 
             {provider.splits.map((split) => (
                 <div key={split.id} className="space-y-2">
@@ -99,8 +100,14 @@ function Retrieval({ view }: { view: RetrievalView }) {
                             {split.id}
                         </span>
                         <span className="text-[10px] mono text-muted">{split.questions} questions</span>
+                        {split.reused && (
+                            <span className="px-2 py-0.5 rounded-full border border-amber-400/20 bg-amber-400/10 text-amber-300 text-[10px] font-bold">
+                                reused
+                            </span>
+                        )}
                         <Stamp label={split.recordedLabel} />
                     </div>
+                    {split.note && <p className="text-[11px] text-muted leading-relaxed">{split.note}</p>}
                     <Scroller>
                         <table className="w-full min-w-[480px] text-[11px] mono border border-white/5 rounded-lg">
                             <thead>
@@ -462,6 +469,20 @@ function Experiments({ view }: { view: ExperimentsView }) {
     return (
         <Panel title={view.title} icon={FlaskConical} sub={view.note}>
             <p className="text-[11px] text-muted leading-relaxed">{view.keepRule}</p>
+            {(view.reusedSplitNote || view.freshSplitNote) && (
+                <div className="p-3 rounded-lg bg-amber-400/[0.07] border border-amber-400/20 space-y-1">
+                    {view.reusedSplitNote && (
+                        <p className="text-[11px] text-amber-300/90 leading-relaxed">{view.reusedSplitNote}</p>
+                    )}
+                    {view.freshSplitNote && (
+                        <p className="text-[11px] text-amber-300/90 leading-relaxed">{view.freshSplitNote}</p>
+                    )}
+                    {view.bothSplitsNote && (
+                        <p className="text-[11px] text-muted leading-relaxed">{view.bothSplitsNote}</p>
+                    )}
+                </div>
+            )}
+            {view.splitsCompared && <SplitsCompared view={view.splitsCompared} />}
 
             <Scroller>
                 <table className="w-full min-w-[720px] text-[11px] mono border border-white/5 rounded-lg">
@@ -475,8 +496,8 @@ function Experiments({ view }: { view: ExperimentsView }) {
                                     dev {m}
                                 </th>
                             ))}
-                            <th className="text-right px-3 py-2 font-bold text-muted/60">held out</th>
-                            <th className="text-right px-3 py-2 font-bold text-muted/60">fresh</th>
+                            <th className="text-right px-3 py-2 font-bold text-muted/60">{view.heldOutLabel}</th>
+                            <th className="text-right px-3 py-2 font-bold text-muted/60">{view.freshLabel}</th>
                             <th className="text-left px-3 py-2 font-bold text-muted/60">verdict</th>
                         </tr>
                     </thead>
@@ -539,12 +560,67 @@ function Experiments({ view }: { view: ExperimentsView }) {
                     {showAll ? "Show the kept ones" : "Show all " + view.rows.length + ", rejected included"}
                 </button>
                 <span className="text-[10px] mono text-muted/60">
-                    held out = scored before; fresh = holdout2, scored once. Both columns show MRR@10.
+                    held out = the original split, scored many times before; fresh = holdout2, written later and
+                    scored once. Both columns show MRR@10.
                 </span>
             </div>
 
             {view.chatModes && <ChatModes view={view.chatModes} />}
         </Panel>
+    );
+}
+
+function SplitsCompared({ view }: { view: NonNullable<ExperimentsView["splitsCompared"]> }) {
+    return (
+        <div className="space-y-2">
+            <h4 className="text-[10px] font-bold uppercase tracking-widest text-muted/60">{view.title}</h4>
+            <Scroller>
+                <table className="w-full min-w-[560px] text-[11px] mono border border-white/5 rounded-lg">
+                    <thead>
+                        <tr className="bg-white/[0.03]">
+                            <th className="text-left px-3 py-2 font-bold text-muted/60">embedder</th>
+                            <th className="text-left px-3 py-2 font-bold text-muted/60">configuration</th>
+                            {view.columns.map((column) => (
+                                <th key={column} className="text-right px-3 py-2 font-bold text-muted/60">
+                                    {column}
+                                </th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {view.rows.map((row) => (
+                            <tr
+                                key={row.key}
+                                className={
+                                    row.chosen
+                                        ? "border-t border-white/10 text-foreground"
+                                        : "border-t border-white/5 text-foreground/70"
+                                }
+                            >
+                                <td className="text-left px-3 py-2">{row.embedder}</td>
+                                <td className="text-left px-3 py-2 break-words max-w-[220px]">
+                                    {row.configuration}
+                                    <span className="block text-[10px] text-muted/60">{row.change}</span>
+                                </td>
+                                <td className="text-right px-3 py-2">{row.dev}</td>
+                                <td className="text-right px-3 py-2">{row.heldOut}</td>
+                                <td className="text-right px-3 py-2 font-bold">{row.holdout2}</td>
+                                <td
+                                    className={
+                                        row.worseOnFresh
+                                            ? "text-right px-3 py-2 text-amber-300"
+                                            : "text-right px-3 py-2"
+                                    }
+                                >
+                                    {row.difference}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </Scroller>
+            <p className="text-[10px] mono text-muted/60">every figure is {view.metric}</p>
+        </div>
     );
 }
 
@@ -555,6 +631,7 @@ function ChatModes({ view }: { view: NonNullable<ExperimentsView["chatModes"]> }
             <p className="inline-block px-2 py-1 rounded-md bg-amber-400/10 text-amber-300 text-[11px] font-bold">
                 {view.label}
             </p>
+            {view.scaleNote && <p className="text-[11px] text-muted leading-relaxed">{view.scaleNote}</p>}
             <p className="text-[11px] text-muted leading-relaxed">{view.weakCheck}</p>
             <Scroller>
                 <table className="w-full min-w-[640px] text-[11px] mono border border-white/5 rounded-lg">
@@ -589,7 +666,7 @@ function ChatModes({ view }: { view: NonNullable<ExperimentsView["chatModes"]> }
                 </table>
             </Scroller>
             <p className="text-[10px] mono text-muted/60">
-                model: {view.model} - {view.questions} questions
+                model: {view.model} - {view.questions} questions, {view.runs} runs
             </p>
             {view.stoppedEarly && (
                 <p className="text-[11px] text-amber-300/80 leading-relaxed">stopped early: {view.stoppedEarly}</p>

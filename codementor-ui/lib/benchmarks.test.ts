@@ -390,6 +390,80 @@ test("the chat mode comparison is labelled as one local run on one model", () =>
     }
 });
 
+test("the page says plainly that the original held-out split was reused", () => {
+    const view = experimentsView(SUMMARY)!;
+
+    assert.match(view.reusedSplitNote, /reused/i);
+    assert.match(view.reusedSplitNote, /weak confirmation/);
+    assert.match(view.freshSplitNote, /holdout2/);
+    assert.match(view.freshSplitNote, /fresher/);
+    assert.match(view.heldOutLabel, /reused/);
+    assert.match(view.freshLabel, /scored once/);
+});
+
+test("the retrieval panel flags the reused split and leaves development alone", () => {
+    const view = retrievalView(SUMMARY)!;
+
+    assert.match(view.splitsNote, /reused/i);
+    for (const provider of view.providers) {
+        const heldOut = provider.splits.find((s) => s.id === "held-out")!;
+        const development = provider.splits.find((s) => s.id === "development")!;
+        assert.equal(heldOut.reused, true, `${provider.id}: the held-out split must be flagged as reused`);
+        assert.match(heldOut.note, /reused/i);
+        assert.equal(development.reused, false);
+        assert.equal(development.note, "");
+    }
+});
+
+test("both held-out sets are shown side by side, with the gap between them", () => {
+    const compared = experimentsView(SUMMARY)!.splitsCompared!;
+
+    assert.equal(compared.metric, "mrr@10");
+    assert.equal(compared.rows.length, 4);
+    for (const row of compared.rows) {
+        assert.match(row.heldOut, /^\d\.\d{3}$/, `${row.key} must show a held-out number`);
+        assert.match(row.holdout2, /^\d\.\d{3}$/, `${row.key} must show a fresh number`);
+        assert.match(row.difference, /^[+-]\d\.\d{3}$/, `${row.key} must show the gap with its sign`);
+        assert.ok(row.sources.includes("eval/results/"), `${row.key} must name where its numbers came from`);
+    }
+});
+
+test("the side-by-side table keeps showing that the fresh split scores worse", () => {
+    // The relationship, not the numbers: a question set that was never used scores lower than
+    // one that was. If that ever stops being true the wording above has to change with it.
+    for (const row of experimentsView(SUMMARY)!.splitsCompared!.rows) {
+        assert.equal(row.worseOnFresh, true, `${row.key} should be worse on the fresh split`);
+        assert.ok(Number(row.holdout2) < Number(row.heldOut), row.key);
+        assert.ok(row.difference.startsWith("-"), row.key);
+    }
+});
+
+test("a summary with no side-by-side block renders the rest of the panel", () => {
+    const view = experimentsView({
+        experiments: {
+            metrics: ["mrr@10"],
+            rows: [{ embedder: "hash", records: "whole", arrangement: "current", verdict: "baseline", dev: { questions: 20, "mrr@10": 0.5 } }],
+            splits_compared: null,
+        },
+    })!;
+
+    assert.equal(view.splitsCompared, null);
+    assert.equal(view.rows.length, 1);
+});
+
+test("the chat-mode block says how large the run was, so a trial cannot pass for it", () => {
+    const chat = experimentsView(SUMMARY)!.chatModes!;
+
+    assert.equal(chat.questions, 15);
+    assert.equal(chat.runs, 30);
+    assert.match(chat.scaleNote, /15 questions, 30 runs/);
+    assert.match(chat.scaleNote, /trial/);
+    assert.equal(
+        chat.rows.reduce((total, row) => total + Number(row.score.split("/")[1]), 0),
+        chat.runs,
+    );
+});
+
 test("the experiments panel shows no end-to-end latency claim", () => {
     const printed = JSON.stringify(experimentsView(SUMMARY)).toLowerCase();
     for (const banned of ["ttfb", "end_to_end", "p95", "latency"]) {

@@ -33,6 +33,9 @@ export interface Split {
     questions: number;
     source?: string;
     recorded?: Recorded;
+    /** True for the original held-out split, which earlier runs scored again and again. */
+    reused?: boolean;
+    note?: string;
     rows?: MetricRow[];
 }
 
@@ -50,6 +53,7 @@ export interface RetrievalBlock {
     scored?: string;
     question_set?: string;
     metrics?: string[];
+    splits_note?: string;
     providers?: Provider[];
 }
 
@@ -174,14 +178,37 @@ export interface ChatModeRow {
     cited_files_total?: number;
 }
 
+export interface SplitsComparedRow {
+    embedder?: string;
+    configuration?: string;
+    change?: string;
+    verdict?: string;
+    dev?: number | null;
+    held_out?: number | null;
+    holdout2?: number | null;
+    difference?: number | null;
+    held_out_source?: string;
+    holdout2_source?: string;
+}
+
 export interface ExperimentsBlock {
     title?: string;
     note?: string;
     keep_rule?: string;
     metrics?: string[];
     splits?: Record<string, string>;
+    reused_split_note?: string;
+    fresh_split_note?: string;
+    both_splits_note?: string;
     source?: string;
     rows?: ExperimentRow[];
+    splits_compared?: {
+        title?: string;
+        metric?: string;
+        note?: string;
+        columns?: string[];
+        rows?: SplitsComparedRow[];
+    } | null;
     chat_modes?: {
         title?: string;
         label?: string;
@@ -190,6 +217,8 @@ export interface ExperimentsBlock {
         weak_check?: string;
         stopped_early?: string;
         note?: string;
+        scale_note?: string;
+        runs?: number;
         source?: string;
         recorded?: Recorded;
         modes?: ChatModeRow[];
@@ -252,6 +281,9 @@ export interface RetrievalSplit {
     questions: number;
     recordedLabel: string;
     source: string;
+    /** The original held-out split was scored again and again; the page has to say so. */
+    reused: boolean;
+    note: string;
     rows: RetrievalRow[];
 }
 
@@ -269,6 +301,7 @@ export interface RetrievalView {
     scored: string;
     questionSet: string;
     metrics: string[];
+    splitsNote: string;
     providers: RetrievalProvider[];
 }
 
@@ -282,6 +315,7 @@ export function retrievalView(summary?: Summary): RetrievalView | null {
         scored: block.scored ?? "",
         questionSet: block.question_set ?? "",
         metrics,
+        splitsNote: block.splits_note ?? "",
         providers: block.providers.map((provider) => ({
             id: provider.id,
             label: provider.label,
@@ -293,6 +327,8 @@ export function retrievalView(summary?: Summary): RetrievalView | null {
                 questions: split.questions,
                 recordedLabel: recordedLabel(split.recorded),
                 source: split.source ?? "",
+                reused: split.reused === true,
+                note: split.note ?? "",
                 rows: (split.rows ?? []).map((row) => ({
                     scope: row.scope,
                     questions: row.questions,
@@ -564,6 +600,8 @@ export interface ChatModeView {
     label: string;
     model: string;
     questions: number;
+    runs: number;
+    scaleNote: string;
     weakCheck: string;
     stoppedEarly: string;
     note: string;
@@ -581,13 +619,41 @@ export interface ChatModeView {
     }[];
 }
 
+export interface SplitsComparedView {
+    title: string;
+    metric: string;
+    note: string;
+    columns: string[];
+    rows: {
+        key: string;
+        embedder: string;
+        configuration: string;
+        change: string;
+        chosen: boolean;
+        dev: string;
+        heldOut: string;
+        holdout2: string;
+        difference: string;
+        /** True when the fresh split scores lower, which on today's data is every row. */
+        worseOnFresh: boolean;
+        sources: string;
+    }[];
+}
+
 export interface ExperimentsView {
     title: string;
     note: string;
     keepRule: string;
     metrics: string[];
     source: string;
+    /** The three sentences the panel has to carry about which held-out set to believe. */
+    reusedSplitNote: string;
+    freshSplitNote: string;
+    bothSplitsNote: string;
+    heldOutLabel: string;
+    freshLabel: string;
     rows: ExperimentView[];
+    splitsCompared: SplitsComparedView | null;
     chatModes: ChatModeView | null;
 }
 
@@ -611,6 +677,11 @@ export function experimentsView(summary?: Summary): ExperimentsView | null {
         keepRule: block.keep_rule ?? "",
         metrics,
         source: block.source ?? "",
+        reusedSplitNote: block.reused_split_note ?? "",
+        freshSplitNote: block.fresh_split_note ?? "",
+        bothSplitsNote: block.both_splits_note ?? "",
+        heldOutLabel: block.splits?.held_out ?? "held out",
+        freshLabel: block.splits?.holdout2 ?? "fresh",
         rows: block.rows.map((row) => ({
             key: `${row.embedder}-${row.records}-${row.arrangement}`,
             embedder: row.embedder ?? "",
@@ -625,7 +696,37 @@ export function experimentsView(summary?: Summary): ExperimentsView | null {
             questions: row.dev?.questions ?? 0,
             recordedLabel: recordedLabel(row.recorded),
         })),
+        splitsCompared: splitsComparedView(block.splits_compared),
         chatModes: chatModesView(block.chat_modes),
+    };
+}
+
+/** A gap of -0.249, with its sign kept: the direction is the point of the column. */
+function signed(value: unknown): string {
+    if (typeof value !== "number" || !Number.isFinite(value)) return NOT_MEASURED;
+    return value > 0 ? "+" + value.toFixed(3) : value.toFixed(3);
+}
+
+function splitsComparedView(block: ExperimentsBlock["splits_compared"]): SplitsComparedView | null {
+    if (!block?.rows?.length) return null;
+    return {
+        title: block.title ?? "The two held-out sets, side by side",
+        metric: block.metric ?? "mrr@10",
+        note: block.note ?? "",
+        columns: block.columns ?? [],
+        rows: block.rows.map((row) => ({
+            key: (row.embedder ?? "") + "-" + (row.verdict ?? ""),
+            embedder: row.embedder ?? "",
+            configuration: row.configuration ?? "",
+            change: row.change ?? "",
+            chosen: row.verdict === "chosen",
+            dev: formatMetric(row.dev),
+            heldOut: formatMetric(row.held_out),
+            holdout2: formatMetric(row.holdout2),
+            difference: signed(row.difference),
+            worseOnFresh: typeof row.difference === "number" && Number.isFinite(row.difference) && row.difference < 0,
+            sources: [row.held_out_source, row.holdout2_source].filter(Boolean).join(" - "),
+        })),
     };
 }
 
@@ -637,6 +738,8 @@ function chatModesView(block: ExperimentsBlock["chat_modes"]): ChatModeView | nu
         label: block.label ?? "one local run, one model, one question set - not a benchmark",
         model: block.model ?? NOT_MEASURED,
         questions: block.questions ?? 0,
+        runs: block.runs ?? block.modes.reduce((total, mode) => total + mode.runs, 0),
+        scaleNote: block.scale_note ?? "",
         weakCheck: block.weak_check ?? "",
         stoppedEarly: block.stopped_early ?? "",
         note: block.note ?? "",
