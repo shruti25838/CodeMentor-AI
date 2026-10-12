@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from codeatlas.services.qa.grounded_chat import LEGACY, validate_chat_mode
 from codeatlas.services.retrieval.bm25 import DEFAULT_B as DEFAULT_BM25_B
 from codeatlas.services.retrieval.bm25 import DEFAULT_K1 as DEFAULT_BM25_K1
+from codeatlas.services.retrieval.bm25 import DEFAULT_MAX_INDEXES as DEFAULT_BM25_MAX_INDEXES
 from codeatlas.services.retrieval.cloudflare_embedder import (
     DEFAULT_CLOUDFLARE_BATCH_SIZE,
     DEFAULT_CLOUDFLARE_COOLDOWN_SECONDS,
@@ -133,6 +134,11 @@ class AppConfig:
     bm25_b: float = DEFAULT_BM25_B
     bm25_rrf_k: int = DEFAULT_BM25_RRF_K
     bm25_depth: int = 0
+    # How many lexical indexes may sit in memory at once, across every repository a visitor has
+    # analysed. One is built on the first question about a repository and kept until that
+    # repository is indexed again, so without a cap this is memory that only ever grows. Over
+    # the cap the least recently used one is dropped and rebuilt on demand.
+    bm25_max_indexes: int = DEFAULT_BM25_MAX_INDEXES
     # What a record is: "whole" (one per file, one per function, each entire) or "structured"
     # (file records become a header, long functions become overlapping windows). The default is
     # today's, and it is what every number in docs/RESULTS.md was measured with. The format is
@@ -310,6 +316,9 @@ def load_config() -> AppConfig:
         bm25_rrf_k=_positive_int("CODEATLAS_BM25_RRF_K", DEFAULT_BM25_RRF_K),
         # 0 is meaningful here, so this one allows it: "however deep the vector pool goes".
         bm25_depth=_non_negative_int("CODEATLAS_BM25_DEPTH", 0),
+        # At least 1: a cap of 0 would rebuild the index for every question, which is not a
+        # memory setting but a way of making the feature slow enough to look broken.
+        bm25_max_indexes=_positive_int("CODEATLAS_BM25_MAX_INDEXES", DEFAULT_BM25_MAX_INDEXES),
         record_format=validate_record_format(os.getenv("CODEATLAS_RECORD_FORMAT", WHOLE)),
         record_window_chars=_positive_int("CODEATLAS_RECORD_WINDOW_CHARS", DEFAULT_WINDOW_CHARS),
         record_window_overlap=_non_negative_int("CODEATLAS_RECORD_WINDOW_OVERLAP", DEFAULT_WINDOW_OVERLAP),

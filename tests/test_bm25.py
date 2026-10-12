@@ -11,7 +11,14 @@ import pytest
 
 from codeatlas.models.embedding_record import EmbeddingRecord
 from codeatlas.services.qa.answer_service import AnswerService, RetrievalSettings
-from codeatlas.services.retrieval.bm25 import DEFAULT_B, DEFAULT_K1, Bm25Index, Bm25Settings, tokenize
+from codeatlas.services.retrieval.bm25 import (
+    DEFAULT_B,
+    DEFAULT_K1,
+    DEFAULT_MAX_INDEXES,
+    Bm25Index,
+    Bm25Settings,
+    tokenize,
+)
 from codeatlas.services.retrieval.fusion import DEFAULT_RRF_K, reciprocal_rank_fusion
 from codeatlas.services.retrieval.interfaces import CodeRetriever
 
@@ -284,3 +291,133 @@ def test_the_defaults_are_the_literature_values():
     assert (settings.bm25_k1, settings.bm25_b) == (DEFAULT_K1, DEFAULT_B)
     assert settings.bm25_rrf_k == DEFAULT_RRF_K
     assert settings.bm25_depth == 0
+
+
+# ---------------------------------------------------------------- the cap on cached indexes
+
+
+def _lexical_service(cap: int) -> AnswerService:
+    base = RetrievalSettings(candidates=3, rerank_weight=0.0, drop_stopwords=True, bm25_enabled=True)
+    return AnswerService(
+        retriever=None, embedder=FakeEmbedder(), llm=None, settings=replace(base, bm25_max_indexes=cap)
+    )
+
+
+def _ask(answers: AnswerService, retriever: FakeRetriever, repo_id: str) -> None:
+    answers._retriever = retriever
+    answers.retrieve(repo_id, "sign value", top_k=3)
+
+
+def test_the_cap_has_a_default_so_the_cache_is_never_unbounded() -> None:
+    """An unbounded cache was the cost the proposal at d056989 could not put a number against."""
+    assert RetrievalSettings().bm25_max_indexes == DEFAULT_MAX_INDEXES >= 1
+
+
+def test_the_cache_stops_growing_at_the_cap(corpus) -> None:
+    retriever = FakeRetriever(corpus, ["exc.py", "timed.py", "signer.py"])
+    answers = _lexical_service(cap=2)
+
+    for repo_id in ("a", "b", "c", "d"):
+        _ask(answers, retriever, repo_id)
+
+    assert len(answers._bm25) == 2
+
+
+def test_what_is_evicted_is_the_least_recently_used_and_not_the_oldest(corpus) -> None:
+    """A repository asked about every minute must not be dropped for being the first analysed."""
+    retriever = FakeRetriever(corpus, ["exc.py", "timed.py", "signer.py"])
+    answers = _lexical_service(cap=2)
+
+    _ask(answers, retriever, "a")
+    _ask(answers, retriever, "b")
+    _ask(answers, retriever, "a")  # a is used again, so b is now the least recently used
+    _ask(answers, retriever, "c")
+
+    assert {repo for _, repo in answers._bm25} == {"a", "c"}
+
+
+def test_an_evicted_index_is_rebuilt_on_demand_and_answers_the_same(corpus) -> None:
+    retriever = FakeRetriever(corpus, ["exc.py", "timed.py", "signer.py"])
+    capped = _lexical_service(cap=1)
+    capped._retriever = retriever
+
+    first = capped.retrieve("a", "how does it sign a value?", top_k=3)
+    _ask(capped, retriever, "b")  # evicts a
+    assert {repo for _, repo in capped._bm25} == {"b"}
+
+    again = capped.retrieve("a", "how does it sign a value?", top_k=3)
+
+    # Rebuilt, and the same answer: eviction costs time, never correctness.
+    assert [r.record_id for r in again] == [r.record_id for r in first]
+    assert len(capped._bm25) == 1
+
+
+def test_a_cap_of_one_still_keeps_one(corpus) -> None:
+    """The cap is a ceiling on what is kept, not an instruction to keep nothing."""
+    retriever = FakeRetriever(corpus, ["exc.py", "timed.py", "signer.py"])
+    answers = _lexical_service(cap=1)
+
+    _ask(answers, retriever, "a")
+    _ask(answers, retriever, "a")
+
+    assert len(answers._bm25) == 1
+    assert retriever.searched == 2
+
+
+def test_an_eviction_is_logged_with_the_repository_and_nothing_else(corpus, caplog) -> None:
+    retriever = FakeRetriever(corpus, ["exc.py", "timed.py", "signer.py"])
+    answers = _lexical_service(cap=1)
+
+    _ask(answers, retriever, "a")
+    with caplog.at_level("INFO"):
+        _ask(answers, retriever, "b")
+
+    evictions = [r for r in caplog.records if "Evicted" in r.getMessage()]
+    assert len(evictions) == 1
+    message = evictions[0].getMessage()
+    assert "repo a" in message
+    assert "sign value" not in message
+
+
+def test_two_retrievers_holding_the_same_repository_count_as_two(corpus) -> None:
+    """The cap is on the cache, not on repositories: under the dual-index path one repo is two."""
+    semantic = FakeRetriever(corpus, ["exc.py", "timed.py", "signer.py"])
+    fallback = FakeRetriever(list(corpus), ["exc.py", "timed.py", "signer.py"])
+    answers = _lexical_service(cap=2)
+
+    _ask(answers, semantic, "a")
+    _ask(answers, fallback, "a")
+
+    assert len(answers._bm25) == 2
+    assert {key[0] for key in answers._bm25} == {id(semantic), id(fallback)}
+
+
+def test_the_cap_comes_from_the_environment_and_is_checked_at_startup(monkeypatch) -> None:
+    from codeatlas.app.di import retrieval_settings_for
+    from codeatlas.utils.config import load_config
+
+    monkeypatch.delenv("CODEATLAS_BM25_MAX_INDEXES", raising=False)
+    assert load_config().bm25_max_indexes == DEFAULT_MAX_INDEXES
+    monkeypatch.setenv("CODEATLAS_BM25_MAX_INDEXES", "12")
+    assert retrieval_settings_for(load_config(), "hash").bm25_max_indexes == 12
+    for bad in ("0", "-1", "many"):
+        monkeypatch.setenv("CODEATLAS_BM25_MAX_INDEXES", bad)
+        with pytest.raises(ValueError):
+            load_config()
+
+
+def test_the_cap_is_one_number_for_a_cache_both_indexes_share(corpus) -> None:
+    """It is not in PER_INDEX_FIELDS, so a fallback cannot be given a cap of its own."""
+    from codeatlas.services.qa.answer_service import PER_INDEX_FIELDS
+
+    base = RetrievalSettings(bm25_max_indexes=3)
+    answers = AnswerService(
+        retriever=None,
+        embedder=FakeEmbedder(),
+        llm=None,
+        settings=base,
+        fallback_settings=replace(base, bm25_max_indexes=99),
+    )
+
+    assert "bm25_max_indexes" not in PER_INDEX_FIELDS
+    assert answers._fallback_settings.bm25_max_indexes == 3

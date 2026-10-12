@@ -253,6 +253,7 @@ def retrieval_settings_for(config: AppConfig, index_kind: str) -> RetrievalSetti
         bm25_b=config.bm25_b,
         bm25_rrf_k=config.bm25_rrf_k,
         bm25_depth=config.bm25_depth,
+        bm25_max_indexes=config.bm25_max_indexes,
     )
 
 
