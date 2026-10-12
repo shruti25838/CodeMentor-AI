@@ -1754,3 +1754,51 @@ Every number or claim here comes from a command that can be re-run.
 - Commit: fac69a4
 - Notes: **no measurement is in this entry** and nothing was scored by it.
   **Why not a `--questions holdout3` choice instead.** That is the one thing that cannot be done: the string would be in the script's source and the guard test exists precisely to forbid it. Naming the files on the command line keeps the set reachable only from a command somebody wrote down
+### Check: holdout3, scored once for each candidate, and the rule applied
+- Value: five runs, each made one time, under the rule committed at 16464d2 before any of them existed. **No setting was changed after any run and nothing was re-scored.**
+
+  **Overall, 20 questions.** The verdict column is the rule, not a judgement.
+
+  | # | embedder | candidate | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 | verdict |
+  |---|---|---|---|---|---|---|---|---|
+  | 1 | hash | today's default — whole, no BM25 | 0.500 | 0.600 | 0.650 | 0.5517 | 0.700 | the incumbent |
+  | 2 | hash | **structured + BM25 fusion** | **0.600** | **0.750** | **0.800** | **0.6900** | **0.850** | **passes: MRR +0.1383, hit@5 +0.150** |
+  | 5 | hash | whole + BM25 fusion | 0.550 | 0.750 | 0.800 | 0.6571 | **0.950** | not eligible — information only |
+  | 3 | cloudflare | today's default — whole | 0.700 | **0.900** | **0.950** | 0.8042 | 0.950 | the incumbent |
+  | 4 | cloudflare | **structured, no BM25** | **0.750** | 0.850 | 0.900 | **0.8113** | 0.950 | **passes: MRR +0.0071, recall@20 equal** |
+
+  Per repository, which is where both verdicts get uncomfortable:
+
+  | | hash default | hash chosen | hash whole+BM25 | cloudflare default | cloudflare chosen |
+  |---|---|---|---|---|---|
+  | itsdangerous MRR@10 | 0.683 | **0.780** | 0.760 | **0.900** | 0.883 |
+  | itsdangerous recall@20 | 0.900 | **1.000** | **1.000** | **1.000** | **1.000** |
+  | flask MRR@10 | 0.420 | **0.600** | 0.554 | 0.708 | **0.739** |
+  | flask recall@20 | 0.500 | 0.700 | **0.900** | 0.900 | 0.900 |
+
+  **Both candidates pass the rule. Four things a reader should see anyway.**
+
+  **1. The hash result is large and consistent.** +0.138 of MRR and +0.150 of hit@5 overall, better on both repositories, and flask — where the default is weakest on this set (MRR 0.420, recall@20 0.500) — gains most. This is the third held-out set in a row where the chosen hash configuration beats the default, after +0.133 on the original split and +0.180 on holdout2.
+
+  **2. The cloudflare result is one question wide.** +0.0071 of MRR is a single question moving a rank or two. It passes because the rule is MRR and recall, and on both it does; but **hit@3 falls 0.900 → 0.850 and hit@5 falls 0.950 → 0.900**, and on itsdangerous MRR falls 0.900 → 0.883. The whole of the overall gain is flask (0.708 → 0.739). A rule written on two metrics was always going to be able to pass while a third fell — that is what choosing the metrics in advance costs, and the alternative, picking the metric after seeing the numbers, is worse.
+
+  **3. The information-only row says where hash's gain comes from, and it is mostly not the record format.** Whole records fused with BM25 — row 5, which the rule forbade from being selected — scores MRR 0.657 against the default's 0.552. So **fusion is worth about +0.105 of the +0.138, and the structured format about +0.033 on top of it.** And row 5 has the **best recall@20 of any hash run, 0.950 against the chosen configuration's 0.850**: `structured` costs hash recall here exactly as it was recorded costing cloudflare recall at 5edf06e. The chosen configuration ranks better out of a smaller pool. Had the hash rule been written on recall rather than hit@5 the chosen candidate would have failed and row 5, which is not eligible, would have been the only candidate that passed.
+
+  **4. holdout3 does not repeat holdout2's collapse, so "a fresh set scores worse" is not what the earlier finding showed.** MRR@10 for the same configuration across all four sets:
+
+  | configuration | dev | held out (reused) | holdout2 (fresh) | **holdout3 (never used)** |
+  |---|---|---|---|---|
+  | hash default | 0.662 | 0.645 | 0.396 | **0.552** |
+  | hash chosen | 0.743 | 0.779 | 0.576 | **0.690** |
+  | cloudflare default | 0.804 | 0.854 | 0.587 | **0.804** |
+  | cloudflare chosen | 0.825 | 0.873 | 0.641 | **0.811** |
+
+  The entry at 5edf06e read holdout2's gap as the reused splits flattering the system. holdout3 is a *different* never-looked-at set by the same author from the same two repositories, and it lands between holdout2 and the reused splits — cloudflare's default lands exactly on its dev figure. **The honest reading is that a twenty-question set varies by this much**: the two fresh sets differ from each other by 0.114 (hash chosen) to 0.217 (cloudflare default) of MRR. That is a statement about the size of these question sets, not about which set is virtuous, and it should temper every single-set comparison in this file, including the ones above it
+- Command: for each candidate, `python scripts/experiment_retrieval.py --split holdout3 --set eval/questions/holdout3/itsdangerous.json --set eval/questions/holdout3/flask.json --json eval/results/experiments/holdout3-<name>.json` with: `--embedder hash --record-format whole --arrangement current` (default-hash, 4.4 s); `--embedder hash --record-format structured --arrangement rrf+keyword` (chosen-hash, 5.6 s); `--embedder hash --record-format whole --arrangement rrf+keyword` (whole-bm25-hash, 5.1 s); `--embedder cloudflare --record-format whole --arrangement current --allow-spend` (default-cloudflare, 27.0 s); `--embedder cloudflare --record-format structured --arrangement current` (chosen-cloudflare, 3.1 s, no `--allow-spend` and no API call). Each cloudflare run was preceded by the same command with `--plan-only`. Then `python -m pytest tests/ -q` -> 1133 passed, 1 skipped; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (186 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; in `codementor-ui`: `npm test` (74 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: `eval/questions/holdout3/*.json`, 20 questions, at https://github.com/pallets/itsdangerous 672971d66a2e and https://github.com/pallets/flask d73fa1cdcbd8, from the checkouts already in `.codeatlas/eval-repos`
+- Date: 2026-10-12
+- Commit: ecf3744 (the five result files); the runs were made at ef754c6 with a clean tree, which is the commit recorded inside each file
+- Notes: **cost, in full. 0.71 estimated neurons.** The plan for the whole-records cloudflare run was 1,864 documents of which **20 were not yet cached** — exactly the twenty holdout3 question vectors — for a planned 0.96; recorded 0.7069 over 20 calls. The structured run then planned **2,039 documents, 0 uncached, 0.00 neurons** and was served entirely from the offline cache with **no API call**, because its documents were paid for at c92cb5b and its questions had just been paid for by the run before it. **Today's ledger: 0.71 estimated neurons of the 2,500 budget, 20 calls, 2,499.29 remaining.** Both plans were printed and read before anything was sent.
+  **What "scored once" means here, precisely.** Five runs, one each. `--arrangement` was passed on every one, so the four arrangements not under consideration were never computed on holdout3 — they would have cost nothing, which is exactly why not computing them had to be deliberate. The two `--plan-only` runs computed no score. This entry is the first time any holdout3 number appears anywhere, and holdout3 is now spent: it has been scored, and the next time a setting needs choosing it will need a fourth set.
+  **No default is changed by this entry.** `CODEATLAS_RECORD_FORMAT` is still `whole` and `CODEATLAS_BM25` is still off in the committed configuration. What the rule supports is proposed in a later entry and applied in neither.
+  **Limits.** Twenty questions per set: one question is 0.05 of a hit rate, so cloudflare's +0.0071 of MRR is well inside the noise a single question makes, and point 4 above is a measurement of that noise rather than an aside. The questions are mine, written from the same two Python libraries at the same two commits as the other sixty. And this is retrieval only — no model, no prompt, no citation, and nothing here says a visitor's answer is better
