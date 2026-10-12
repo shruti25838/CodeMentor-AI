@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from dotenv import load_dotenv
 
@@ -141,6 +141,21 @@ class AppConfig:
     record_format: str = WHOLE
     record_window_chars: int = DEFAULT_WINDOW_CHARS
     record_window_overlap: int = DEFAULT_WINDOW_OVERLAP
+    # The same two settings again, per index kind, because one server can hold two indexes of
+    # different kinds at once: under the "cloudflare" provider a repository gets a cloudflare
+    # index *and* a hash fallback index, built from the same records at the same time, and what
+    # suits one does not suit the other. docs/RESULTS.md records exactly that disagreement -
+    # BM25 fusion is worth about +0.105 of MRR@10 to hash on holdout3 and cost cloudflare 0.031
+    # of dev MRR, because an embedder already at recall@20 1.000 has nothing to be rescued from.
+    #
+    # None means "whatever the global setting above says", so the two global variables keep
+    # working exactly as they did and a server that sets neither pair is configured as before.
+    # Only these two settings are per kind: the BM25 parameters (k1, b, rrf_k, depth) and the
+    # window settings stay global, because nothing has measured them differing per index.
+    hash_record_format: str | None = None
+    cloudflare_record_format: str | None = None
+    hash_bm25_enabled: bool | None = None
+    cloudflare_bm25_enabled: bool | None = None
     # How a repository question is answered. "legacy" is the agent pipeline every recorded
     # measurement describes and stays the default. "grounded" is one search and one streamed
     # model call over the snippets it found. Deep mode is unaffected either way.
@@ -176,6 +191,41 @@ class AppConfig:
     # GET /eval/benchmarks. Read per request, not at startup, so a missing file is a quiet
     # "not available" rather than a boot failure.
     benchmarks_file: str = "eval/benchmarks.json"
+
+    def record_format_for(self, index_kind: str) -> str:
+        """What a record is for this index kind, falling back to the global setting.
+
+        `index_kind` is the name an index is built and stored under - "hash" or "cloudflare"
+        today. A kind with no setting of its own, and every provider that is not an index kind,
+        gets `record_format`, which is what the server did before any of this existed.
+        """
+        per_kind = {"hash": self.hash_record_format, "cloudflare": self.cloudflare_record_format}
+        return per_kind.get(index_kind) or self.record_format
+
+    def bm25_enabled_for(self, index_kind: str) -> bool:
+        """Whether this index kind is searched lexically too, falling back to the global setting.
+
+        `or` would be wrong here: a per-kind `False` is a decision to turn fusion *off* for this
+        index and must not read as "nothing was set", which is what `None` means.
+        """
+        per_kind = {"hash": self.hash_bm25_enabled, "cloudflare": self.cloudflare_bm25_enabled}
+        setting = per_kind.get(index_kind)
+        return self.bm25_enabled if setting is None else setting
+
+
+def every_index_kind_on(config: AppConfig, record_format: str) -> AppConfig:
+    """`config` with every index kind reading and writing this record format.
+
+    What a script means by `--record-format whole`: not "the global default is whole" but
+    "whatever index this builds is a whole-record index". Setting only `record_format` would
+    leave a per-kind override in place and silently measure something else.
+    """
+    return replace(
+        config,
+        record_format=validate_record_format(record_format),
+        hash_record_format=None,
+        cloudflare_record_format=None,
+    )
 
 
 def unknown_pooling_message(pooling: str) -> str:
@@ -263,6 +313,13 @@ def load_config() -> AppConfig:
         record_format=validate_record_format(os.getenv("CODEATLAS_RECORD_FORMAT", WHOLE)),
         record_window_chars=_positive_int("CODEATLAS_RECORD_WINDOW_CHARS", DEFAULT_WINDOW_CHARS),
         record_window_overlap=_non_negative_int("CODEATLAS_RECORD_WINDOW_OVERLAP", DEFAULT_WINDOW_OVERLAP),
+        # Per index kind, each falling back to the global variable above when it is not set, so
+        # that a server configured before these existed is configured exactly as it was. An
+        # unreadable value still stops the app: "set but wrong" must never read as "not set".
+        hash_record_format=_optional_record_format("CODEATLAS_HASH_RECORD_FORMAT"),
+        cloudflare_record_format=_optional_record_format("CODEATLAS_CLOUDFLARE_RECORD_FORMAT"),
+        hash_bm25_enabled=_optional_flag("CODEATLAS_HASH_BM25"),
+        cloudflare_bm25_enabled=_optional_flag("CODEATLAS_CLOUDFLARE_BM25"),
         chat_mode=validate_chat_mode(os.getenv("CODEATLAS_CHAT_MODE", LEGACY)),
         fastembed_model=os.getenv("CODEATLAS_FASTEMBED_MODEL", DEFAULT_FASTEMBED_MODEL),
         fastembed_batch_size=int(os.getenv("CODEATLAS_FASTEMBED_BATCH_SIZE", str(DEFAULT_FASTEMBED_BATCH_SIZE))),
@@ -314,6 +371,26 @@ def _flag(name: str, default: bool) -> bool:
     if value in FALSE_WORDS:
         return False
     raise ValueError(f"{name} must be one of {', '.join((*TRUE_WORDS, *FALSE_WORDS))}, not {raw!r}")
+
+
+def _optional_flag(name: str) -> bool | None:
+    """One on/off setting that may be unset, where unset is a meaning of its own.
+
+    None is "this index kind said nothing, use the global setting"; False is "this index kind
+    said off". A typo is neither, and stops the app for the reason `_flag` gives.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return None
+    return _flag(name, False)
+
+
+def _optional_record_format(name: str) -> str | None:
+    """One record format that may be unset. Unset is None; set-but-unknown still raises."""
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return None
+    return validate_record_format(raw, name)
 
 
 def _weight(name: str, default: float) -> float:

@@ -34,7 +34,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -61,6 +60,7 @@ from codeatlas.services.qa.answer_service import AnswerService  # noqa: E402
 from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever  # noqa: E402
 from codeatlas.services.retrieval.indexing import CodeIndexService  # noqa: E402
 from codeatlas.services.retrieval.record_format import STRUCTURED, WHOLE  # noqa: E402
+from codeatlas.utils.config import every_index_kind_on  # noqa: E402
 
 REPO_CACHE = ROOT / ".codeatlas" / "eval-repos"
 EXPERIMENTS = ROOT / "eval" / "results" / "experiments"
@@ -84,7 +84,9 @@ EXPECTED = {
 REPORTED_ENV = (
     "CODEATLAS_EMBEDDING_PROVIDER",
     "CODEATLAS_RECORD_FORMAT",
+    "CODEATLAS_HASH_RECORD_FORMAT",
     "CODEATLAS_BM25",
+    "CODEATLAS_HASH_BM25",
     "CODEATLAS_RECORD_WINDOW_CHARS",
     "CODEATLAS_RECORD_WINDOW_OVERLAP",
     "CODEATLAS_RETRIEVAL_CANDIDATES",
@@ -119,7 +121,12 @@ def effective_env(config) -> list[dict]:
     values = {
         "CODEATLAS_EMBEDDING_PROVIDER": config.embedding_provider,
         "CODEATLAS_RECORD_FORMAT": config.record_format,
+        # The effective column is what the *hash index* is built and searched as, which is the
+        # only index this script builds, rather than the raw per-kind value: an unset per-kind
+        # variable is not a setting of its own, it is the global one one line above.
+        "CODEATLAS_HASH_RECORD_FORMAT": config.record_format_for("hash"),
         "CODEATLAS_BM25": str(config.bm25_enabled).lower(),
+        "CODEATLAS_HASH_BM25": str(config.bm25_enabled_for("hash")).lower(),
         "CODEATLAS_RECORD_WINDOW_CHARS": config.record_window_chars,
         "CODEATLAS_RECORD_WINDOW_OVERLAP": config.record_window_overlap,
         "CODEATLAS_RETRIEVAL_CANDIDATES": config.retrieval_candidates,
@@ -230,7 +237,7 @@ def index_cost(config, question_files) -> list[dict]:
         repository = repository_of(question_set, root)
         parsed = TreeSitterAstParser().parse_repository(repository)
         for record_format in (WHOLE, STRUCTURED):
-            formatted = replace(config, record_format=record_format)
+            formatted = every_index_kind_on(config, record_format)
             embedder = build_embedder(formatted)
             with tempfile.TemporaryDirectory(prefix="codeatlas-adoption-") as tmp:
                 retriever = FaissCodeRetriever(base_dir=tmp)
@@ -273,7 +280,7 @@ def guard_check(config, question_file: Path) -> dict:
 
     built: dict[str, tuple[FaissCodeRetriever, object]] = {}
     for record_format in (WHOLE, STRUCTURED):
-        formatted = replace(config, record_format=record_format)
+        formatted = every_index_kind_on(config, record_format)
         embedder = build_embedder(formatted)
         retriever = FaissCodeRetriever()
         server_index(formatted, embedder, retriever).index_repository(repository, parsed)
@@ -286,7 +293,7 @@ def guard_check(config, question_file: Path) -> dict:
             _, embedder = built[server_format]
             answers = AnswerService(retriever=retriever, embedder=embedder, llm=None, settings=settings)
             found = len(answers.retrieve(repository.repo_id, question, top_k=5))
-            service = server_index(replace(config, record_format=server_format), embedder, retriever)
+            service = server_index(every_index_kind_on(config, server_format), embedder, retriever)
             cases.append(
                 {
                     "index_built_as": index_format,

@@ -253,22 +253,22 @@ def test_the_lexical_index_is_built_once_and_reused(corpus):
     answers = service(retriever, bm25_enabled=True)
 
     answers.retrieve("repo", "sign value", top_k=3)
-    built = answers._bm25["repo"]
+    built = answers._bm25[(id(retriever), "repo")]
     answers.retrieve("repo", "expired age", top_k=3)
 
-    assert answers._bm25["repo"] is built
+    assert answers._bm25[(id(retriever), "repo")] is built
 
 
 def test_reindexing_replaces_the_lexical_index(corpus):
     retriever = FakeRetriever(corpus, ["exc.py", "timed.py", "signer.py"])
     answers = service(retriever, bm25_enabled=True)
     answers.retrieve("repo", "sign value", top_k=3)
-    first = answers._bm25["repo"]
+    first = answers._bm25[(id(retriever), "repo")]
 
     retriever._records = list(corpus)  # a new list, as reindexing produces
     answers.retrieve("repo", "sign value", top_k=3)
 
-    assert answers._bm25["repo"] is not first
+    assert answers._bm25[(id(retriever), "repo")] is not first
 
 
 def test_a_retriever_that_cannot_list_its_records_still_answers(corpus):
