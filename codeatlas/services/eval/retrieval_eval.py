@@ -124,6 +124,11 @@ class EvalSettings:
 
 
 def describe_embedder(embedder: EmbeddingService) -> str:
+    inner = getattr(embedder, "inner", None)
+    if inner is not None:
+        # A record-format wrapper. Its own class name says nothing about which provider made the
+        # vectors, so name the provider inside it and the format it signs.
+        return f"{describe_embedder(inner)}, records {embedder.signature().rsplit('records=', 1)[-1]}"
     if isinstance(embedder, HashEmbeddingService):
         options = [name for name in ("lowercase", "subtokens") if getattr(embedder, f"_{name}")]
         extra = "".join(f", {name}" for name in options)

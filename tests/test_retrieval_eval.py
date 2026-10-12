@@ -15,6 +15,7 @@ from codeatlas.services.eval.retrieval_eval import (
     run,
 )
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService
+from codeatlas.services.retrieval.record_format import STRUCTURED, with_record_format
 
 QUESTIONS_DIR = Path(__file__).resolve().parent.parent / "eval" / "questions"
 
@@ -133,6 +134,14 @@ def test_run_reports_embedder_split_and_overall(tmp_path):
 
 def test_describe_embedder_names_the_model():
     assert "384 dims" in describe_embedder(HashEmbeddingService())
+
+
+def test_describe_embedder_looks_inside_a_record_format_wrapper():
+    """The wrapper's class name would say nothing about which provider made the vectors."""
+    described = describe_embedder(with_record_format(HashEmbeddingService(), STRUCTURED))
+
+    assert "384 dims" in described
+    assert described.endswith("records structured")
 
 
 def test_parser_walks_files_in_sorted_order(tmp_path, monkeypatch):
