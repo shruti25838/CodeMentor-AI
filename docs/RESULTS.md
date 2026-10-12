@@ -1678,3 +1678,29 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **the regeneration guard still holds.** `eval/benchmarks.json` is still a pure function of its inputs with no timestamp, and the byte-for-byte rebuild test passes.
   **No measurement is in this entry.** Every figure above was already recorded — at 5edf06e for holdout2, at 016c655 and b1bbfd4 for the two held-out retrieval runs. What changed is which of them sit next to each other and what the page says about them.
   **What this does not fix.** The side-by-side table is MRR@10 only, because four metrics across three splits does not fit a phone; the rest is in the result files and in the entries above. The reuse count — "at least six" — is a statement about this file written by hand, not something the builder counts, so it will go stale if the split is scored again without the sentence being updated. And saying holdout2 is the fresher estimate is already slightly untrue of today: it has now been scored seven times in all, including in the adoption check above, which is why holdout3 was written and left alone
+### Fix: the eval script builds its index with the server's record settings, and refuses a mismatched pair
+- Value: the trap recorded in the note at ce05005 is closed. `scripts/eval_retrieval.py` took three of its index settings from `di.index_options` and let the record format fall back to `whole`, while the embedder it scored with was `di.get_embedder()` — which under `CODEATLAS_RECORD_FORMAT=structured` **is** wrapped and signs itself `|records=structured`. The run printed `"record_format":"whole"` beside a structured signature and scored a pair the server refuses to put together.
+
+  **The same two environment variables, before and after.** `CODEATLAS_RECORD_FORMAT=structured` and `CODEATLAS_BM25=true`, held-out split, overall:
+
+  | | MRR@10 | hit@5 | recall@20 | what it was really measuring |
+  |---|---|---|---|---|
+  | before (recorded at ce05005) | 0.799 | — | — | **whole** records fused with BM25, under a structured signature |
+  | after | **0.778** | **0.850** | **1.000** | structured records fused with BM25 |
+
+  The second row is the configuration those variables name, and it is **the same to four decimal places as `scripts/adoption_check.py` and `eval/results/experiments/chosen-heldout-hash.json`**: itsdangerous MRR@10 0.828, flask 0.729, overall hit@1 0.700, hit@3 0.850, hit@5 0.850, MRR@10 0.7785, recall@20 1.000. Three different paths through the same settings now print one number instead of two.
+
+  **Three changes, and the first is the whole fix.**
+
+  1. `record_format`, `window_chars` and `window_overlap` come from `di.index_options` with the rest of the index settings, so the eval indexes what the server would index.
+  2. **The effective record format is printed before the run** — `record format: structured (window 2000, overlap 200)` — rather than only inside the settings JSON, where it was previously the dataclass default rather than anything that had been read.
+  3. **A signature that disagrees with the settings stops the run with status 1** and names both sides. It is a backstop, not a flag: with the fix in place no command line can produce a disagreement, because the one path that rebuilt the embedder (`--hash-lowercase`, `--hash-subtokens`) now wraps the rebuilt one in the same format again. It is driven in both directions by tests instead.
+
+  `describe_embedder` also looks inside the wrapper, so a structured run reports `hash (HashEmbeddingService, 384 dims, subtokens, …), records structured` instead of `RecordFormatEmbedder`, which named no provider at all
+- Command: `python scripts/eval_retrieval.py --split test` -> `record format: whole (window 2000, overlap 200)`, overall hit@5 **0.750**, MRR@10 **0.645**, unchanged; `$env:CODEATLAS_RECORD_FORMAT = "structured"` then the same command -> `record format: structured`, overall hit@5 0.750, MRR@10 **0.688**; with `$env:CODEATLAS_BM25 = "true"` as well -> overall hit@5 0.850, MRR@10 **0.778**, recall@20 1.000; both variables then removed from the environment. `python -m pytest tests/ -q` -> **1127 passed**, 1 skipped (13 new: `tests/test_eval_retrieval_script.py` 12, `tests/test_retrieval_eval.py` 1); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (185 files); in `codementor-ui`: `npm test` (74 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: `eval/questions/*.json` held-out split, at https://github.com/pallets/itsdangerous 672971d66a2e and https://github.com/pallets/flask d73fa1cdcbd8, from the checkouts already in `.codeatlas/eval-repos`. **No provider was called and no API key was read**
+- Date: 2026-10-12
+- Commit: 04a0295
+- Notes: **no default moved.** With nothing set the format is `whole`, the window settings are 2000/200, and the held-out guard still prints 0.750 / 0.645 — the two numbers every entry in this file has checked since the format existed.
+  **What the tests cover.** Every index setting compared field by field against `di.index_options` under both formats; the format and both window settings read from the environment; a rebuilt hash embedder keeping the format in its signature; an unwrapped signature reading as `whole`; the message naming both sides and the variable to look at; the guard driven in each direction; and `main` returning 1 **and never calling `run`** on a mismatched pair, so a disagreement cannot produce a number at all.
+  **What this does not fix.** The structured figure of 0.688 above is a new number on the *reused* held-out split, which this file already says is a weak confirmation; it is here as evidence that the script now measures what it is told to, not as a result. And the inconsistency recorded at fce9e2a is untouched: under `structured` the embedder sees a file's header while the keyword rerank and BM25 still read the file's whole text
