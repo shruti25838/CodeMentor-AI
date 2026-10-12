@@ -142,8 +142,7 @@ def plan(question_files, embedder, max_chars, record_format, window_chars, windo
         )
         texts, _ = indexer.documents(repository, parsed)
         questions = [
-            _without_stopwords(q.question) if config.drop_stopwords else q.question
-            for q in question_set.select(split)
+            _without_stopwords(q.question) if config.drop_stopwords else q.question for q in question_set.select(split)
         ]
         both = texts + questions
         unpaid.extend(text for text, known in zip(both, embedder.known(both)) if not known)
@@ -270,10 +269,7 @@ def print_results(result: dict) -> None:
     print(f"\nembedder: {result['embedder']}")
     print(f"split: {result['split']}, records {result['record_format']}, candidate pool {result['candidates']}")
     recall_key = f"recall@candidates({result['candidates']})"
-    header = (
-        f"  {'arrangement':<14}{'n':>4}{'hit@1':>8}{'hit@3':>8}{'hit@5':>8}"
-        f"{'MRR@10':>9}{'R@20':>8}{'R@pool':>8}"
-    )
+    header = f"  {'arrangement':<14}{'n':>4}{'hit@1':>8}{'hit@3':>8}{'hit@5':>8}{'MRR@10':>9}{'R@20':>8}{'R@pool':>8}"
     for label, block in [("overall", result["overall"]), *[(n, r["arrangements"]) for n, r in result["repos"].items()]]:
         print(f"\n{label}")
         print(header)
@@ -339,9 +335,7 @@ def main() -> int:
     print(f"record format: {args.record_format} (window {window_chars}, overlap {args.window_overlap})")
 
     if args.embedder == "cloudflare" and (args.allow_spend or args.plan_only):
-        estimate = plan(
-            files, embedder, max_chars, args.record_format, window_chars, args.window_overlap, args.split
-        )
+        estimate = plan(files, embedder, max_chars, args.record_format, window_chars, args.window_overlap, args.split)
         spent = neuron_ledger.spent_today()
         print(
             f"\nplan: {estimate['documents']} documents, {estimate['uncached_texts']} not yet cached, "
