@@ -1585,3 +1585,50 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **the regeneration guard still holds.** `eval/benchmarks.json` is still a pure function of its inputs with no timestamp, and the test that rebuilds it and compares byte for byte passes — which now also means an experiment result file cannot be edited by hand or quietly replaced without the summary failing to rebuild.
   **One figure in the table is worth a reader's attention more than the rest.** The two baseline rows carry a fresh-split score far below their dev score, and a frontend test asserts that relationship rather than the numbers, so the table cannot stop showing it: a question set that has never been used scores much worse than the ones that have.
   **Limits.** The held-out and fresh columns show MRR@10 only; the full set of metrics for those splits is in the result files and in the entries above, not on the page, because a table with three metrics across three splits does not fit a phone. The rows are generated from four dev runs of five arrangements, so an arrangement added later appears automatically but a *new kind* of experiment — a different question set, say — would need a new source entry in the builder. And the panel reports what the files say; it cannot tell a result file that is six weeks old from one written this morning, which is what the commit and date beside each row are for
+### Check: the chosen hash configuration, run through the server's own retrieval path
+- Value: `scripts/adoption_check.py` takes the embedder from `di.get_embedder()`, the index options from `di.index_options()`, the retrieval settings from `di.get_retrieval_settings()` and the search from `AnswerService.retrieve` — the four calls `get_retrieval_service()` makes — and is told nothing else. With two environment variables set, **it reproduces every number the experiment recorded, on all three splits and in both repositories, to four decimal places**.
+
+  | split | scope | n | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 |
+  |---|---|---|---|---|---|---|---|
+  | dev | itsdangerous | 10 | 0.600 | 0.700 | 0.800 | 0.685 | 1.000 |
+  | dev | flask | 10 | 0.600 | 1.000 | 1.000 | 0.800 | 1.000 |
+  | dev | **overall** | 20 | **0.600** | **0.850** | **0.900** | **0.7425** | **1.000** |
+  | held out | itsdangerous | 10 | 0.800 | 0.800 | 0.800 | 0.828 | 1.000 |
+  | held out | flask | 10 | 0.600 | 0.900 | 0.900 | 0.729 | 1.000 |
+  | held out | **overall** | 20 | **0.700** | **0.850** | **0.850** | **0.7785** | **1.000** |
+  | holdout2 | itsdangerous | 10 | 0.600 | 0.600 | 0.800 | 0.650 | 0.800 |
+  | holdout2 | flask | 10 | 0.400 | 0.500 | 0.700 | 0.503 | 0.900 |
+  | holdout2 | **overall** | 20 | **0.500** | **0.550** | **0.750** | **0.5763** | **0.850** |
+
+  Each row is compared against the committed experiment file metric by metric and the script exits 1 on any difference. Every row read `same`.
+
+  **The two environment variables, and nothing else.** `CODEATLAS_RECORD_FORMAT=structured` and `CODEATLAS_BM25=true`. The other twelve settings the check reports came from their defaults and are printed with their source: `CODEATLAS_EMBEDDING_PROVIDER=hash`, window 2000 / overlap 200, candidates 20, rerank weight 1.0, BM25 k1 1.2 / b 0.75 / rrf_k 60 / depth 0, stopwords dropped, metadata prefixed, no per-document clip. So "`structured` + `rrf+keyword`" is two switches on the server, not a mode it lacks.
+
+  **What `structured` costs, measured both ways on the same parse.**
+
+  | repo | format | source files | records | file | function | index on disk | indexing |
+  |---|---|---|---|---|---|---|---|
+  | itsdangerous | whole | 15 | 159 | 15 | 144 | 810.1 KB | 0.23 s |
+  | itsdangerous | **structured** | 15 | **177** (+11.3%) | 15 | 162 | **904.3 KB** (+11.6%) | 0.22 s |
+  | flask | whole | 83 | 1,705 | 83 | 1,622 | 8,681.0 KB | 2.74 s |
+  | flask | **structured** | 83 | **1,862** (+9.2%) | 83 | 1,779 | **9,516.4 KB** (+9.6%) | 2.24 s |
+
+  The file record count is unchanged by construction — a file is still one record, it is just a header instead of the whole text. Every extra record is a window of a function longer than 2,000 characters: 18 more in itsdangerous, 157 more in flask. Index size tracks the record count almost exactly, because a record costs one 384-wide vector plus its metadata whatever its text says.
+
+  **The index guard, driven in both directions.** An index is built under each format and then searched by a service configured for each, four combinations:
+
+  | index built as | server configured as | records returned | index cache reuses it |
+  |---|---|---|---|
+  | whole | whole | 5 | yes |
+  | whole | **structured** | **0 — refused** | no |
+  | structured | **whole** | **0 — refused** | no |
+  | structured | structured | 5 | yes |
+
+  A mixed pair returns nothing and logs which signature it expected against which it found. `CodeIndexService.has_index` says no for the same pairs, so the index cache rebuilds rather than handing back an index of the wrong shape
+- Command: `$env:CODEATLAS_EMBEDDING_PROVIDER = "hash"`; `$env:CODEATLAS_RECORD_FORMAT = "structured"`; `$env:CODEATLAS_BM25 = "true"`; `python scripts/adoption_check.py --json eval/results/experiments/adoption-hash.json` -> exit 0, 20.4 s. Then with both of the last two removed from the environment: `python -m pytest tests/ -q` -> 1096 passed, 1 skipped; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (184 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; in `codementor-ui`: `npm test` (68 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: `eval/questions/*.json` (dev and held-out) and `eval/questions/holdout2/*.json`, at https://github.com/pallets/itsdangerous 672971d66a2e and https://github.com/pallets/flask d73fa1cdcbd8. **No provider was called and no network beyond the two cached checkouts**
+- Date: 2026-10-11
+- Commit: ce05005
+- Notes: **no default changed.** `CODEATLAS_RECORD_FORMAT` is still `whole` in the committed configuration and `CODEATLAS_BM25` is still off; this entry says the configuration is reachable and correct, not that it is on. The held-out guard still prints 0.750 / 0.645.
+  **One trap found by writing this, and it is the reason the check could not be a flag on the existing script.** `scripts/eval_retrieval.py` reads `CODEATLAS_BM25` but **not** `CODEATLAS_RECORD_FORMAT`: its `IndexSettings` is built from three values and the record format falls back to `whole`, while the embedder it uses is `get_embedder()`, which *is* wrapped and signs itself `|records=structured`. Set both variables and run it and you get `settings: ... "record_format":"whole"` printed beside a structured signature, and overall MRR@10 0.799 on the held-out split — a real number for whole records fused with BM25, and **not** the 0.7785 this configuration actually scores. Nothing is corrupted, because the eval index lives and dies in one process, but a reader would be measuring something other than what they set. It is left as it is here on purpose: changing it is a behaviour change and belongs in its own commit.
+  **What this does not show.** It is the retrieval step only — no model, no prompt, no citation. It says the same records come back, not that the answers are better; the only comparison of answers in this file is the fifteen-question smoke check, whose own entry records a 12/15-against-8/15 swing on run-to-run variation alone. The index-size figures are a FAISS flat index plus a pickled record list on this machine's filesystem, and the indexing seconds are one run each, warm, with the repositories already parsed — they are the right order of magnitude and nothing finer. And the guard check proves refusal for the record format specifically; the signature carries the provider, the dimensions and two hash options besides, and only the format was exercised here
