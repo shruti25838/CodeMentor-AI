@@ -1704,3 +1704,34 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **no default moved.** With nothing set the format is `whole`, the window settings are 2000/200, and the held-out guard still prints 0.750 / 0.645 — the two numbers every entry in this file has checked since the format existed.
   **What the tests cover.** Every index setting compared field by field against `di.index_options` under both formats; the format and both window settings read from the environment; a rebuilt hash embedder keeping the format in its signature; an unwrapped signature reading as `whole`; the message naming both sides and the variable to look at; the guard driven in each direction; and `main` returning 1 **and never calling `run`** on a mismatched pair, so a disagreement cannot produce a number at all.
   **What this does not fix.** The structured figure of 0.688 above is a new number on the *reused* held-out split, which this file already says is a weak confirmation; it is here as evidence that the script now measures what it is told to, not as a result. And the inconsistency recorded at fce9e2a is untouched: under `structured` the embedder sees a file's header while the keyword rerank and BM25 still read the file's whole text
+### Decision: the rule holdout3 will be read by, written before holdout3 was scored
+- Value: **no number on holdout3 exists when this entry is committed**, and that is the point of it. holdout3 was written at 3ace1de and banked unscored; it is about to be spent, and the rule it is spent under is fixed here first so that the order cannot be argued about afterwards.
+
+  **The candidates. Four are eligible, one is scored for information only.**
+
+  | # | embedder | candidate | settings | eligible |
+  |---|---|---|---|---|
+  | 1 | hash | **today's default** — whole records, no BM25 | none set | the incumbent |
+  | 2 | hash | **structured records + BM25 fusion** — the dev choice at 9a7a94d | `CODEATLAS_RECORD_FORMAT=structured`, `CODEATLAS_BM25=on` | **yes** |
+  | 3 | cloudflare | **today's default** — whole records | `CODEATLAS_EMBEDDING_PROVIDER=cloudflare` | the incumbent |
+  | 4 | cloudflare | **structured records**, BM25 off — the dev choice | + `CODEATLAS_RECORD_FORMAT=structured` | **yes** |
+  | 5 | hash | whole records + BM25 fusion | `CODEATLAS_BM25=on` | **no — information only** |
+
+  **The rule, metric by metric.**
+
+  * **The hash candidate (2) replaces the default (1) only if its holdout3 MRR@10 is higher *and* its holdout3 hit@5 is not lower.** Both conditions, on holdout3, overall.
+  * **cloudflare structured (4) replaces cloudflare whole (3) only if its holdout3 MRR@10 is higher *and* its holdout3 recall@20 is not lower.** Both conditions, on holdout3, overall.
+  * **Row 5 is not eligible for selection whatever it scores.** It is scored because it separates the two halves of candidate 2 — whether a gain is the record format or the fusion — and a reader who sees only the chosen pair cannot tell. A number that is not allowed to decide anything is still worth having, and saying so in advance is the only thing that keeps it that way.
+
+  **Why the two guards are different metrics, and it is not an arbitrary choice.** Each embedder is guarded on the metric this file has already recorded the candidate *costing* it. For hash the risk is ranking: the entry at 5edf06e records hit@5 moving 0.500 → 0.750 on holdout2, so hit@5 is what must not go backwards. For cloudflare the recorded cost of `structured` is **recall** — 1.000 → 0.950 on the original held-out split and 0.950 → 0.900 on holdout2, because a file record that is a header is a worse net for a question whose words are in a body the header does not quote. recall@20 is the pool the reranker chooses from, so a candidate that ranks better out of a smaller pool is buying the gain with coverage, and the guard refuses that trade.
+
+  **What is reported, for every candidate:** hit@1, hit@3, hit@5, MRR@10 and recall@20, per repository and overall.
+
+  **holdout3 is scored once and never retuned.** One run per candidate, the numbers that come back are the numbers, and no setting is changed afterwards and re-scored on it. If a candidate fails the rule it is not adjusted and tried again — that would make holdout3 a development set, which is exactly what happened to the original held-out split and then to holdout2. Any further tuning needs a fourth question set, written after these numbers are read
+- Command: no run. This entry decides nothing from data; it fixes the rule the next entry's data will be read by
+- Dataset/repo: `eval/questions/holdout3/*.json`, 20 questions at https://github.com/pallets/itsdangerous 672971d66a2e and https://github.com/pallets/flask d73fa1cdcbd8. **Not yet scored under anything.** No result file names holdout3 and no number on it appears anywhere in this file above this line
+- Date: 2026-10-12
+- Commit: decided at 56a9c35 and committed on top of it; no code changed by this entry
+- Notes: **what passing the rule does and does not do.** It makes a default change *proposable*, not applied. Changing `CODEATLAS_RECORD_FORMAT` or `CODEATLAS_BM25` in the committed configuration would rebuild every existing index (the format is in the embedder signature and therefore in the index-format guard) and would move the two numbers the held-out guard asserts, so it is its own change with its own entry, and this batch does not make it.
+  **The sample is twenty questions.** One question is 0.05 of a hit rate and about 0.05 of MRR, so a rule written on "higher" and "not lower" can turn on a single question moving two ranks. That is a known weakness of deciding from twenty questions and it is why the rule is two conditions rather than one, and why the per-repository table is reported beside the overall one: two repositories that disagree are worth seeing even when the average passes.
+  **What could still go wrong even if everything passes.** holdout3's questions are mine, written from the same two Python libraries at the same two commits by the same method as the other sixty, so "fresh" means unseen by the tuning process, not independent of the person who wrote it. And retrieval is not answers: nothing in this rule says a visitor's answer gets better
