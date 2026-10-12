@@ -19,6 +19,11 @@ and cannot be. `--allow-spend` is the deliberate way to pay for them, and it:
 
 `--plan-only` prints the estimate and sends nothing.
 
+`--questions` names one of the two question lists this script carries. A set that is not one
+of them - a held-out set written later, say - is named file by file with `--set`, which is
+repeatable and replaces the list entirely. Scoring such a set is then a deliberate act with the
+paths in the command line and in `docs/RESULTS.md`, rather than something a default could reach.
+
 Results go to `eval/results/experiments/`, a folder nothing else reads - not the `/metrics`
 gauges, which glob `eval/results/*.json` and are not recursive, and not the Benchmarks summary,
 which names the files it reads. So an experiment cannot move a published number.
@@ -247,6 +252,24 @@ def _metrics(pairs, pools, candidates: int) -> dict:
     }
 
 
+def question_files(sets, questions: str) -> list[Path]:
+    """The files this run scores: the ones named with --set, or the list --questions names."""
+    if sets:
+        return list(sets)
+    return list(HOLDOUT2_SETS if questions == "holdout2" else DEFAULT_SETS)
+
+
+def question_label(paths) -> str:
+    """What a result file calls a set given with --set: the folder the files live in.
+
+    The two built-in lists have names of their own. A set named on the command line is labelled
+    by its folder, so the result says which questions produced it without this script carrying a
+    list of every question set that will ever exist - which is the point of --set.
+    """
+    folders = {Path(p).resolve().parent.name for p in paths}
+    return folders.pop() if len(folders) == 1 else "mixed"
+
+
 def _relative(path: str, root: Path) -> str:
     try:
         return Path(path).resolve().relative_to(root.resolve()).as_posix()
@@ -294,6 +317,13 @@ def main() -> int:
     parser.add_argument("--plan-only", action="store_true", help="print the estimate and send nothing")
     parser.add_argument("--split", choices=SPLITS, default="dev")
     parser.add_argument("--questions", choices=["original", "holdout2"], default="original")
+    parser.add_argument(
+        "--set",
+        dest="sets",
+        action="append",
+        type=Path,
+        help="question file to score, repeatable; replaces the list --questions names",
+    )
     parser.add_argument("--json", type=Path, help="write the result here")
     parser.add_argument("--vector-cache", type=Path, default=VECTOR_CACHE)
     parser.add_argument(
@@ -327,7 +357,8 @@ def main() -> int:
         label = describe_embedder(embedder)
         print(f"embedder: {label}")
 
-    files = HOLDOUT2_SETS if args.questions == "holdout2" else DEFAULT_SETS
+    files = question_files(args.sets, args.questions)
+    questions = question_label(args.sets) if args.sets else args.questions
     arrangements = tuple(args.arrangements or ARRANGEMENTS)
     started = time.perf_counter()
     embedder = with_record_format(embedder, args.record_format)
@@ -364,7 +395,7 @@ def main() -> int:
     )
     result = {
         "codementor_commit": _commit(),
-        "questions": args.questions,
+        "questions": questions,
         "arrangements": {name: DESCRIPTIONS[name] for name in arrangements},
         **result,
         "seconds": round(time.perf_counter() - started, 1),
