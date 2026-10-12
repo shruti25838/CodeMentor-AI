@@ -336,6 +336,10 @@ def main() -> int:
                 "agents_used": result["agents_used"],
             }
         )
+        # Written after every run, so a run stopped by the cap, by the provider or from
+        # outside keeps what is finished rather than losing tokens that were already spent.
+        if args.out:
+            _write(args.out, _payload(rows, items, base_config, stopped_early, started))
         reported = seen_daily_remaining()
         if reported is not None and reported <= 0:
             stopped_early = f"the provider reports {reported:,} daily tokens left"
