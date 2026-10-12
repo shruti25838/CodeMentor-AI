@@ -1,0 +1,59 @@
+{
+  "codementor_commit": "ef754c6",
+  "questions": "holdout3",
+  "arrangements": {
+    "current": "vector candidates, ordered by keyword overlap (what the server does today)"
+  },
+  "embedder": "hash (HashEmbeddingService, 384 dims, subtokens, hashed bag of words, not semantic)",
+  "split": "holdout3",
+  "record_format": "whole",
+  "candidates": 20,
+  "repos": {
+    "itsdangerous": {
+      "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
+      "files_indexed": 15,
+      "records_indexed": 159,
+      "questions": 10,
+      "arrangements": {
+        "current": {
+          "questions": 10,
+          "hit@1": 0.6,
+          "hit@3": 0.8,
+          "hit@5": 0.8,
+          "mrr@10": 0.6833,
+          "recall@20": 0.9,
+          "recall@candidates(20)": 0.9
+        }
+      }
+    },
+    "flask": {
+      "commit": "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35",
+      "files_indexed": 83,
+      "records_indexed": 1705,
+      "questions": 10,
+      "arrangements": {
+        "current": {
+          "questions": 10,
+          "hit@1": 0.4,
+          "hit@3": 0.4,
+          "hit@5": 0.5,
+          "mrr@10": 0.42,
+          "recall@20": 0.5,
+          "recall@candidates(20)": 0.5
+        }
+      }
+    }
+  },
+  "overall": {
+    "current": {
+      "questions": 20,
+      "hit@1": 0.5,
+      "hit@3": 0.6,
+      "hit@5": 0.65,
+      "mrr@10": 0.5517,
+      "recall@20": 0.7,
+      "recall@candidates(20)": 0.7
+    }
+  },
+  "seconds": 4.4
+}

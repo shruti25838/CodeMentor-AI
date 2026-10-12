@@ -1,0 +1,59 @@
+{
+  "codementor_commit": "ef754c6",
+  "questions": "holdout3",
+  "arrangements": {
+    "rrf+keyword": "reciprocal rank fusion of vector and BM25, then ordered by keyword overlap"
+  },
+  "embedder": "hash (HashEmbeddingService, 384 dims, subtokens, hashed bag of words, not semantic)",
+  "split": "holdout3",
+  "record_format": "whole",
+  "candidates": 20,
+  "repos": {
+    "itsdangerous": {
+      "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
+      "files_indexed": 15,
+      "records_indexed": 159,
+      "questions": 10,
+      "arrangements": {
+        "rrf+keyword": {
+          "questions": 10,
+          "hit@1": 0.7,
+          "hit@3": 0.8,
+          "hit@5": 0.8,
+          "mrr@10": 0.76,
+          "recall@20": 1.0,
+          "recall@candidates(20)": 1.0
+        }
+      }
+    },
+    "flask": {
+      "commit": "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35",
+      "files_indexed": 83,
+      "records_indexed": 1705,
+      "questions": 10,
+      "arrangements": {
+        "rrf+keyword": {
+          "questions": 10,
+          "hit@1": 0.4,
+          "hit@3": 0.7,
+          "hit@5": 0.8,
+          "mrr@10": 0.5542,
+          "recall@20": 0.9,
+          "recall@candidates(20)": 0.9
+        }
+      }
+    }
+  },
+  "overall": {
+    "rrf+keyword": {
+      "questions": 20,
+      "hit@1": 0.55,
+      "hit@3": 0.75,
+      "hit@5": 0.8,
+      "mrr@10": 0.6571,
+      "recall@20": 0.95,
+      "recall@candidates(20)": 0.95
+    }
+  },
+  "seconds": 5.1
+}
