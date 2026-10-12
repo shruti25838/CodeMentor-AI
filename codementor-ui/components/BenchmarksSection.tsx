@@ -1,10 +1,21 @@
 "use client";
 
 import React, { useState } from "react";
-import { Activity, ChevronDown, Cpu, GitCompare, LucideIcon, Server, Target, Timer } from "lucide-react";
+import {
+    Activity,
+    ChevronDown,
+    Cpu,
+    FlaskConical,
+    GitCompare,
+    LucideIcon,
+    Server,
+    Target,
+    Timer,
+} from "lucide-react";
 
 import {
     BenchmarksView,
+    ExperimentsView,
     Fact,
     LimitationsView,
     NOT_MEASURED,
@@ -435,6 +446,160 @@ function Limitations({ view }: { view: LimitationsView }) {
     );
 }
 
+/* ---- Experiments ---- */
+
+function verdictStyle(verdict: string): string {
+    if (verdict === "chosen") return "bg-emerald-400/10 text-emerald-300 border-emerald-400/20";
+    if (verdict === "baseline") return "bg-white/10 text-foreground/80 border-white/15";
+    if (verdict.startsWith("met the rule")) return "bg-amber-400/10 text-amber-300 border-amber-400/20";
+    return "bg-white/5 text-muted border-white/10";
+}
+
+function Experiments({ view }: { view: ExperimentsView }) {
+    const [showAll, setShowAll] = useState(false);
+    const rows = showAll ? view.rows : view.rows.filter((r) => r.highlighted || r.verdict.startsWith("met"));
+
+    return (
+        <Panel title={view.title} icon={FlaskConical} sub={view.note}>
+            <p className="text-[11px] text-muted leading-relaxed">{view.keepRule}</p>
+
+            <Scroller>
+                <table className="w-full min-w-[720px] text-[11px] mono border border-white/5 rounded-lg">
+                    <thead>
+                        <tr className="bg-white/[0.03]">
+                            <th className="text-left px-3 py-2 font-bold text-muted/60">embedder</th>
+                            <th className="text-left px-3 py-2 font-bold text-muted/60">change</th>
+                            <th className="text-right px-3 py-2 font-bold text-muted/60">n</th>
+                            {view.metrics.map((m) => (
+                                <th key={"dev-" + m} className="text-right px-3 py-2 font-bold text-muted/60">
+                                    dev {m}
+                                </th>
+                            ))}
+                            <th className="text-right px-3 py-2 font-bold text-muted/60">held out</th>
+                            <th className="text-right px-3 py-2 font-bold text-muted/60">fresh</th>
+                            <th className="text-left px-3 py-2 font-bold text-muted/60">verdict</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.map((row) => (
+                            <tr
+                                key={row.key}
+                                className={
+                                    row.highlighted
+                                        ? "border-t border-white/10 text-foreground"
+                                        : "border-t border-white/5 text-foreground/70"
+                                }
+                            >
+                                <td className="text-left px-3 py-2">{row.embedder}</td>
+                                <td className="text-left px-3 py-2 break-words max-w-[260px]">
+                                    {row.records} / {row.arrangement}
+                                </td>
+                                <td className="text-right px-3 py-2 text-muted">{row.questions}</td>
+                                {row.dev.map((cell, i) => (
+                                    <td key={view.metrics[i]} className="text-right px-3 py-2">
+                                        {cell}
+                                    </td>
+                                ))}
+                                <td className="text-right px-3 py-2">
+                                    {row.heldOut ? (
+                                        row.heldOut[1]
+                                    ) : (
+                                        <span className="text-muted/40">{NOT_MEASURED}</span>
+                                    )}
+                                </td>
+                                <td className="text-right px-3 py-2">
+                                    {row.holdout2 ? (
+                                        row.holdout2[1]
+                                    ) : (
+                                        <span className="text-muted/40">{NOT_MEASURED}</span>
+                                    )}
+                                </td>
+                                <td className="text-left px-3 py-2">
+                                    <span
+                                        className={
+                                            "inline-block px-2 py-0.5 rounded-full border text-[10px] " +
+                                            verdictStyle(row.verdict)
+                                        }
+                                    >
+                                        {row.verdict}
+                                    </span>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </Scroller>
+
+            <div className="flex flex-wrap items-center gap-3">
+                <button
+                    onClick={() => setShowAll((v) => !v)}
+                    aria-expanded={showAll}
+                    className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-white/5 text-muted border border-white/10 hover:text-foreground"
+                >
+                    {showAll ? "Show the kept ones" : "Show all " + view.rows.length + ", rejected included"}
+                </button>
+                <span className="text-[10px] mono text-muted/60">
+                    held out = scored before; fresh = holdout2, scored once. Both columns show MRR@10.
+                </span>
+            </div>
+
+            {view.chatModes && <ChatModes view={view.chatModes} />}
+        </Panel>
+    );
+}
+
+function ChatModes({ view }: { view: NonNullable<ExperimentsView["chatModes"]> }) {
+    return (
+        <div className="space-y-2 pt-2 border-t border-white/5">
+            <h4 className="text-[10px] font-bold uppercase tracking-widest text-muted/60">{view.title}</h4>
+            <p className="inline-block px-2 py-1 rounded-md bg-amber-400/10 text-amber-300 text-[11px] font-bold">
+                {view.label}
+            </p>
+            <p className="text-[11px] text-muted leading-relaxed">{view.weakCheck}</p>
+            <Scroller>
+                <table className="w-full min-w-[640px] text-[11px] mono border border-white/5 rounded-lg">
+                    <thead>
+                        <tr className="bg-white/[0.03]">
+                            <th className="text-left px-3 py-2 font-bold text-muted/60">mode</th>
+                            <th className="text-right px-3 py-2 font-bold text-muted/60">passed</th>
+                            <th className="text-right px-3 py-2 font-bold text-muted/60">file cited</th>
+                            <th className="text-right px-3 py-2 font-bold text-muted/60">fact</th>
+                            <th className="text-right px-3 py-2 font-bold text-muted/60">first token</th>
+                            <th className="text-right px-3 py-2 font-bold text-muted/60">total</th>
+                            <th className="text-right px-3 py-2 font-bold text-muted/60">calls</th>
+                            <th className="text-right px-3 py-2 font-bold text-muted/60">tokens</th>
+                            <th className="text-right px-3 py-2 font-bold text-muted/60">cited in prompt</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {view.rows.map((row) => (
+                            <tr key={row.mode} className="border-t border-white/5 text-foreground/80">
+                                <td className="text-left px-3 py-2">{row.mode}</td>
+                                <td className="text-right px-3 py-2 text-foreground font-bold">{row.score}</td>
+                                <td className="text-right px-3 py-2">{row.cited}</td>
+                                <td className="text-right px-3 py-2">{row.fact}</td>
+                                <td className="text-right px-3 py-2">{row.firstToken}</td>
+                                <td className="text-right px-3 py-2">{row.total}</td>
+                                <td className="text-right px-3 py-2">{row.calls}</td>
+                                <td className="text-right px-3 py-2">{row.tokens}</td>
+                                <td className="text-right px-3 py-2">{row.citedInPrompt}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </Scroller>
+            <p className="text-[10px] mono text-muted/60">
+                model: {view.model} - {view.questions} questions
+            </p>
+            {view.stoppedEarly && (
+                <p className="text-[11px] text-amber-300/80 leading-relaxed">stopped early: {view.stoppedEarly}</p>
+            )}
+            <p className="text-[11px] text-muted leading-relaxed">{view.note}</p>
+            <Stamp label={view.recordedLabel} />
+        </div>
+    );
+}
+
 /* ---- The section ---- */
 
 export default function BenchmarksSection({ view }: { view: BenchmarksView }) {
@@ -457,6 +622,7 @@ export default function BenchmarksSection({ view }: { view: BenchmarksView }) {
                     {view.structural && <Structural view={view.structural} />}
                     {view.system && <System view={view.system} />}
                     {view.timing && <Timing view={view.timing} />}
+                    {view.experiments && <Experiments view={view.experiments} />}
                     {view.limitations && <Limitations view={view.limitations} />}
                 </div>
             )}

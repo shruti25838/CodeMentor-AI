@@ -14,6 +14,7 @@ import {
     NOT_MEASURED,
     benchmarksView,
     defaultProviderId,
+    experimentsView,
     formatCount,
     formatMetric,
     formatShare,
@@ -312,5 +313,116 @@ test("nothing in the section carries a question, a key or a spend figure", () =>
 
     for (const banned of ["api_key", "account_id", "neuron", "budget", "secret"]) {
         assert.equal(printed.includes(banned), false, `the section must not carry ${banned}`);
+    }
+});
+
+/* ---- experiments ---- */
+
+test("every experiment is listed, kept and rejected, with a verdict", () => {
+    const view = experimentsView(SUMMARY)!;
+
+    assert.equal(view.rows.length, 20, "four dev runs of five arrangements each");
+    assert.ok(view.keepRule.includes("MRR@10 rises"));
+    assert.deepEqual(view.metrics, ["hit@5", "mrr@10", "recall@20"]);
+    for (const row of view.rows) {
+        assert.ok(row.verdict.length > 0, `${row.key} has no verdict`);
+        assert.equal(row.dev.length, view.metrics.length);
+    }
+    assert.ok(view.rows.some((r) => r.verdict === "rejected"), "rejected rows are shown too");
+});
+
+test("exactly one configuration per embedder is marked chosen", () => {
+    const view = experimentsView(SUMMARY)!;
+    const chosen = view.rows.filter((r) => r.verdict === "chosen");
+
+    assert.deepEqual(
+        chosen.map((r) => `${r.embedder}:${r.records}/${r.arrangement}`).sort(),
+        ["cloudflare:structured/current", "hash:structured/rrf+keyword"],
+    );
+});
+
+test("only the chosen and the baseline rows carry held-out or fresh numbers", () => {
+    const view = experimentsView(SUMMARY)!;
+
+    for (const row of view.rows) {
+        if (row.verdict === "chosen") {
+            assert.ok(row.heldOut, `${row.key} is chosen and should have held-out scores`);
+            assert.ok(row.holdout2, `${row.key} is chosen and should have fresh scores`);
+        } else if (row.verdict === "baseline") {
+            assert.ok(row.holdout2, "the baseline is scored on the fresh split for comparison");
+        } else {
+            assert.equal(row.heldOut, null, `${row.key} must not claim a held-out score`);
+            assert.equal(row.holdout2, null, `${row.key} must not claim a fresh score`);
+        }
+    }
+});
+
+test("the fresh split scores worse than dev for both baselines, and the table shows it", () => {
+    const view = experimentsView(SUMMARY)!;
+    const baselines = view.rows.filter((r) => r.verdict === "baseline");
+
+    assert.equal(baselines.length, 2);
+    for (const row of baselines) {
+        const dev = Number(row.dev[1]);
+        const fresh = Number(row.holdout2![1]);
+        assert.ok(fresh < dev, `${row.embedder}: the fresh split should be the harder one`);
+    }
+});
+
+test("an arrangement the server cannot be set to says so in its verdict", () => {
+    const view = experimentsView(SUMMARY)!;
+    const bm25 = view.rows.find((r) => r.embedder === "hash" && r.records === "whole" && r.arrangement === "bm25")!;
+
+    assert.match(bm25.verdict, /no mode for it/);
+});
+
+test("the chat mode comparison is labelled as one local run on one model", () => {
+    const view = experimentsView(SUMMARY)!;
+    const chat = view.chatModes!;
+
+    assert.match(chat.label, /one local run/);
+    assert.match(chat.label, /not a benchmark/);
+    assert.ok(chat.model.length > 0);
+    assert.ok(chat.weakCheck.includes("No judge model"));
+    assert.deepEqual(chat.rows.map((r) => r.mode), ["legacy", "grounded"]);
+    for (const row of chat.rows) {
+        assert.match(row.firstToken, /^(\d+\.\d\ds|—)$/);
+    }
+});
+
+test("the experiments panel shows no end-to-end latency claim", () => {
+    const printed = JSON.stringify(experimentsView(SUMMARY)).toLowerCase();
+    for (const banned of ["ttfb", "end_to_end", "p95", "latency"]) {
+        assert.equal(printed.includes(banned), false, `the experiments panel must not claim ${banned}`);
+    }
+});
+
+test("experiments with no rows renders nothing rather than an empty table", () => {
+    assert.equal(experimentsView({ experiments: { rows: [] } }), null);
+    assert.equal(experimentsView({}), null);
+});
+
+test("a summary with experiments but no chat run still renders the table", () => {
+    const view = experimentsView({
+        experiments: {
+            metrics: ["mrr@10"],
+            rows: [{ embedder: "hash", records: "whole", arrangement: "current", verdict: "baseline", dev: { questions: 20, "mrr@10": 0.5 } }],
+            chat_modes: null,
+        },
+    })!;
+
+    assert.equal(view.chatModes, null);
+    assert.equal(view.rows[0].dev[0], "0.500");
+});
+
+test("the whole section includes experiments when the summary has them", () => {
+    assert.notEqual(benchmarksView(RESPONSE).experiments, null);
+    assert.equal(benchmarksView({ available: false, heading_note: "x" }).experiments, null);
+});
+
+test("every experiment row carries the number of questions it was scored on", () => {
+    const view = experimentsView(SUMMARY)!;
+    for (const row of view.rows) {
+        assert.equal(row.questions, 20, `${row.key} should say how many questions it scored`);
     }
 });

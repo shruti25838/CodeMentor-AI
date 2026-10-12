@@ -142,6 +142,60 @@ export interface LimitationsBlock {
     document_cap?: { documents?: number; applies_to?: string; note?: string; recorded?: Recorded };
 }
 
+export interface ExperimentScores {
+    questions?: number;
+    [metric: string]: number | null | undefined;
+}
+
+export interface ExperimentRow {
+    embedder?: string;
+    records?: string;
+    arrangement?: string;
+    change?: string;
+    verdict?: string;
+    dev?: ExperimentScores | null;
+    held_out?: ExperimentScores | null;
+    holdout2?: ExperimentScores | null;
+    recorded?: Recorded;
+}
+
+export interface ChatModeRow {
+    mode: string;
+    runs: number;
+    passed: number;
+    expected_file_cited: number;
+    fact_present: number;
+    no_answer: number;
+    first_token_seconds_median?: number | null;
+    total_seconds_median?: number | null;
+    model_calls_total?: number;
+    tokens_total?: number;
+    cited_files_in_prompt?: number;
+    cited_files_total?: number;
+}
+
+export interface ExperimentsBlock {
+    title?: string;
+    note?: string;
+    keep_rule?: string;
+    metrics?: string[];
+    splits?: Record<string, string>;
+    source?: string;
+    rows?: ExperimentRow[];
+    chat_modes?: {
+        title?: string;
+        label?: string;
+        model?: string;
+        questions?: number;
+        weak_check?: string;
+        stopped_early?: string;
+        note?: string;
+        source?: string;
+        recorded?: Recorded;
+        modes?: ChatModeRow[];
+    } | null;
+}
+
 export interface Summary {
     schema?: number;
     heading_note?: string;
@@ -150,6 +204,7 @@ export interface Summary {
     structural?: StructuralBlock;
     system?: SystemBlock;
     timing?: TimingBlock;
+    experiments?: ExperimentsBlock;
     limitations?: LimitationsBlock;
 }
 
@@ -486,6 +541,120 @@ export function limitationsView(summary?: Summary): LimitationsView | null {
     };
 }
 
+/* ---- Experiments ---- */
+
+export interface ExperimentView {
+    key: string;
+    embedder: string;
+    records: string;
+    arrangement: string;
+    change: string;
+    verdict: string;
+    /** "chosen" and "baseline" are the two a reader should find first. */
+    highlighted: boolean;
+    dev: string[];
+    heldOut: string[] | null;
+    holdout2: string[] | null;
+    questions: number;
+    recordedLabel: string;
+}
+
+export interface ChatModeView {
+    title: string;
+    label: string;
+    model: string;
+    questions: number;
+    weakCheck: string;
+    stoppedEarly: string;
+    note: string;
+    recordedLabel: string;
+    rows: {
+        mode: string;
+        score: string;
+        cited: string;
+        fact: string;
+        firstToken: string;
+        total: string;
+        calls: string;
+        tokens: string;
+        citedInPrompt: string;
+    }[];
+}
+
+export interface ExperimentsView {
+    title: string;
+    note: string;
+    keepRule: string;
+    metrics: string[];
+    source: string;
+    rows: ExperimentView[];
+    chatModes: ChatModeView | null;
+}
+
+function cells(scores: ExperimentScores | null | undefined, metrics: string[]): string[] | null {
+    if (!scores) return null;
+    return metrics.map((metric) => formatMetric(scores[metric]));
+}
+
+function seconds(value: unknown): string {
+    return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)}s` : NOT_MEASURED;
+}
+
+export function experimentsView(summary?: Summary): ExperimentsView | null {
+    const block = summary?.experiments;
+    if (!block?.rows?.length) return null;
+    const metrics = block.metrics ?? [];
+
+    return {
+        title: block.title ?? "Experiments",
+        note: block.note ?? "",
+        keepRule: block.keep_rule ?? "",
+        metrics,
+        source: block.source ?? "",
+        rows: block.rows.map((row) => ({
+            key: `${row.embedder}-${row.records}-${row.arrangement}`,
+            embedder: row.embedder ?? "",
+            records: row.records ?? "",
+            arrangement: row.arrangement ?? "",
+            change: row.change ?? "",
+            verdict: row.verdict ?? "",
+            highlighted: row.verdict === "chosen" || row.verdict === "baseline",
+            dev: cells(row.dev, metrics) ?? metrics.map(() => NOT_MEASURED),
+            heldOut: cells(row.held_out, metrics),
+            holdout2: cells(row.holdout2, metrics),
+            questions: row.dev?.questions ?? 0,
+            recordedLabel: recordedLabel(row.recorded),
+        })),
+        chatModes: chatModesView(block.chat_modes),
+    };
+}
+
+function chatModesView(block: ExperimentsBlock["chat_modes"]): ChatModeView | null {
+    if (!block?.modes?.length) return null;
+    return {
+        title: block.title ?? "Chat mode comparison",
+        // Required wording: this is one run on one machine, not a benchmark.
+        label: block.label ?? "one local run, one model, one question set - not a benchmark",
+        model: block.model ?? NOT_MEASURED,
+        questions: block.questions ?? 0,
+        weakCheck: block.weak_check ?? "",
+        stoppedEarly: block.stopped_early ?? "",
+        note: block.note ?? "",
+        recordedLabel: recordedLabel(block.recorded),
+        rows: block.modes.map((row) => ({
+            mode: row.mode,
+            score: `${row.passed}/${row.runs}`,
+            cited: `${row.expected_file_cited}/${row.runs}`,
+            fact: `${row.fact_present}/${row.runs}`,
+            firstToken: seconds(row.first_token_seconds_median),
+            total: seconds(row.total_seconds_median),
+            calls: formatCount(row.model_calls_total),
+            tokens: formatCount(row.tokens_total),
+            citedInPrompt: `${row.cited_files_in_prompt ?? 0}/${row.cited_files_total ?? 0}`,
+        })),
+    };
+}
+
 /* ---- The section as a whole ---- */
 
 export interface BenchmarksView {
@@ -498,6 +667,7 @@ export interface BenchmarksView {
     structural: StructuralView | null;
     system: SystemView | null;
     timing: TimingView | null;
+    experiments: ExperimentsView | null;
     limitations: LimitationsView | null;
 }
 
@@ -520,6 +690,7 @@ export function benchmarksView(response?: BenchmarksResponse | null): Benchmarks
         structural: structuralView(summary),
         system: summary ? systemView(summary, response?.live) : null,
         timing: timingView(summary),
+        experiments: experimentsView(summary),
         limitations: limitationsView(summary),
     };
 }

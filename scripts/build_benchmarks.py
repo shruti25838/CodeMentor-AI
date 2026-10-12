@@ -40,13 +40,39 @@ from codeatlas.services.retrieval.cloudflare_embedder import (  # noqa: E402
 
 SUMMARY = ROOT / "eval" / "benchmarks.json"
 RESULTS = ROOT / "eval" / "results"
+EXPERIMENTS = RESULTS / "experiments"
+
+# One dev run per (embedder, record format), each holding all five arrangements.
+DEV_SOURCES = {
+    ("hash", "whole"): "arrangements-dev-hash.json",
+    ("hash", "structured"): "structured-dev-hash.json",
+    ("cloudflare", "whole"): "arrangements-dev-cloudflare.json",
+    ("cloudflare", "structured"): "structured-dev-cloudflare.json",
+}
+# The original held-out split, scored once for the chosen configuration only.
+HELD_OUT_SOURCES = {"hash": "chosen-heldout-hash.json", "cloudflare": "chosen-heldout-cloudflare.json"}
+# holdout2, scored once for today's default and once for the chosen configuration.
+HOLDOUT2_SOURCES = {
+    ("hash", "default"): "holdout2-default-hash.json",
+    ("hash", "chosen"): "holdout2-chosen-hash.json",
+    ("cloudflare", "default"): "holdout2-default-cloudflare.json",
+    ("cloudflare", "chosen"): "holdout2-chosen-cloudflare.json",
+}
+# The chat-mode comparison, if one has been run. The full run is preferred; a short trial is
+# read when it is all there is, and the row says how many questions it covered either way.
+CHAT_MODE_SOURCES = ("chat-modes.json", "chat-modes-trial.json")
+
+# What the server runs today, and what the decision entry chose, per embedder.
+BASELINE = ("whole", "current")
+CHOSEN = {"hash": ("structured", "rrf+keyword"), "cloudflare": ("structured", "current")}
+# Arrangements the experiment can score and the application has no setting for. BM25 was built
+# as a second retriever fused with the first, so "BM25 alone" is not a mode the server has.
+NOT_CONFIGURABLE = ("bm25", "vector", "rrf")
 
 SCHEMA = 1
 
 HEADING_NOTE = "Recorded results on small fixed question sets, not live accuracy."
-END_TO_END_NOTE = (
-    "End-to-end latency is not shown. It depends on the model provider and is not benchmarked here."
-)
+END_TO_END_NOTE = "End-to-end latency is not shown. It depends on the model provider and is not benchmarked here."
 
 # Pinned repositories. The two of them are the whole of every question set below.
 REPOS = {
@@ -112,6 +138,16 @@ PROVENANCE = {
         "commit": "32a9aba",
         "date": "2026-10-06",
         "results_entry": "Check: third deep smoke pass",
+    },
+    "experiments": {
+        "commit": "5edf06e",
+        "date": "2026-10-11",
+        "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2",
+    },
+    "chat_modes": {
+        "commit": "075a613",
+        "date": "2026-10-11",
+        "results_entry": "Feature: a grounded chat mode",
     },
     "document_cap": {
         "commit": "6933310",
@@ -376,6 +412,128 @@ def timing() -> dict:
     }
 
 
+# ---------------------------------------------------------------- experiments
+
+
+EXPERIMENT_METRICS = ["hit@5", "mrr@10", "recall@20"]
+
+
+def _scores(metrics: dict | None) -> dict | None:
+    if not metrics:
+        return None
+    return {
+        "questions": metrics["questions"],
+        **{name: metrics.get(name) for name in EXPERIMENT_METRICS},
+    }
+
+
+def _verdict(embedder: str, records: str, arrangement: str, dev: dict, baseline: dict) -> str:
+    """The keep rule, applied: kept only if dev MRR rises and dev hit@5 does not fall."""
+    if (records, arrangement) == BASELINE:
+        return "baseline"
+    if (records, arrangement) == CHOSEN[embedder]:
+        return "chosen"
+    met = dev["mrr@10"] > baseline["mrr@10"] and dev["hit@5"] >= baseline["hit@5"]
+    if not met:
+        return "rejected"
+    if arrangement in NOT_CONFIGURABLE:
+        return "met the rule; the server has no mode for it"
+    return "met the rule; not chosen"
+
+
+def experiments() -> dict:
+    """Every retrieval experiment this batch ran, kept and rejected, from the files it wrote."""
+    dev_runs = {key: _read(EXPERIMENTS / name) for key, name in DEV_SOURCES.items()}
+    held_out = {key: _read(EXPERIMENTS / name) for key, name in HELD_OUT_SOURCES.items()}
+    holdout2 = {key: _read(EXPERIMENTS / name) for key, name in HOLDOUT2_SOURCES.items()}
+
+    rows = []
+    for embedder in ("hash", "cloudflare"):
+        baseline = dev_runs[(embedder, "whole")]["overall"]["current"]
+        for records in ("whole", "structured"):
+            run = dev_runs[(embedder, records)]
+            for arrangement, description in run["arrangements"].items():
+                dev = run["overall"][arrangement]
+                verdict = _verdict(embedder, records, arrangement, dev, baseline)
+                row = {
+                    "embedder": embedder,
+                    "records": records,
+                    "arrangement": arrangement,
+                    "change": f"{records} records, {description}",
+                    "verdict": verdict,
+                    "dev": _scores(dev),
+                    "held_out": None,
+                    "holdout2": None,
+                    "recorded": PROVENANCE["experiments"],
+                    "result_file_commit": run["codementor_commit"],
+                }
+                if verdict == "chosen":
+                    row["held_out"] = _scores(held_out[embedder]["overall"][arrangement])
+                    row["holdout2"] = _scores(holdout2[(embedder, "chosen")]["overall"][arrangement])
+                elif verdict == "baseline":
+                    row["holdout2"] = _scores(holdout2[(embedder, "default")]["overall"][arrangement])
+                rows.append(row)
+
+    return {
+        "title": "Experiments",
+        "note": (
+            "Every retrieval arrangement this batch scored, kept and rejected. The fresh split "
+            "(holdout2) was written after the dev and held-out sets had been used repeatedly and "
+            "was scored once, after the configuration was chosen."
+        ),
+        "keep_rule": "Kept only if dev MRR@10 rises and dev hit@5 does not fall.",
+        "metrics": EXPERIMENT_METRICS,
+        "splits": {"dev": "development", "held_out": "held out (used before)", "holdout2": "fresh, scored once"},
+        "source": "eval/results/experiments/",
+        "rows": rows,
+        "chat_modes": chat_modes(),
+    }
+
+
+def chat_modes() -> dict | None:
+    """The legacy-against-grounded comparison, labelled for exactly what it is."""
+    for name in CHAT_MODE_SOURCES:
+        path = EXPERIMENTS / name
+        if path.exists():
+            data = _read(path)
+            break
+    else:
+        return None
+
+    summary = data["summary"]
+    return {
+        "title": "Chat mode: legacy against grounded",
+        "label": "one local run, one model, one question set - not a benchmark",
+        "model": data["model"],
+        "questions": data["questions"],
+        "weak_check": data["weak_check"],
+        "stopped_early": data.get("stopped_early", ""),
+        "source": f"eval/results/experiments/{path.name}",
+        "recorded": PROVENANCE["chat_modes"],
+        "note": (
+            "Measured on this machine against one provider on one day. The timings are the "
+            "client's own, over a local socket, and say nothing about a deployed server."
+        ),
+        "modes": [
+            {
+                "mode": mode,
+                "runs": block["runs"],
+                "passed": block["passed"],
+                "expected_file_cited": block["expected_file_cited"],
+                "fact_present": block["fact_present"],
+                "no_answer": block["no_answer"],
+                "first_token_seconds_median": block["first_token_seconds_median"],
+                "total_seconds_median": block["total_seconds_median"],
+                "model_calls_total": block["model_calls_total"],
+                "tokens_total": block["tokens_total"],
+                "cited_files_in_prompt": block["cited_files_in_prompt"],
+                "cited_files_total": block["cited_files_total"],
+            }
+            for mode, block in summary.items()
+        ],
+    }
+
+
 # ---------------------------------------------------------------- limitations
 
 
@@ -423,7 +581,11 @@ def limitations() -> dict:
         },
         "sample_sizes": [
             {"what": "retrieval", "questions": 40, "detail": "20 per repository, 10 development and 10 held out each"},
-            {"what": "structural", "questions": 49, "detail": "24 itsdangerous and 25 flask, 26 development / 23 held out"},
+            {
+                "what": "structural",
+                "questions": 49,
+                "detail": "24 itsdangerous and 25 flask, 26 development / 23 held out",
+            },
             {"what": "answer smoke check", "questions": 15, "detail": "run in each of the two chat modes"},
         ],
         "sample_size_note": (
@@ -431,9 +593,7 @@ def limitations() -> dict:
             "questions is not a result. The subjects were chosen by hand, which is a bias a held-out split "
             "narrows but does not remove."
         ),
-        "repos": [
-            {"name": name, "url": repo["url"], "commit": repo["commit"]} for name, repo in REPOS.items()
-        ],
+        "repos": [{"name": name, "url": repo["url"], "commit": repo["commit"]} for name, repo in REPOS.items()],
         "repos_note": (
             "Two Python libraries by the same authors. Nothing here says how the system behaves on another "
             "language, a larger repository, or code written in a different style."
@@ -465,6 +625,7 @@ def build() -> dict:
         "structural": structural(),
         "system": system(),
         "timing": timing(),
+        "experiments": experiments(),
         "limitations": limitations(),
     }
 

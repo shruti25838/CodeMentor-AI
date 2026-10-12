@@ -467,6 +467,519 @@
       ]
     }
   },
+  "experiments": {
+    "title": "Experiments",
+    "note": "Every retrieval arrangement this batch scored, kept and rejected. The fresh split (holdout2) was written after the dev and held-out sets had been used repeatedly and was scored once, after the configuration was chosen.",
+    "keep_rule": "Kept only if dev MRR@10 rises and dev hit@5 does not fall.",
+    "metrics": [
+      "hit@5",
+      "mrr@10",
+      "recall@20"
+    ],
+    "splits": {
+      "dev": "development",
+      "held_out": "held out (used before)",
+      "holdout2": "fresh, scored once"
+    },
+    "source": "eval/results/experiments/",
+    "rows": [
+      {
+        "embedder": "hash",
+        "records": "whole",
+        "arrangement": "current",
+        "change": "whole records, vector candidates, ordered by keyword overlap (what the server does today)",
+        "verdict": "baseline",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.75,
+          "mrr@10": 0.6625,
+          "recall@20": 0.85
+        },
+        "held_out": null,
+        "holdout2": {
+          "questions": 20,
+          "hit@5": 0.5,
+          "mrr@10": 0.3956,
+          "recall@20": 0.75
+        },
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      },
+      {
+        "embedder": "hash",
+        "records": "whole",
+        "arrangement": "bm25",
+        "change": "whole records, BM25 over every record, ordered by BM25 score",
+        "verdict": "met the rule; the server has no mode for it",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.85,
+          "mrr@10": 0.7817,
+          "recall@20": 0.95
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      },
+      {
+        "embedder": "hash",
+        "records": "whole",
+        "arrangement": "vector",
+        "change": "whole records, vector candidates, ordered by vector similarity",
+        "verdict": "rejected",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.55,
+          "mrr@10": 0.4789,
+          "recall@20": 0.85
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      },
+      {
+        "embedder": "hash",
+        "records": "whole",
+        "arrangement": "rrf",
+        "change": "whole records, reciprocal rank fusion of the vector and BM25 rankings",
+        "verdict": "rejected",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.8,
+          "mrr@10": 0.6514,
+          "recall@20": 0.95
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      },
+      {
+        "embedder": "hash",
+        "records": "whole",
+        "arrangement": "rrf+keyword",
+        "change": "whole records, reciprocal rank fusion of vector and BM25, then ordered by keyword overlap",
+        "verdict": "met the rule; not chosen",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.9,
+          "mrr@10": 0.7167,
+          "recall@20": 0.95
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      },
+      {
+        "embedder": "hash",
+        "records": "structured",
+        "arrangement": "current",
+        "change": "structured records, vector candidates, ordered by keyword overlap (what the server does today)",
+        "verdict": "met the rule; not chosen",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.75,
+          "mrr@10": 0.6904,
+          "recall@20": 0.85
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81"
+      },
+      {
+        "embedder": "hash",
+        "records": "structured",
+        "arrangement": "bm25",
+        "change": "structured records, BM25 over every record, ordered by BM25 score",
+        "verdict": "met the rule; the server has no mode for it",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.85,
+          "mrr@10": 0.7629,
+          "recall@20": 0.95
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81"
+      },
+      {
+        "embedder": "hash",
+        "records": "structured",
+        "arrangement": "vector",
+        "change": "structured records, vector candidates, ordered by vector similarity",
+        "verdict": "rejected",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.6,
+          "mrr@10": 0.488,
+          "recall@20": 0.85
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81"
+      },
+      {
+        "embedder": "hash",
+        "records": "structured",
+        "arrangement": "rrf",
+        "change": "structured records, reciprocal rank fusion of the vector and BM25 rankings",
+        "verdict": "rejected",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.8,
+          "mrr@10": 0.6489,
+          "recall@20": 1.0
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81"
+      },
+      {
+        "embedder": "hash",
+        "records": "structured",
+        "arrangement": "rrf+keyword",
+        "change": "structured records, reciprocal rank fusion of vector and BM25, then ordered by keyword overlap",
+        "verdict": "chosen",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.9,
+          "mrr@10": 0.7425,
+          "recall@20": 1.0
+        },
+        "held_out": {
+          "questions": 20,
+          "hit@5": 0.85,
+          "mrr@10": 0.7785,
+          "recall@20": 1.0
+        },
+        "holdout2": {
+          "questions": 20,
+          "hit@5": 0.75,
+          "mrr@10": 0.5763,
+          "recall@20": 0.85
+        },
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81"
+      },
+      {
+        "embedder": "cloudflare",
+        "records": "whole",
+        "arrangement": "current",
+        "change": "whole records, vector candidates, ordered by keyword overlap (what the server does today)",
+        "verdict": "baseline",
+        "dev": {
+          "questions": 20,
+          "hit@5": 1.0,
+          "mrr@10": 0.8042,
+          "recall@20": 1.0
+        },
+        "held_out": null,
+        "holdout2": {
+          "questions": 20,
+          "hit@5": 0.8,
+          "mrr@10": 0.5867,
+          "recall@20": 0.95
+        },
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      },
+      {
+        "embedder": "cloudflare",
+        "records": "whole",
+        "arrangement": "bm25",
+        "change": "whole records, BM25 over every record, ordered by BM25 score",
+        "verdict": "rejected",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.85,
+          "mrr@10": 0.7817,
+          "recall@20": 0.95
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      },
+      {
+        "embedder": "cloudflare",
+        "records": "whole",
+        "arrangement": "vector",
+        "change": "whole records, vector candidates, ordered by vector similarity",
+        "verdict": "rejected",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.9,
+          "mrr@10": 0.7322,
+          "recall@20": 1.0
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      },
+      {
+        "embedder": "cloudflare",
+        "records": "whole",
+        "arrangement": "rrf",
+        "change": "whole records, reciprocal rank fusion of the vector and BM25 rankings",
+        "verdict": "rejected",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.95,
+          "mrr@10": 0.7417,
+          "recall@20": 1.0
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      },
+      {
+        "embedder": "cloudflare",
+        "records": "whole",
+        "arrangement": "rrf+keyword",
+        "change": "whole records, reciprocal rank fusion of vector and BM25, then ordered by keyword overlap",
+        "verdict": "rejected",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.95,
+          "mrr@10": 0.725,
+          "recall@20": 1.0
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      },
+      {
+        "embedder": "cloudflare",
+        "records": "structured",
+        "arrangement": "current",
+        "change": "structured records, vector candidates, ordered by keyword overlap (what the server does today)",
+        "verdict": "chosen",
+        "dev": {
+          "questions": 20,
+          "hit@5": 1.0,
+          "mrr@10": 0.825,
+          "recall@20": 1.0
+        },
+        "held_out": {
+          "questions": 20,
+          "hit@5": 0.9,
+          "mrr@10": 0.8729,
+          "recall@20": 0.95
+        },
+        "holdout2": {
+          "questions": 20,
+          "hit@5": 0.85,
+          "mrr@10": 0.6408,
+          "recall@20": 0.9
+        },
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      },
+      {
+        "embedder": "cloudflare",
+        "records": "structured",
+        "arrangement": "bm25",
+        "change": "structured records, BM25 over every record, ordered by BM25 score",
+        "verdict": "rejected",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.85,
+          "mrr@10": 0.7629,
+          "recall@20": 0.95
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      },
+      {
+        "embedder": "cloudflare",
+        "records": "structured",
+        "arrangement": "vector",
+        "change": "structured records, vector candidates, ordered by vector similarity",
+        "verdict": "rejected",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.9,
+          "mrr@10": 0.7329,
+          "recall@20": 1.0
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      },
+      {
+        "embedder": "cloudflare",
+        "records": "structured",
+        "arrangement": "rrf",
+        "change": "structured records, reciprocal rank fusion of the vector and BM25 rankings",
+        "verdict": "rejected",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.95,
+          "mrr@10": 0.7208,
+          "recall@20": 1.0
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      },
+      {
+        "embedder": "cloudflare",
+        "records": "structured",
+        "arrangement": "rrf+keyword",
+        "change": "structured records, reciprocal rank fusion of vector and BM25, then ordered by keyword overlap",
+        "verdict": "rejected",
+        "dev": {
+          "questions": 20,
+          "hit@5": 0.95,
+          "mrr@10": 0.7942,
+          "recall@20": 1.0
+        },
+        "held_out": null,
+        "holdout2": null,
+        "recorded": {
+          "commit": "5edf06e",
+          "date": "2026-10-11",
+          "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2"
+        },
+        "result_file_commit": "7046e81-dirty"
+      }
+    ],
+    "chat_modes": {
+      "title": "Chat mode: legacy against grounded",
+      "label": "one local run, one model, one question set - not a benchmark",
+      "model": "groq / openai/gpt-oss-20b",
+      "questions": 15,
+      "weak_check": "Two string tests per answer: is the expected file cited, and is one hand-written word present. No judge model, and nothing reads whether the explanation is correct.",
+      "stopped_early": "",
+      "source": "eval/results/experiments/chat-modes.json",
+      "recorded": {
+        "commit": "075a613",
+        "date": "2026-10-11",
+        "results_entry": "Feature: a grounded chat mode"
+      },
+      "note": "Measured on this machine against one provider on one day. The timings are the client's own, over a local socket, and say nothing about a deployed server.",
+      "modes": [
+        {
+          "mode": "legacy",
+          "runs": 15,
+          "passed": 12,
+          "expected_file_cited": 12,
+          "fact_present": 14,
+          "no_answer": 0,
+          "first_token_seconds_median": 1.53,
+          "total_seconds_median": 1.56,
+          "model_calls_total": 30,
+          "tokens_total": 52084,
+          "cited_files_in_prompt": 45,
+          "cited_files_total": 45
+        },
+        {
+          "mode": "grounded",
+          "runs": 15,
+          "passed": 12,
+          "expected_file_cited": 12,
+          "fact_present": 14,
+          "no_answer": 0,
+          "first_token_seconds_median": 0.61,
+          "total_seconds_median": 0.9,
+          "model_calls_total": 15,
+          "tokens_total": 24495,
+          "cited_files_in_prompt": 45,
+          "cited_files_total": 45
+        }
+      ]
+    }
+  },
   "limitations": {
     "title": "Limitations and weak checks",
     "collapsed": true,

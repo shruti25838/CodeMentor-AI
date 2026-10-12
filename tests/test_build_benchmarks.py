@@ -221,3 +221,65 @@ def _recorded_blocks(value) -> list[dict]:
         for item in value:
             found += _recorded_blocks(item)
     return found
+
+
+# ---------------------------------------------------------------- the experiments block
+
+
+def test_every_experiment_run_reaches_the_summary(committed):
+    """Four dev runs of five arrangements each. A run that stopped being read would show here."""
+    rows = committed["experiments"]["rows"]
+    assert len(rows) == 20
+    assert {(r["embedder"], r["records"]) for r in rows} == {
+        ("hash", "whole"),
+        ("hash", "structured"),
+        ("cloudflare", "whole"),
+        ("cloudflare", "structured"),
+    }
+
+
+def test_the_keep_rule_is_applied_rather_than_asserted(committed):
+    """Every verdict is recomputed here from the numbers, against the rule as written."""
+    rows = committed["experiments"]["rows"]
+    baselines = {r["embedder"]: r["dev"] for r in rows if r["verdict"] == "baseline"}
+
+    for row in rows:
+        if row["verdict"] in ("baseline", "chosen"):
+            continue
+        base = baselines[row["embedder"]]
+        met = row["dev"]["mrr@10"] > base["mrr@10"] and row["dev"]["hit@5"] >= base["hit@5"]
+        assert met == row["verdict"].startswith("met the rule"), row
+
+
+def test_exactly_one_chosen_configuration_per_embedder(committed):
+    chosen = [r for r in committed["experiments"]["rows"] if r["verdict"] == "chosen"]
+    assert sorted((r["embedder"], r["records"], r["arrangement"]) for r in chosen) == [
+        ("cloudflare", "structured", "current"),
+        ("hash", "structured", "rrf+keyword"),
+    ]
+
+
+def test_held_out_numbers_are_claimed_only_where_they_were_scored(committed):
+    for row in committed["experiments"]["rows"]:
+        if row["verdict"] == "chosen":
+            assert row["held_out"] and row["holdout2"], row
+        elif row["verdict"] == "baseline":
+            assert row["holdout2"], row
+            assert row["held_out"] is None, "the baseline's held-out figure is in the retrieval panel"
+        else:
+            assert row["held_out"] is None and row["holdout2"] is None, row
+
+
+def test_the_chat_mode_comparison_says_what_it_is(committed):
+    chat = committed["experiments"]["chat_modes"]
+    assert "one local run" in chat["label"]
+    assert "not a benchmark" in chat["label"]
+    assert chat["model"]
+    assert [m["mode"] for m in chat["modes"]] == ["legacy", "grounded"]
+    assert "No judge model" in chat["weak_check"]
+
+
+def test_the_experiments_block_claims_no_end_to_end_latency(committed):
+    printed = json.dumps(committed["experiments"]).lower()
+    for banned in ("ttfb", "end_to_end", "p95", "latency"):
+        assert banned not in printed, f"the experiments block must not claim {banned}"
