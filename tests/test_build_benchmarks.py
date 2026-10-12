@@ -221,3 +221,145 @@ def _recorded_blocks(value) -> list[dict]:
         for item in value:
             found += _recorded_blocks(item)
     return found
+
+
+# ---------------------------------------------------------------- the experiments block
+
+
+def test_every_experiment_run_reaches_the_summary(committed):
+    """Four dev runs of five arrangements each. A run that stopped being read would show here."""
+    rows = committed["experiments"]["rows"]
+    assert len(rows) == 20
+    assert {(r["embedder"], r["records"]) for r in rows} == {
+        ("hash", "whole"),
+        ("hash", "structured"),
+        ("cloudflare", "whole"),
+        ("cloudflare", "structured"),
+    }
+
+
+def test_the_keep_rule_is_applied_rather_than_asserted(committed):
+    """Every verdict is recomputed here from the numbers, against the rule as written."""
+    rows = committed["experiments"]["rows"]
+    baselines = {r["embedder"]: r["dev"] for r in rows if r["verdict"] == "baseline"}
+
+    for row in rows:
+        if row["verdict"] in ("baseline", "chosen"):
+            continue
+        base = baselines[row["embedder"]]
+        met = row["dev"]["mrr@10"] > base["mrr@10"] and row["dev"]["hit@5"] >= base["hit@5"]
+        assert met == row["verdict"].startswith("met the rule"), row
+
+
+def test_exactly_one_chosen_configuration_per_embedder(committed):
+    chosen = [r for r in committed["experiments"]["rows"] if r["verdict"] == "chosen"]
+    assert sorted((r["embedder"], r["records"], r["arrangement"]) for r in chosen) == [
+        ("cloudflare", "structured", "current"),
+        ("hash", "structured", "rrf+keyword"),
+    ]
+
+
+def test_held_out_numbers_are_claimed_only_where_they_were_scored(committed):
+    for row in committed["experiments"]["rows"]:
+        if row["verdict"] == "chosen":
+            assert row["held_out"] and row["holdout2"], row
+        elif row["verdict"] == "baseline":
+            assert row["holdout2"], row
+            assert row["held_out"] is None, "the baseline's held-out figure is in the retrieval panel"
+        else:
+            assert row["held_out"] is None and row["holdout2"] is None, row
+
+
+def test_the_page_says_the_original_held_out_split_was_reused(committed):
+    """Said in the Experiments panel and again beside the retrieval table that shows it."""
+    experiments = committed["experiments"]
+    assert "reused" in experiments["reused_split_note"].lower()
+    assert "holdout2" in experiments["fresh_split_note"]
+    assert "fresher" in experiments["fresh_split_note"]
+    assert "reused" in experiments["splits"]["held_out"]
+    assert "scored once" in experiments["splits"]["holdout2"]
+
+    retrieval = committed["retrieval"]
+    assert "reused" in retrieval["splits_note"].lower()
+    for provider in retrieval["providers"]:
+        held_out = next(s for s in provider["splits"] if s["id"] == "held-out")
+        development = next(s for s in provider["splits"] if s["id"] == "development")
+        assert held_out["reused"] is True and "reused" in held_out["note"].lower()
+        assert development["reused"] is False and development["note"] == ""
+
+
+def test_the_two_held_out_sets_are_shown_side_by_side(committed):
+    """Four configurations, each with both numbers and the source of each, and the gap between."""
+    block = committed["experiments"]["splits_compared"]
+    rows = block["rows"]
+
+    assert block["metric"] == "mrr@10"
+    assert [(r["embedder"], r["verdict"]) for r in rows] == [
+        ("hash", "baseline"),
+        ("hash", "chosen"),
+        ("cloudflare", "baseline"),
+        ("cloudflare", "chosen"),
+    ]
+    for row in rows:
+        assert row["held_out"] is not None and row["holdout2"] is not None, row
+        assert row["difference"] == round(row["holdout2"] - row["held_out"], 4), row
+        assert row["held_out_source"].startswith("eval/results/"), row
+        assert row["holdout2_source"].startswith("eval/results/"), row
+
+
+def test_every_configuration_scores_worse_on_the_fresh_split(committed):
+    """The relationship, not the numbers: a set that was never used scores lower than one that was.
+
+    Asserted as a relationship so the table cannot stop showing it. If a later run made the fresh
+    split the higher one, this would fail and the wording above would have to be rewritten rather
+    than silently becoming false.
+    """
+    for row in committed["experiments"]["splits_compared"]["rows"]:
+        assert row["holdout2"] < row["held_out"], row
+        assert row["difference"] < 0, row
+
+
+def test_the_side_by_side_numbers_come_from_the_committed_result_files(committed):
+    """Each number is read back out of the file the row names, so none of them is typed in."""
+    for row in committed["experiments"]["splits_compared"]["rows"]:
+        fresh = json.loads((ROOT / row["holdout2_source"]).read_text(encoding="utf-8"))
+        arrangement = row["change"].rsplit(", ", 1)[1]
+        assert fresh["overall"][arrangement]["mrr@10"] == row["holdout2"], row
+
+
+def test_the_two_question_trial_is_not_a_source_for_the_page(committed):
+    """It is kept as a record and must not be drawn under the full comparison's heading."""
+    assert build_benchmarks.CHAT_MODE_SOURCES == ("chat-modes.json",)
+    assert (ROOT / "eval" / "results" / "experiments" / "chat-modes-trial.json").exists()
+    assert committed["experiments"]["chat_modes"]["source"].endswith("chat-modes.json")
+    assert "trial" not in committed["experiments"]["chat_modes"]["source"]
+
+
+def test_the_chat_mode_block_says_how_large_the_run_was(committed):
+    chat = committed["experiments"]["chat_modes"]
+    assert chat["questions"] == 15
+    assert chat["runs"] == 30
+    assert sum(mode["runs"] for mode in chat["modes"]) == chat["runs"]
+    assert "15 questions, 30 runs" in chat["scale_note"]
+    assert "trial" in chat["scale_note"]
+
+
+def test_a_short_trial_is_refused_rather_than_drawn_as_the_full_run(tmp_path, monkeypatch):
+    """Point the builder at the trial file and the block disappears instead of shrinking."""
+    monkeypatch.setattr(build_benchmarks, "CHAT_MODE_SOURCES", ("chat-modes-trial.json",))
+    assert build_benchmarks.chat_modes() is None
+
+
+def test_the_chat_mode_comparison_says_what_it_is(committed):
+    chat = committed["experiments"]["chat_modes"]
+    assert "one local run" in chat["label"]
+    assert "not a benchmark" in chat["label"]
+    assert chat["model"]
+    assert [m["mode"] for m in chat["modes"]] == ["legacy", "grounded"]
+    assert "No judge model" in chat["weak_check"]
+
+
+def test_the_experiments_block_claims_no_end_to_end_latency(committed):
+    printed = json.dumps(committed["experiments"]).lower()
+    for banned in ("ttfb", "end_to_end", "p95", "latency"):
+        assert banned not in printed, f"the experiments block must not claim {banned}"

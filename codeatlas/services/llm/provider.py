@@ -28,6 +28,10 @@ class LlmProvider:
                 model=self._config.llm_model,
                 temperature=self._config.llm_temperature,
                 max_tokens=self._config.llm_max_tokens,
+                # Without this a streamed call reports no usage at all, so every token it spent
+                # is missing from the metrics and from the on-disk ledger - and the ledger is
+                # what a long run checks before deciding it still has budget.
+                stream_usage=True,
             )
         elif self._config.llm_provider == "groq":
             import os
@@ -40,6 +44,8 @@ class LlmProvider:
                 # Without an explicit budget the provider's own default applies; with one
                 # that is too small a reasoning model returns an empty answer.
                 max_tokens=self._config.llm_max_tokens,
+                # See the openai branch: a streamed call is otherwise invisible to the ledger.
+                stream_usage=True,
             )
         return FallbackChatModel()
 

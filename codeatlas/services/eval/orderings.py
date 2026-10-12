@@ -24,6 +24,7 @@ from dataclasses import dataclass, replace
 from codeatlas.models.embedding_record import EmbeddingRecord
 from codeatlas.services.qa.answer_service import AnswerService, RetrievalSettings
 from codeatlas.services.retrieval.embedding import EmbeddingService
+from codeatlas.services.retrieval.fusion import DEFAULT_RRF_K, reciprocal_rank_fusion
 from codeatlas.services.retrieval.interfaces import CodeRetriever
 
 VECTOR = "vector"
@@ -31,9 +32,9 @@ KEYWORD = "keyword"
 RRF = "rrf"
 ORDERINGS = (VECTOR, KEYWORD, RRF)
 
-# The constant from the original reciprocal rank fusion paper. It damps the top of each list so
-# that one ranking's confident first place cannot win on its own.
-RRF_K = 60
+# The constant from the original reciprocal rank fusion paper, now defined beside the fusion
+# itself because the retrieval path uses both.
+RRF_K = DEFAULT_RRF_K
 
 
 @dataclass(frozen=True)
@@ -76,22 +77,5 @@ def order(ordering: str, rankers: Rankers, repo_id: str, question: str, depth: i
 
 
 def fuse(rankings: Sequence[Sequence[EmbeddingRecord]], k: int = RRF_K) -> list[EmbeddingRecord]:
-    """Reciprocal rank fusion: each list gives every record 1 / (k + rank), and the sums order them.
-
-    Ties keep the order of first appearance, so the result is the same on every run - two
-    records with equal scores must not swap places between runs and look like a difference.
-    """
-    scores: dict[str, float] = {}
-    records: dict[str, EmbeddingRecord] = {}
-    first_seen: dict[str, int] = {}
-    position = 0
-    for ranking in rankings:
-        for rank, record in enumerate(ranking, start=1):
-            key = record.record_id
-            scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank)
-            if key not in records:
-                records[key] = record
-                first_seen[key] = position
-                position += 1
-    ordered = sorted(scores, key=lambda key: (-scores[key], first_seen[key]))
-    return [records[key] for key in ordered]
+    """Reciprocal rank fusion, from services/retrieval/fusion.py. Kept here under its old name."""
+    return reciprocal_rank_fusion(rankings, k)

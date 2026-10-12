@@ -21,6 +21,7 @@ from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever
 from codeatlas.services.retrieval.fastembed_embedder import FastEmbedEmbeddingService
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService
 from codeatlas.services.retrieval.indexing import CodeIndexService
+from codeatlas.services.retrieval.record_format import with_record_format
 from codeatlas.services.retrieval.sentence_transformer_embedder import (
     SentenceTransformerEmbeddingService,
 )
@@ -92,6 +93,10 @@ def build_embedder(config: AppConfig) -> EmbeddingService:
     Every known name is listed here. An unknown name raises rather than falling back to a
     default: a typo must not quietly produce a different kind of vector than the one asked for.
     """
+    return with_record_format(_provider_embedder(config), config.record_format)
+
+
+def _provider_embedder(config: AppConfig) -> EmbeddingService:
     if config.embedding_provider == "hash":
         return HashEmbeddingService(lowercase=config.hash_lowercase, subtokens=config.hash_subtokens)
     if config.embedding_provider == "sentence":
@@ -154,6 +159,7 @@ def index_options(config: AppConfig) -> dict:
             "batch_size": config.fastembed_batch_size,
             "max_chars": config.fastembed_max_chars,
             "prefix_metadata": config.embed_prefix_metadata,
+            **_record_options(config),
         }
     if config.embedding_provider == "cloudflare":
         return {
@@ -163,11 +169,22 @@ def index_options(config: AppConfig) -> dict:
             "batch_size": config.cloudflare_batch_size,
             "max_chars": config.cloudflare_max_chars,
             "prefix_metadata": config.embed_prefix_metadata,
+            **_record_options(config),
         }
     return {
         "timeout_seconds": config.index_timeout_seconds,
         "max_chars": config.embed_max_chars,
         "prefix_metadata": config.embed_prefix_metadata,
+        **_record_options(config),
+    }
+
+
+def _record_options(config: AppConfig) -> dict:
+    """What a record is, for every provider. The same three settings whichever one is running."""
+    return {
+        "record_format": config.record_format,
+        "window_chars": config.record_window_chars,
+        "window_overlap": config.record_window_overlap,
     }
 
 
@@ -219,6 +236,11 @@ def get_retrieval_settings() -> RetrievalSettings:
         rerank_subtokens=config.rerank_subtokens,
         drop_stopwords=config.drop_stopwords,
         skip_tests=config.skip_tests,
+        bm25_enabled=config.bm25_enabled,
+        bm25_k1=config.bm25_k1,
+        bm25_b=config.bm25_b,
+        bm25_rrf_k=config.bm25_rrf_k,
+        bm25_depth=config.bm25_depth,
     )
 
 
@@ -228,6 +250,25 @@ def get_answer_service() -> AnswerService:
         retriever=get_code_retriever(),
         embedder=get_embedder(),
         llm=get_llm_provider().get_chat_model(),
+        settings=get_retrieval_settings(),
+        fallback_retriever=get_fallback_retriever(),
+        fallback_embedder=get_fallback_embedder(),
+    )
+
+
+@lru_cache
+def get_retrieval_service() -> AnswerService:
+    """The same retrieval as `get_answer_service`, with **no model attached**.
+
+    Grounded chat searches with this and then streams the model itself, so the service it
+    retrieves with must not build a chat client: constructing one needs a credential, and
+    building it here would mean every /ask/stream request - including one for a repository
+    that does not exist - wanted a provider before it could be refused.
+    """
+    return AnswerService(
+        retriever=get_code_retriever(),
+        embedder=get_embedder(),
+        llm=None,
         settings=get_retrieval_settings(),
         fallback_retriever=get_fallback_retriever(),
         fallback_embedder=get_fallback_embedder(),

@@ -1296,3 +1296,385 @@ Every number or claim here comes from a command that can be re-run.
   **The phone layout was not checked in a browser.** No browser tooling was available in this session. What was done: every table is wrapped in a horizontally scrolling container with a minimum width, so a narrow screen scrolls a table sideways rather than crushing it; panels use a 2-column fact grid that widens to 3 and 5; long strings (embedder names, URLs, file:line lists) are set to break. `npm run build` compiles the page. A visual check at phone width is still outstanding.
   **One wording choice worth stating.** The document cap is shown in System facts as a live configuration value whatever the provider is, with the hint "applies when the semantic provider is on", because on a `hash` server it is the cap that *would* apply rather than one in force. The alternative - hiding it unless the semantic provider is running - would leave the panel silent about a limit the Limitations panel then discusses.
   **Limits.** The section shows what the summary holds and nothing more: it cannot tell a stale summary from a fresh one, which is `tests/test_build_benchmarks.py`'s job, not the page's
+### Change: holdout2, a second held-out question set, written and committed unscored
+- Value: `eval/questions/holdout2/{itsdangerous,flask}.json` — **20 questions, 10 per repository**, at the same pinned commits as the first sets (672971d66a2e and d73fa1cdcbd8). They exist because the original "held-out" split has now been scored in at least five entries in this file and is no longer a clean test of anything. **Nothing has been scored on holdout2 and no result from it has been looked at.**
+
+  Each question is about a fact none of the existing forty asks about. For itsdangerous: constant-time signature comparison, `validate()` as a boolean instead of an exception, why `hashlib.sha1` is looked up lazily, the default salts, how text-vs-binary serializers are told apart, `dump`/`load` to a file object, overriding the serializer for one `load_payload` call, what `BadHeader` carries, why `SignatureExpired` stops the remaining signers, and the top-level re-exports. For flask: `after_this_request`, the "working outside of application context" message, the signal namespace, a blueprint's own static folder, `jsonify`, `g` as per-request storage, `.env`/`.flaskenv` loading, `FlaskCliRunner`, `before_request`/`after_request`/`teardown_request` registration, and the tutorial's per-request SQLite connection.
+
+  **Six of the ten flask questions point at files no earlier question expects** — `ctx.py`, `globals.py`, `signals.py`, `blueprints.py`, `json/__init__.py`, `examples/tutorial/flaskr/db.py`. For itsdangerous, which has only eight source files, one question reaches `__init__.py`, which no earlier question does. Every `expected_files` path was checked to exist in the pinned checkout
+- Command: `python -m pytest tests/ -q` -> 944 passed, 1 skipped (`tests/test_retrieval_eval.py` gains 9: ten questions per file at the same commit and repository URL as the first set, unique ids, every question in the `holdout2` split, no question or id repeated from the first set, a word-overlap check under 50% against every existing question, the new split selecting only under its own name and under "all", and an unknown split still rejected); `ruff check codeatlas/ tests/`, `ruff format codeatlas/ tests/ --check`; in `codementor-ui`: `npm test` (51 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, same 28 warnings as before)
+- Dataset/repo: https://github.com/pallets/itsdangerous at 672971d66a2ef9f85151e53283113f33d642dabd; https://github.com/pallets/flask at d73fa1cdcbd8b1465c151db8924ba58b1dd14e35
+- Date: 2026-10-11
+- Commit: 73783d3
+- Notes: **the loader change is the only code in this commit.** `QUESTION_SPLITS` is now `("dev", "test", "holdout2")` and the error message lists them; `SPLITS` adds "all" on top, as before. Nothing selects or scores the new split yet, and the default question files are untouched, so every recorded number is unaffected.
+  **How "not a paraphrase" is enforced, and what that enforcement is worth.** A test rejects any holdout2 question sharing more than half its words (over two letters) with any existing question. That catches the real failure mode — writing a "new" set by reshuffling the old wording — but it cannot prove two differently worded questions ask different things. The guarantee that they do is that each was written from a specific piece of source after reading the twenty existing questions, and the list above names the fact behind each one.
+  **Limits.** Twenty questions is small; one question is 0.1 of a per-repository hit rate. They are mine, written by hand from the source, which is the same bias the first set has — a held-out split narrows it, it does not remove it. itsdangerous is 1,176 lines across eight files and the first twenty questions already cover it closely, so the ten new ones there are necessarily about smaller details than the flask ten. And a question written by the same person who will read the results is not an independent test of anything; what it is, is a set of questions whose answers were not known to the retriever when the settings were chosen
+### Feature: BM25 as a second retriever, fused into the vector candidates, off by default
+- Value: `codeatlas/services/retrieval/bm25.py` is Okapi BM25 in plain Python — a postings dictionary, `Counter`, and arithmetic. **No new dependency.** It scores every record in the repository, not a neighbourhood, which is the point: the existing pipeline has one way of *finding* records (the embedder) and one way of *ordering* them (the keyword rerank), and no amount of reordering recovers a file the embedder never found. On held-out flask, hash scores recall@20 0.600 against hit@5 0.600 — every file that reached the pool was already ranked into the top five, so the losses there are findings, not orderings.
+
+      score(q,d) = Σ idf(t) · f(t,d)·(k1+1) / (f(t,d) + k1·(1 − b + b·|d|/avgdl))
+      idf(t)     = ln(1 + (N − n(t) + 0.5) / (n(t) + 0.5))
+
+  The idf form is the one that stays positive for a term present in every document; the alternative lets a record win by *not* containing a query word, which for a term like `self` would decide a lot of rankings. Tokenisation is the one retrieval already uses — identifiers split into their parts (`verify_signature` → `verify`, `signature`) and the same English stopword list — so BM25 and the embedder read the same words. It reads each record **uncapped**: the per-document clip is a cost control for a paid API, and nothing here is paid for.
+
+  Its ranking is fused into the vector candidates by reciprocal rank fusion before the rerank runs, and **the fused pool is cut back to the same depth**, so nothing downstream sees a longer list — what changes is which records are in it. The fusion moved to `codeatlas/services/retrieval/fusion.py`; `services/eval/orderings.py` now calls that instead of keeping its own copy, so an ordering measured in an experiment is the same arithmetic the server would run.
+
+  | setting | default | rejected unless |
+  |---|---|---|
+  | `CODEATLAS_BM25` | **off** | a recognised on/off word |
+  | `CODEATLAS_BM25_K1` | 1.2 | a number greater than 0 |
+  | `CODEATLAS_BM25_B` | 0.75 | a number between 0 and 1 |
+  | `CODEATLAS_BM25_RRF_K` | 60 | a whole number of at least 1 |
+  | `CODEATLAS_BM25_DEPTH` | 0 (= the vector pool's depth) | a whole number of at least 0 |
+
+  **With it off not one line of the BM25 path runs**: `python scripts/eval_retrieval.py --split test` still prints itsdangerous hit@5 0.900 / MRR@10 0.820, flask 0.600 / 0.470, and **overall hit@5 0.750, MRR@10 0.645** — the figures recorded at 016c655
+- Command: `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/eval_retrieval.py --split test` (unchanged, 6.1 s); `python -m pytest tests/ -q` -> 996 passed, 1 skipped (`tests/test_bm25.py`, 26 new: identifier parts and stopwords in the tokeniser, frequency kept as a list, a term in every record unable to decide the order, a rarer term worth more, saturation strictly between linear and constant, length penalised, `b=0` switching that off, the full formula written out against one hand-computed document, an empty corpus and empty records not dividing by zero, mismatched records and texts rejected, ties breaking by document order on a rerun, `top_k` honoured, the three fusion properties, and six through `AnswerService`: off by default, a lexically matching record pulled into a pool of two it was not in, the pool not growing, the index built once, rebuilt on reindex, and a retriever that cannot list its records still answering; `tests/test_retrieval_settings_from_env.py` gains 26 covering the five defaults, 11 valid values and 13 invalid ones, and the settings reaching the pipeline); `ruff check codeatlas/ tests/`, `ruff format codeatlas/ tests/ --check`; in `codementor-ui`: `npm test` (51 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, same 28 warnings as before)
+- Dataset/repo: small corpora written by the tests; the held-out check is `eval/questions/*.json` at the pinned commits
+- Date: 2026-10-11
+- Commit: 34632e0
+- Notes: **nothing is measured here.** This entry adds a mechanism and shows the defaults did not move; whether fusing BM25 helps is the next entry's question, and the defaults in the table are the literature's values, not anything this repository chose.
+  **Why the index is built lazily and cached by the record list's identity.** The lexical index needs every record's text, which the vector index does not keep, so `CodeRetriever` gained a `records(repo_id)` with an empty default — a retriever that cannot enumerate its records makes BM25 find nothing rather than making the search fail, and a test covers that. Reindexing replaces the record list, so caching on `id(records)` rebuilds exactly when the code changed. Building it costs one read of every record: the same reads the reranker already does, but all of them at once, on the first question after an index.
+  **Limits.** The fusion is symmetric and unweighted — there is no setting that says "trust the vectors more than the words", because reciprocal rank fusion has no such parameter and adding one would be a different method. `bm25_depth` reads deeper into BM25's list than the vector list, which can only add candidates that the cut back to pool depth may then drop; it is there for the experiments. And BM25's corpus statistics are per repository, which is correct but means a one-file repository gives every term the same idf
+### Check: five retrieval arrangements on the dev split, for hash and for cloudflare
+- Value: the keep rule, fixed before the runs: **keep a change only if overall dev MRR@10 rises and dev hit@5 does not fall.** Baseline is `current`, the pipeline the server runs today. **No API call was made for any of this**: hash is local arithmetic, and the cloudflare half reads the evaluation vector cache through an embedder that refuses to call the provider.
+
+  **hash (the default), dev, 20 questions**
+
+  | arrangement | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 | verdict |
+  |---|---|---|---|---|---|---|
+  | current — vector pool, keyword rerank | 0.600 | 0.700 | 0.750 | 0.662 | 0.850 | baseline |
+  | **bm25** — BM25 over every record | **0.750** | **0.800** | **0.850** | **0.782** | **0.950** | **meets the rule** |
+  | vector — vector similarity alone | 0.350 | 0.550 | 0.550 | 0.479 | 0.850 | rejected, MRR falls |
+  | rrf — fusion of vector and BM25 | 0.550 | 0.750 | 0.800 | 0.651 | 0.950 | rejected, MRR falls by 0.011 |
+  | **rrf+keyword** — fused pool, keyword rerank | 0.600 | **0.800** | **0.900** | **0.717** | **0.950** | **meets the rule** |
+
+  **cloudflare (opt-in), dev, 20 questions, mean pooling, clip 2,000**
+
+  | arrangement | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 | verdict |
+  |---|---|---|---|---|---|---|
+  | current | 0.650 | 0.950 | 1.000 | **0.804** | 1.000 | baseline |
+  | bm25 | 0.750 | 0.800 | 0.850 | 0.782 | 0.950 | rejected, MRR falls |
+  | vector | 0.650 | 0.750 | 0.900 | 0.732 | 1.000 | rejected, MRR falls |
+  | rrf | 0.650 | 0.750 | 0.950 | 0.742 | 1.000 | rejected, MRR falls |
+  | rrf+keyword | 0.600 | 0.850 | 0.950 | 0.725 | 1.000 | rejected, MRR falls |
+
+  **Nothing beats the current pipeline for cloudflare. Two things beat it for hash, and the bigger win is BM25 on its own.**
+
+  Per repository, and this is where the result actually lives:
+
+  | | hash current | hash bm25 | cloudflare current | cloudflare bm25 |
+  |---|---|---|---|---|
+  | itsdangerous MRR@10 | 0.692 | 0.663 | 0.758 | 0.663 |
+  | flask MRR@10 | 0.633 | **0.900** | 0.850 | 0.900 |
+  | flask recall@20 | 0.800 | **1.000** | 1.000 | 1.000 |
+
+  **The whole of hash's gain is flask, and BM25 is slightly worse than hash on itsdangerous.** That is the shape the earlier recall@20 work predicted: hash's losses on flask were records it never found, not records it mis-ordered, and a real lexical retriever finds them. On itsdangerous, where hash already had recall@20 0.900, there was nothing for BM25 to recover and its different ranking costs a little.
+
+  **recall@20 and recall at the candidate pool depth are the same number in every row**, because the pool depth is 20 — the default `CODEATLAS_RETRIEVAL_CANDIDATES`. Both are printed so that a run at a different depth cannot quietly relabel one as the other
+- Command: `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/experiment_retrieval.py --embedder hash --split dev --json eval/results/experiments/arrangements-dev-hash.json --expect-current mrr@10=0.6625 --expect-current hit@5=0.75` (3.6 s) and `python scripts/experiment_retrieval.py --embedder cloudflare --split dev --json eval/results/experiments/arrangements-dev-cloudflare.json` (3.0 s); `python -m pytest tests/ -q` -> 1010 passed, 1 skipped (`tests/test_arrangements.py`, 14 new: all five described, every arrangement returning records with no duplicate, an unknown name rejected, `current` being the server's own settings rather than a reimplementation, `vector` and `rrf+keyword` carrying the settings they claim, BM25 alone finding a file the vectors rank last, the fused list holding both pools' first choices, depth honoured, the arrangements not all collapsing to one list, and four on the offline cache: a cached text served, a miss stopping the run with a count and no text, the signature, and `known`); `ruff check codeatlas/ tests/ scripts/experiment_retrieval.py`, `ruff format codeatlas/ tests/ --check`; in `codementor-ui`: `npm test` (51 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, same 28 warnings as before). Defaults unchanged: `python scripts/eval_retrieval.py --split test` still prints overall hit@5 0.750, MRR@10 0.645
+- Dataset/repo: `eval/questions/*.json`, the 20 dev questions, at 672971d66a2e and d73fa1cdcbd8
+- Date: 2026-10-11
+- Commit: 9a7a94d
+- Notes: **cost: zero neurons and zero tokens.** The cloudflare numbers come from `.codeatlas/eval-vectors/98332e737349d50a.json`, 1,805 vectors paid for at 149dac1 and b1bbfd4. Before running, all 1,864 document texts and all 40 dev and held-out questions were confirmed present in that file by hashing them against it; the run then served 1,864 + 20 lookups with **0 embedded**. `OfflineVectorCache` has no inner embedder to fall through to, so a miss raises instead of spending, and the run was made with every provider variable removed from the environment.
+  **Two independent consistency checks passed, and they are what make the rest of the table believable.** `current` for hash printed MRR@10 0.6625 and hit@5 0.750 — the committed dev figures, asserted by `--expect-current`. `current` for cloudflare printed hit@1 0.650, hit@3 0.950, hit@5 1.000, MRR@10 0.8042, recall@20 1.000, which is `eval/results/cloudflare/dev.json` for mean-2000/keyword exactly; `vector` printed 0.732, also exactly. So the offline cache reproduces the paid run, and `current` is the server's pipeline rather than a lookalike.
+  **The rejections are close, and one is very close.** `rrf` for hash is MRR 0.651 against 0.662 — 0.011, which on 20 questions is one question moving a couple of ranks. It is rejected because the rule says so, and the rule was fixed first; it is not evidence that fusion hurts.
+  **What this cannot say.** Twenty questions, two repositories, and the two arrangements that meet the rule do so on the strength of ten flask questions. BM25's advantage over hash is not a surprising finding - hash is a bag of words with no semantics, so a properly weighted lexical retriever ought to beat it - and the honest reading is that **this measures how weak the hash embedder is**, not that BM25 is a good retriever in general. The cloudflare column is the one that tests BM25 against something competent, and there it loses on every arrangement.
+  Nothing has been decided here and nothing held out has been scored. The choice is the next entry
+### Feature: a "structured" record format — file headers and overlapping function windows
+- Value: `CODEATLAS_RECORD_FORMAT` chooses what a record *is*. **`whole` is the default and is exactly today's behaviour**; `structured` changes two things that `docs/RESULTS.md` already showed were costing retrieval:
+
+  | | `whole` (today) | `structured` |
+  |---|---|---|
+  | file record | the entire file, clipped from the start | path, module docstring, imports, and every class and function signature, capped at the window |
+  | function record | the entire function, clipped from the start | one record if it fits; otherwise overlapping windows of the window size, each with its own line range |
+  | records per function | 1 | 1 or more, shown as one result |
+
+  The problem each half addresses is recorded: 54.2% of flask's file records are over the 2,000-character clip and keep 18.6% of their characters, so a clipped `app.py` is embedded as its licence header and imports; and 52 of flask's function records are over the clip, so a long function is embedded by its opening whatever its body says.
+
+  **Windows are cut on line boundaries, never mid-line.** A record's line range is what the citation prints and what the file preview opens, so a window whose range is off by one points a reader at the wrong code while looking right. A single line longer than the whole window becomes its own window rather than being split. The walk always advances, even with an overlap larger than the window.
+
+  **Ranking keeps one result per function** (`AnswerService._dedupe_windows`), so a visitor is never shown three slices of the same function. Records written under `whole` carry no `function_id`, so for them the step returns the list unchanged — asserted, not assumed.
+
+  **The format is part of the mismatch guard.** `with_record_format` wraps the embedder so its signature becomes `hash:384:lowercase=0:subtokens=1|records=structured`, which puts the format into `CodeIndexService.index_format` and into `embedder_mismatch`. An index built under one format is refused by a server running the other rather than searched and answered wrongly. **Under `whole` the embedder is returned unwrapped and the signature is the string it has always been**, so no stored index is invalidated and the index cache still hits
+- Command: `python -m pytest tests/ -q` -> 1056 passed, 1 skipped (`tests/test_record_format.py`, 32 new; `tests/test_retrieval_settings_from_env.py` gains 14). Windows: text that fits coming back as one unchanged window, a long text cut into several, every line covered with no gap, consecutive windows overlapping rather than abutting, no window starting or ending mid-line (checked against the file's own lines), ranges absolute in the file rather than relative to the function, an over-long line kept whole, the walk advancing under an absurd overlap, empty text, and a zero window size rejected. Headers: path, docstring, imports and signatures present, bodies absent, the cap applied, the path surviving the cap, a file with neither docstring nor imports, a one-line docstring, and a licence comment not hiding the docstring. Indexing: `whole` making exactly one record per function with no `function_id`, `structured` splitting a long one and numbering the windows, a short function keeping its plain id, and every window record pointing at lines that are really in the file. Signature: the default leaving it untouched, the non-default naming the format, the guard refusing each direction, vectors passing through unchanged, and an unknown format rejected by name. Deduplication: only the best window surviving, ranking order kept, records with no `function_id` returned identical, and the empty list. End to end: a structured index, a question naming one line deep inside a long function, and the citation opening a window that really holds that line; `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.750**, MRR@10 **0.645**, unchanged; `ruff check codeatlas/ tests/ scripts/experiment_retrieval.py`, `ruff format codeatlas/ tests/ --check`; in `codementor-ui`: `npm test` (51 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, same 28 warnings as before)
+- Dataset/repo: files written by the tests; the held-out check is `eval/questions/*.json` at the pinned commits
+- Date: 2026-10-11
+- Commit: fce9e2a
+- Notes: **nothing is measured here either.** Whether `structured` retrieves better is the next entry; this one adds the format and shows the default did not move.
+  **The window size follows the clip.** `CODEATLAS_RECORD_WINDOW_CHARS` defaults to 2,000, but a provider with a per-document clip uses that clip instead, because a window larger than the clip would be embedded by its opening alone and the windowing would achieve nothing. Overlap defaults to 200 characters.
+  **A known inconsistency, stated rather than fixed.** Under `structured` the embedder sees a file's *header*, but the keyword rerank and BM25 still read the file's *whole text* from disk, because `_record_text` is shared with the `whole` format. So a file record can be found by the embedder on its header and then ranked on its body. That is arguably the right trade - the rerank is local and free, and reading only the header would throw away the words a question actually matches - but it does mean "the file record is a header" is true of the vector and not of the ordering. Changing it would alter the `whole` format too, which this batch is not allowed to do.
+  **Limits.** The header extraction is regex-based rather than parsed: the docstring rule looks for a leading triple-quoted string after comments and blank lines, and the import rule matches a line beginning with `import`, `from`, `#include`, `using`, `require`, `package`, `use` or `extern crate`. That covers the two Python repositories this is evaluated on and will be partly wrong elsewhere — a language whose imports are written differently simply contributes none. Signatures come from the Tree-sitter parse, which is already language-aware, so those are as good as the parser is
+### Check: the structured record format on the dev split, for hash and for cloudflare
+- Value: the same keep rule as before — **keep a change only if overall dev MRR@10 rises and dev hit@5 does not fall** — against the same baseline, `whole` records with the current pipeline.
+
+  **Every configuration measured on dev, 20 questions.** The four rows in bold are the ones the server could actually be set to; the others are arrangements the experiment scores but the server has no mode for.
+
+  | records | arrangement | hash MRR@10 | hash hit@5 | cloudflare MRR@10 | cloudflare hit@5 |
+  |---|---|---|---|---|---|
+  | **whole** | **current** (baseline) | **0.662** | **0.750** | **0.804** | **1.000** |
+  | **whole** | **rrf+keyword** | **0.717** | **0.900** | **0.725** | **0.950** |
+  | **structured** | **current** | **0.690** | **0.750** | **0.825** | **1.000** |
+  | **structured** | **rrf+keyword** | **0.743** | **0.900** | **0.794** | **0.950** |
+  | whole | bm25 alone | 0.782 | 0.850 | 0.782 | 0.850 |
+  | whole | vector alone | 0.479 | 0.550 | 0.732 | 0.900 |
+  | whole | rrf, no rerank | 0.651 | 0.800 | 0.742 | 0.950 |
+  | structured | bm25 alone | 0.763 | 0.850 | 0.763 | 0.850 |
+  | structured | vector alone | 0.488 | 0.600 | 0.733 | 0.900 |
+  | structured | rrf, no rerank | 0.649 | 0.800 | 0.721 | 0.950 |
+
+  **For hash, `structured` helps on its own** (0.662 → 0.690, hit@5 unchanged) **and helps more on top of BM25 fusion** (0.717 → 0.743, hit@5 0.900). **For cloudflare, `structured` helps and BM25 fusion does not**: 0.804 → 0.825 with the current pipeline, while every arrangement involving BM25 falls below the baseline.
+
+  Per repository, where the result actually lives:
+
+  | | hash whole | hash structured | cloudflare whole | cloudflare structured |
+  |---|---|---|---|---|
+  | itsdangerous MRR@10 (current) | 0.692 | **0.746** | 0.758 | **0.817** |
+  | flask MRR@10 (current) | 0.633 | 0.635 | 0.850 | 0.833 |
+  | flask recall@20 (rrf+keyword) | 0.900 | **1.000** | 1.000 | 1.000 |
+
+  **The structured gain is itsdangerous, not flask** — the opposite of BM25's, whose whole gain was flask. itsdangerous is eight small files where a file record under `whole` is already short enough not to be clipped, so the gain there is the *header*: a record that is the path, the docstring and the signatures rather than the whole module. On flask the current-pipeline figure moves by 0.002 and 0.017 in opposite directions, which is noise
+- Command: `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/experiment_retrieval.py --embedder hash --split dev --record-format structured --json eval/results/experiments/structured-dev-hash.json` (3.2 s); `python scripts/experiment_retrieval.py --embedder cloudflare --split dev --record-format structured --plan-only`, then the same with `--allow-spend --json eval/results/experiments/structured-dev-cloudflare.json` (19.0 s); `python -m pytest tests/ -q` -> 1056 passed, 1 skipped; `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.750**, MRR@10 **0.645**, unchanged; `ruff check codeatlas/ tests/ scripts/experiment_retrieval.py`, `ruff format codeatlas/ tests/ --check`; in `codementor-ui`: `npm test` (51 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, same 28 warnings as before)
+- Dataset/repo: `eval/questions/*.json`, the 20 dev questions, at 672971d66a2e and d73fa1cdcbd8
+- Date: 2026-10-11
+- Commit: c92cb5b
+- Notes: **cost, in full.** hash: nothing. cloudflare `whole`: nothing — every vector was already in the cache. cloudflare `structured`: a record format changes every document, so its vectors cannot be cached in advance. **Planned 313.88 estimated neurons over 333 uncached texts of 2,039; actually recorded 249.92 over 26 calls.** The ledger read **0.00 spent today** before the run and **249.92 of the 2,500 budget** after, leaving 2,250.08. The shortfall against the plan is duplicate texts, which the cache embeds once and the plan counted twice — the same effect recorded at 149dac1. A rerun of the structured evaluation would cost nothing.
+  **How the spending was gated.** `--allow-spend` is the only way this script pays for anything, and before it sends a byte it prints the plan and the ledger, then refuses to start if the estimate would take the day past the budget. `--plan-only` prints the same and sends nothing; that is the run that produced the 313.88 figure above, and it was read before `--allow-spend` was used.
+  **A consistency check worth keeping.** `structured` adds 175 documents (1,864 → 2,039) but only 333 of them are new *texts*. Most windows of a short function are byte-identical to the whole function, so the cache already had them — which is a check that windowing leaves a short function alone, arrived at from the billing side rather than from a test.
+  **Two things this does not show.** First, 20 questions: a 0.021 difference in cloudflare MRR is about one question moving two ranks, and the `structured`-vs-`whole` gap for hash on flask is noise in both directions. Second, **the arrangements in the unbolded rows are not settings** — `bm25` alone scores highest of anything for hash (0.782) and there is no way to configure the server to do it, because BM25 was built as a second retriever fused with the first, which is what the four bold rows measure. Adding a BM25-only mode would be a different change and it is not in this batch
+### Decision: the configuration chosen for each embedder, from the dev results alone
+- Value: **chosen before anything held out was scored, and recorded here first so that the order cannot be argued about afterwards.** The choice is made only from the two dev entries above, and only from among configurations the server can actually be set to.
+
+  | embedder | chosen | settings | dev MRR@10 | dev hit@5 | against the baseline |
+  |---|---|---|---|---|---|
+  | **hash** (default) | `structured` records **and** BM25 fusion on | `CODEATLAS_RECORD_FORMAT=structured`, `CODEATLAS_BM25=on` | **0.743** | **0.900** | 0.662 → 0.743 (+0.081), hit@5 0.750 → 0.900 |
+  | **cloudflare** (opt-in) | `structured` records, BM25 fusion **off** | `CODEATLAS_RECORD_FORMAT=structured`, `CODEATLAS_BM25=off` | **0.825** | **1.000** | 0.804 → 0.825 (+0.021), hit@5 unchanged at 1.000 |
+
+  Both meet the keep rule, which was fixed before any of these runs: dev MRR@10 rises and dev hit@5 does not fall.
+
+  **Why the two differ on BM25.** For hash, fusing a real lexical retriever into the pool is worth +0.026 of MRR on top of `structured` (0.717 → 0.743 reading down the BM25 column, or 0.690 → 0.743 reading across from `structured` alone). For cloudflare it costs 0.031 (0.825 → 0.794). That is consistent with what BM25 is for: it rescues records a weak embedder never found, and a semantic embedder that already has recall@20 1.000 on this split has nothing to rescue — so fusion can only disturb an ordering that was already better than BM25's.
+
+  **What was considered and not chosen.** `bm25` alone scores higher than either choice for hash (MRR 0.782, hit@5 0.850). It is **not adopted**, for a reason that is not about the numbers: the server has no BM25-only mode. BM25 was built as a second retriever fused with the first, so "BM25 alone" is an arrangement the experiment can score and the application cannot be configured to do. Adopting it would mean designing and testing a third retrieval mode, which is a different change from the one this batch made. It is recorded here so that the figure is not lost, and it is the obvious thing to try next for the default embedder.
+
+  `whole` + BM25 fusion (hash MRR 0.717) and `structured` alone (hash 0.690, cloudflare 0.825) also meet the rule; each is beaten by the chosen configuration for its embedder, except that for cloudflare `structured` alone **is** the chosen configuration
+- Command: no run. This entry reads `eval/results/experiments/{arrangements,structured}-dev-{hash,cloudflare}.json`, all four committed above, and decides from them
+- Dataset/repo: the 20 dev questions in `eval/questions/*.json`. **The held-out split and holdout2 have not been scored under any of these configurations and no result from either has been looked at**
+- Date: 2026-10-11
+- Commit: recorded at this entry's own commit; the four result files it reads are at 9a7a94d and c92cb5b
+- Notes: **this entry exists to fix the order of events.** Choosing a configuration after seeing how it does on held-out data is not a held-out measurement at all, and the only defence against doing it accidentally is to write the choice down first. What follows this entry is two scoring runs and no further tuning.
+  **Neither default is being changed by this entry.** `CODEATLAS_RECORD_FORMAT` stays `whole` and `CODEATLAS_BM25` stays off in the committed configuration; the table above is what the held-out runs will be *passed*, not what the server ships. Changing a default is a separate decision that should be made after the held-out numbers, not before them, and `hash` held-out must still print hit@5 0.750 and MRR@10 0.645 until it is.
+  **The margins are small and the sample is small.** +0.021 for cloudflare is about one question moving two ranks on 20 questions. +0.081 for hash is larger but rests on ten flask questions. Both are reasons to read the held-out runs as a check rather than a confirmation, and the original held-out split has been scored repeatedly in this file already, which is why a second set was written
+### Check: the chosen configurations on the original held-out split and on holdout2, scored once
+- Value: six runs, each made once, with no tuning after any of them. The configurations are the ones recorded in the decision entry above, which was committed before any of this was run.
+
+  **The original held-out split (20 questions). This is a weak confirmation and should be read as one** — it has been scored in at least six entries in this file since it was written, so it has informed choices before, and a configuration that does well on it is not being tested on code the process has never seen.
+
+  | embedder | configuration | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 |
+  |---|---|---|---|---|---|---|
+  | hash | default: `whole`, no BM25 | 0.600 | 0.650 | 0.750 | 0.645 | 0.800 |
+  | hash | **chosen: `structured` + BM25 fusion** | **0.700** | **0.850** | **0.850** | **0.778** | **1.000** |
+  | cloudflare | default: `whole`, no BM25 | 0.800 | 0.900 | 0.900 | 0.854 | **1.000** |
+  | cloudflare | **chosen: `structured`, no BM25** | **0.850** | 0.900 | 0.900 | **0.873** | 0.950 |
+
+  **holdout2 (20 questions, written for this batch, scored once, never used to choose anything).**
+
+  | embedder | configuration | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 |
+  |---|---|---|---|---|---|---|
+  | hash | default: `whole`, no BM25 | 0.300 | 0.450 | 0.500 | 0.396 | 0.750 |
+  | hash | **chosen: `structured` + BM25 fusion** | **0.500** | **0.550** | **0.750** | **0.576** | **0.850** |
+  | cloudflare | default: `whole`, no BM25 | 0.450 | 0.700 | 0.800 | 0.587 | **0.950** |
+  | cloudflare | **chosen: `structured`, no BM25** | **0.550** | 0.700 | **0.850** | **0.641** | 0.900 |
+
+  Per repository on holdout2:
+
+  | | hash default | hash chosen | cloudflare default | cloudflare chosen |
+  |---|---|---|---|---|
+  | itsdangerous MRR@10 | 0.488 | **0.650** | 0.733 | **0.900** |
+  | flask MRR@10 | 0.303 | **0.502** | 0.440 | **0.382** |
+  | flask recall@20 | 0.700 | **0.900** | 0.900 | 0.800 |
+
+  **Three things these numbers say, and the first is the largest finding in this batch.**
+
+  **1. A genuinely fresh question set scores far worse than the sets that have been used before.** hash's default falls from MRR 0.645 on the original held-out split to **0.396** on holdout2; cloudflare's falls from 0.854 to **0.587**. Same code, same repositories, same commits, same person writing the questions, same method — twenty questions that had never been looked at. The gap is roughly 0.25 of MRR for both embedders. **The earlier splits flatter this system**, and every retrieval figure recorded in this file before today should be read with that in mind.
+
+  **2. Both chosen configurations are better than today's defaults on both held-out sets.** hash gains +0.133 of MRR on the original split and **+0.180 on holdout2**, with hit@5 +0.100 and +0.250; cloudflare gains +0.019 and +0.054. The improvements are larger on the fresh set than on the stale one, which is the opposite of what overfitting to dev would produce.
+
+  **3. `structured` costs cloudflare recall, on both held-out sets.** recall@20 goes 1.000 → 0.950 on the original split and 0.950 → 0.900 on holdout2, and on holdout2's flask it is 0.900 → 0.800 with MRR falling 0.440 → 0.382. A file record that is a header is a worse net for a question whose words appear in a body the header does not quote. The overall figures still improve because the ranking gains more than the pool loses, but **this is a real cost, it is in the direction a reader should worry about, and it only shows up outside dev** — on dev, cloudflare's recall@20 was 1.000 under both formats and could not have revealed it
+- Command: `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/experiment_retrieval.py --embedder hash --split test --record-format structured --arrangement rrf+keyword --json eval/results/experiments/chosen-heldout-hash.json`; `python scripts/experiment_retrieval.py --embedder cloudflare --split test --record-format structured --arrangement current --json eval/results/experiments/chosen-heldout-cloudflare.json`; then for holdout2, `--questions holdout2 --split holdout2` with `--record-format whole --arrangement current` and with each embedder's chosen pair, writing `eval/results/experiments/holdout2-{default,chosen}-{hash,cloudflare}.json`; the two cloudflare holdout2 runs added `--allow-spend`. `python -m pytest tests/ -q` -> 1056 passed, 1 skipped; `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; `ruff check codeatlas/ tests/ scripts/experiment_retrieval.py`, `ruff format codeatlas/ tests/ --check`; in `codementor-ui`: `npm test` (51 passed), `npm run lint` (0 errors, same 28 warnings as before)
+- Dataset/repo: `eval/questions/*.json` held-out split, and `eval/questions/holdout2/*.json`, all at 672971d66a2e and d73fa1cdcbd8
+- Date: 2026-10-11
+- Commit: 5edf06e
+- Notes: **cost: 0.67 estimated neurons.** The cloudflare held-out run under `structured` needed nothing — the dev run had already paid for every document vector, and the twenty held-out questions were paid for at b1bbfd4 — so it was made through the offline cache with **0 texts embedded**. The two holdout2 runs needed only the twenty new question vectors: planned 0.88, recorded 0.67, over 20 calls. **Today's ledger: 250.59 estimated neurons of the 2,500 budget, 46 calls, 2,249.41 remaining.**
+  **What "scored once" means here, precisely.** Each of the six runs was made one time and its numbers are the ones above. `--arrangement` was passed on every held-out run so that the arrangements *not* chosen were never computed on held-out data — they would have cost nothing, which is exactly why not computing them had to be deliberate. No configuration was changed after any run, and this entry is the first time any holdout2 number appears anywhere.
+  **No default has been changed.** `CODEATLAS_RECORD_FORMAT` is still `whole` and `CODEATLAS_BM25` is still off in the committed configuration. Changing them is a decision for after this entry, not part of it, and `scripts/eval_retrieval.py --split test` still prints the recorded 0.750 / 0.645.
+  **Limits.** Twenty questions per set: one question is 0.05 of a hit rate, so hash's +0.250 of hit@5 on holdout2 is five questions and cloudflare's +0.050 is one. holdout2's questions are mine, written from the same two repositories by the same method as the others, so "fresh" means unseen by the tuning process, not independent of me. And the per-repository split is uncomfortable: on holdout2 the chosen cloudflare configuration is much better on itsdangerous (0.733 → 0.900) and worse on flask (0.440 → 0.382), so the overall gain of 0.054 is an average over two repositories that disagree
+### Feature: a grounded chat mode — one search, one model call, the model's own tokens streamed
+- Value: `CODEATLAS_CHAT_MODE` is `legacy` or `grounded`, **default `legacy`**, which is the agent pipeline every recorded measurement describes. Grounded answers a repository question differently:
+
+  | | legacy (fast path) | grounded |
+  |---|---|---|
+  | retrievals | 2 (retrieval agent, then the mentor searches again) | **1** |
+  | model calls | 3 | **1** |
+  | what is streamed | the finished answer, retyped 4 words every 8 ms | **the model's own tokens, as they arrive** |
+  | citations | the mentor's snippets | **exactly the snippets in the prompt** |
+  | agents recorded | `retrieval`, `mentor` | `grounded` — no agent graph runs, so naming one would be a lie |
+
+  The prompt holds the capped snippets, each introduced by its path and line range, the session history as real turns, and the question. **Citations and prompt come from one list of snippets, built once** by `grounded_context`, and the cap is applied *before* the citations are made — so a snippet dropped for size cannot be cited, and the model cannot be blamed for a file it was never shown.
+
+  **Everything the legacy path guarantees still holds**, and each has a test: the unknown-repo 404 happens before the stream opens and no model call is made; the 4,000-character question cap and the empty-question rejection are the request schema's and still 422; the rate limits are the router's and unchanged; the session history goes into the prompt and the answer goes back into it; a provider refusal becomes the same plain sentence as before, with the files beneath it and no `429` in sight; a reply cut off by the output limit still carries the truncation note; and the semantic-fallback note still reaches the `done` event.
+
+  **Two provider behaviours are handled rather than left to surprise a reader.** A reasoning model emits chunks with no visible content first, so the first thing a visitor sees can be seconds after the call started: those chunks are skipped, they do not count as the first token, and the timer's `first_model_token` fires when something readable actually arrives. A model that finishes having said nothing produces a plain sentence and the file list, not an empty bubble
+- Command: `python -m pytest tests/ -q` -> 1090 passed, 1 skipped (`tests/test_grounded_chat.py`, 26 new, every model a fake that yields chunks from a list: the mode setting and its rejection; the prompt holding each snippet's path and line range; citations equal to the prompt's snippets; a snippet dropped for size not cited; history in the prompt; a no-match question still producing a prompt; tokens forwarded one at a time in order; a reasoning model's empty chunks skipped; the first-token mark firing once; an empty reply explained; truncation; a daily refusal told apart from a per-minute one with no provider text leaking; a mid-stream failure keeping what was already said; and through the endpoint: status before tokens before done, citations in the done event present in the prompt, the question cap, the empty question, the 404 with no model call, the answer entering the session history, a refused answer **not** entering it, legacy mode not taking the grounded path, deep mode unaffected, exactly one model call, and no question text in the timings or the reasoning. `tests/test_retrieval_settings_from_env.py` gains 8 for the setting); in `codementor-ui`: `npm test` (57 passed, 6 new in `lib/streaming.test.ts`: one visible frame per token, a frame never shorter than the one before it, a single-token answer, no frame before a late first token, whitespace preserved, and nothing on the token path buffering, trimming or delaying), `npx tsc --noEmit`, `npm run lint` (0 errors, same 28 warnings as before), `npm run build`; `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; `ruff check codeatlas/ tests/`, `ruff format codeatlas/ tests/ --check`
+- Dataset/repo: none — fake streaming models and a small index built by the tests. **No provider was called**
+- Date: 2026-10-11
+- Commit: ae7abcf
+- Notes: **grounded mode retrieves through a service with no model attached.** `get_retrieval_service()` is `get_answer_service()` without the chat client, because grounded mode streams the model itself and has no use for the one the answer service would build. That matters beyond tidiness: a dependency on the full service would have meant every `/ask/stream` request — including one for a repository that does not exist — constructed a provider client before it could be refused, which is the failure recorded at 3143178.
+  **Deep mode is untouched by the setting.** A `mode: "deep"` request runs the planned five-agent pipeline whichever chat mode is configured; grounded replaces the fast path only. That is deliberate — deep mode's value is the visible agent steps, which one model call cannot produce.
+  **What is not measured here.** Whether grounded answers *better* is the next entry's question, and this one claims nothing about it. The number this design is aimed at is the one recorded at 64c7ae6 — "the time to the first token the user sees is the sum of three full model calls" — and even that is not measured yet.
+  **Limits.** The system prompt tells the model to answer only from the snippets and to say so when they do not contain the answer; nothing enforces either, and a model that ignores the instruction will be cited as though it had not. A failure part way through the stream leaves the visitor with a partial answer followed by an explanation, which is better than an exception but is still two voices in one bubble. And the retrieval is a single search with no follow-up: if the first search misses, grounded mode has no second chance, where the legacy pipeline's second retrieval occasionally rescued one
+### Check: legacy against grounded on the fifteen smoke questions, with a real model
+- Value: both chat modes answered the same fifteen questions about the same two indexed repositories, warm, **one run each, thirty runs in all, none repeated**. Model: **openai/gpt-oss-20b on Groq**, the committed default, at the committed retrieval settings (`whole` records, BM25 off). **The deterministic check is the weak one** — two string tests per answer, no judge model, nothing that reads whether the explanation is right.
+
+  | | legacy | grounded |
+  |---|---|---|
+  | passed | **12/15** | **12/15** |
+  | expected file cited | 12/15 | 12/15 |
+  | fact present | 14/15 | 14/15 |
+  | runs with no model answer | 0 | 0 |
+  | **time to the first streamed token, median** | 1.53 s | **0.61 s** |
+  | total time, median | 1.56 s | **0.90 s** |
+  | model calls | **30** (2 per question) | **15** (1 per question) |
+  | tokens | **52,084** | **24,495** (−53%) |
+  | cited files that were in the prompt | 45/45 | 45/45 |
+
+  **The two modes score identically on the check and grounded costs half as much.** Same passes, same files cited, same facts found, with one model call instead of two and 27,589 fewer tokens over fifteen questions. The median first token arrives in 0.61 s against 1.53 s.
+
+  **Every cited file was in the prompt, in both modes — 45 of 45.** For grounded that is true by construction and this measures the claim rather than discovering it. For legacy it was an open question, because the citations come from one retrieval and the answer from a later one, and the answer is that on these fifteen questions they never disagreed.
+
+  **The medians hide a wide spread, and the spread is the model, not the pipeline.** Legacy's first token ranged 1.04 s to 15.15 s and grounded's 0.37 s to 14.71 s. The slow runs are a reasoning model spending ten to fifteen seconds on tokens nobody sees before it writes anything; when it does not, both modes answer in about a second. So the 2.5× median gap is real but it is the gap on the *fast* runs — on a run where the model thinks for fourteen seconds, neither shape helps
+- Command: `python scripts/chat_mode_compare.py --max-session-tokens 140000 --out eval/results/experiments/chat-modes.json` (912.6 s, nearly all of it the pacer); `python -m pytest tests/ -q` -> 1096 passed, 1 skipped; `ruff check codeatlas/ tests/ scripts/`, `ruff format codeatlas/ tests/ --check`; in `codementor-ui`: `npm test` (68 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, same 28 warnings as before), `npm run build`; `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged
+- Dataset/repo: the 15 questions in `eval/answer_smoke_questions.json`; https://github.com/pallets/itsdangerous and https://github.com/pallets/flask, indexed once and shared by both modes
+- Date: 2026-10-11
+- Commit: dcdb314
+- Notes: **the default mode is unchanged.** `CODEATLAS_CHAT_MODE` is still `legacy`. This entry measures; it does not switch anything on.
+  **Two accounting bugs were found by running this, and both are fixed.** A streamed call reported no usage at all, so every token it spent was missing from the metrics and from the on-disk ledger — which is the ledger a long run checks before deciding it still has budget, so the guard was guarding nothing. `stream_usage=True` on both providers fixes it, and it also means the website's general (no-repository) chat, which has always streamed, has never been counted until now. Separately, the comparison script works in a temporary directory and the ledger path is relative by default, so the day's spend was being written there and thrown away. **Both were discovered because the first trial reported 0 tokens for runs that had plainly cost some**, and that is the only reason the spend below is knowable at all.
+  **Tokens: 100,196 spent today** (73,161 in, 27,035 out, 57 calls) against the 140,000 cap approved for this session, which includes about 17,500 from the two instrumentation trials before the accounting worked, and an unmeasured amount from the first trial, which recorded nothing. The run completed all thirty; nothing stopped it early, and no daily-limit 429 was seen. The per-minute limit was hit repeatedly and handled by the pacer and the client's own retry.
+  **A result that should temper every smoke number in this file.** The legacy mode here is the committed fast path at the committed settings, and it scored **12/15** — against the **8/15** recorded for the same check, the same fifteen questions and the same model at f67b5d4. Nothing in the retrieval path changed between those runs. Four questions of fifteen moved on run-to-run variation alone, which is a 0.27 swing in a pass rate, and it is the clearest evidence yet that **this check cannot distinguish a change worth making from a different afternoon.** It is also why the identical 12/15 above is reported as "the two modes are not distinguishable on this check" rather than as "they are equally good".
+  **Limits.** One machine, one provider, one day, one model. The timings are the client's own over a local socket, so they exclude the network between a browser and a deployed server and say nothing about one. Fifteen questions and a two-string check. Grounded's single retrieval has no second chance if the first search misses, which these questions did not test for; and the "cited files in the prompt" figure is 45/45 for both, so it did not discriminate either
+### Feature: an Experiments table on the Benchmarks page, built from the experiment result files
+- Value: `scripts/build_benchmarks.py` now reads `eval/results/experiments/` and the page gains an **Experiments** panel under the model-free timing one. **Twenty rows — every retrieval arrangement this batch scored, kept and rejected** — each with the change, the number of questions, the dev result, the held-out and fresh-split results where they were scored, the verdict, the embedder, the commit and the date.
+
+  | column | what it holds |
+  |---|---|
+  | embedder | `hash` or `cloudflare` |
+  | change | the record format and the arrangement, e.g. `structured / rrf+keyword` |
+  | n | questions scored (20 for every split) |
+  | dev hit@5, MRR@10, recall@20 | the development result, which is what the choice was made from |
+  | held out | MRR@10 on the original held-out split — **only where it was actually scored** |
+  | fresh | MRR@10 on holdout2 — likewise |
+  | verdict | `baseline`, `chosen`, `met the rule; not chosen`, `met the rule; the server has no mode for it`, or `rejected` |
+
+  **The verdict is computed, not copied.** The builder applies the keep rule — dev MRR@10 rises and dev hit@5 does not fall — to each row's own numbers, and a test in `tests/test_build_benchmarks.py` recomputes every verdict independently from the committed figures. A row whose numbers moved would change its own label rather than keeping a stale one.
+
+  **A score is shown only where it was measured.** Non-chosen rows carry `null` for held out and fresh, and render as a dimmed dash; a test asserts that no row claims a held-out number it never earned. By default the panel shows the baselines, the chosen rows and the ones that met the rule; one button reveals all twenty including the rejections.
+
+  The chat-mode comparison sits in the same panel under a badge reading **"one local run, one model, one question set - not a benchmark"**, with the model named, the question count shown, the weak-check wording repeated, and the first-token and total times beside the model calls and tokens. **No end-to-end latency claim appears anywhere in the panel**, asserted by a test on both sides that greps the rendered block for `ttfb`, `end_to_end`, `p95` and `latency`
+- Command: `python scripts/build_benchmarks.py` then `python scripts/build_benchmarks.py --check`; `python -m pytest tests/ -q` -> 1096 passed, 1 skipped (`tests/test_build_benchmarks.py` gains 6: every dev run reaching the summary, the keep rule recomputed from the numbers for every row, exactly one chosen configuration per embedder, held-out numbers claimed only where scored, the chat-mode block saying what it is, and no end-to-end claim); in `codementor-ui`: `npm test` (68 passed, `lib/benchmarks.test.ts` gains 10 for the new panel), `npx tsc --noEmit`, `npm run lint` (0 errors, same 28 warnings as before), `npm run build`; `CODEATLAS_EMBEDDING_PROVIDER=hash python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; `ruff check codeatlas/ tests/ scripts/`, `ruff format codeatlas/ tests/ --check`
+- Dataset/repo: the ten result files in `eval/results/experiments/`, written at 9a7a94d, c92cb5b, 5edf06e and dcdb314
+- Date: 2026-10-11
+- Commit: 33cf1e8
+- Notes: **the regeneration guard still holds.** `eval/benchmarks.json` is still a pure function of its inputs with no timestamp, and the test that rebuilds it and compares byte for byte passes — which now also means an experiment result file cannot be edited by hand or quietly replaced without the summary failing to rebuild.
+  **One figure in the table is worth a reader's attention more than the rest.** The two baseline rows carry a fresh-split score far below their dev score, and a frontend test asserts that relationship rather than the numbers, so the table cannot stop showing it: a question set that has never been used scores much worse than the ones that have.
+  **Limits.** The held-out and fresh columns show MRR@10 only; the full set of metrics for those splits is in the result files and in the entries above, not on the page, because a table with three metrics across three splits does not fit a phone. The rows are generated from four dev runs of five arrangements, so an arrangement added later appears automatically but a *new kind* of experiment — a different question set, say — would need a new source entry in the builder. And the panel reports what the files say; it cannot tell a result file that is six weeks old from one written this morning, which is what the commit and date beside each row are for
+### Check: the chosen hash configuration, run through the server's own retrieval path
+- Value: `scripts/adoption_check.py` takes the embedder from `di.get_embedder()`, the index options from `di.index_options()`, the retrieval settings from `di.get_retrieval_settings()` and the search from `AnswerService.retrieve` — the four calls `get_retrieval_service()` makes — and is told nothing else. With two environment variables set, **it reproduces every number the experiment recorded, on all three splits and in both repositories, to four decimal places**.
+
+  | split | scope | n | hit@1 | hit@3 | hit@5 | MRR@10 | recall@20 |
+  |---|---|---|---|---|---|---|---|
+  | dev | itsdangerous | 10 | 0.600 | 0.700 | 0.800 | 0.685 | 1.000 |
+  | dev | flask | 10 | 0.600 | 1.000 | 1.000 | 0.800 | 1.000 |
+  | dev | **overall** | 20 | **0.600** | **0.850** | **0.900** | **0.7425** | **1.000** |
+  | held out | itsdangerous | 10 | 0.800 | 0.800 | 0.800 | 0.828 | 1.000 |
+  | held out | flask | 10 | 0.600 | 0.900 | 0.900 | 0.729 | 1.000 |
+  | held out | **overall** | 20 | **0.700** | **0.850** | **0.850** | **0.7785** | **1.000** |
+  | holdout2 | itsdangerous | 10 | 0.600 | 0.600 | 0.800 | 0.650 | 0.800 |
+  | holdout2 | flask | 10 | 0.400 | 0.500 | 0.700 | 0.503 | 0.900 |
+  | holdout2 | **overall** | 20 | **0.500** | **0.550** | **0.750** | **0.5763** | **0.850** |
+
+  Each row is compared against the committed experiment file metric by metric and the script exits 1 on any difference. Every row read `same`.
+
+  **The two environment variables, and nothing else.** `CODEATLAS_RECORD_FORMAT=structured` and `CODEATLAS_BM25=true`. The other twelve settings the check reports came from their defaults and are printed with their source: `CODEATLAS_EMBEDDING_PROVIDER=hash`, window 2000 / overlap 200, candidates 20, rerank weight 1.0, BM25 k1 1.2 / b 0.75 / rrf_k 60 / depth 0, stopwords dropped, metadata prefixed, no per-document clip. So "`structured` + `rrf+keyword`" is two switches on the server, not a mode it lacks.
+
+  **What `structured` costs, measured both ways on the same parse.**
+
+  | repo | format | source files | records | file | function | index on disk | indexing |
+  |---|---|---|---|---|---|---|---|
+  | itsdangerous | whole | 15 | 159 | 15 | 144 | 810.1 KB | 0.23 s |
+  | itsdangerous | **structured** | 15 | **177** (+11.3%) | 15 | 162 | **904.3 KB** (+11.6%) | 0.22 s |
+  | flask | whole | 83 | 1,705 | 83 | 1,622 | 8,681.0 KB | 2.74 s |
+  | flask | **structured** | 83 | **1,862** (+9.2%) | 83 | 1,779 | **9,516.4 KB** (+9.6%) | 2.24 s |
+
+  The file record count is unchanged by construction — a file is still one record, it is just a header instead of the whole text. Every extra record is a window of a function longer than 2,000 characters: 18 more in itsdangerous, 157 more in flask. Index size tracks the record count almost exactly, because a record costs one 384-wide vector plus its metadata whatever its text says.
+
+  **The index guard, driven in both directions.** An index is built under each format and then searched by a service configured for each, four combinations:
+
+  | index built as | server configured as | records returned | index cache reuses it |
+  |---|---|---|---|
+  | whole | whole | 5 | yes |
+  | whole | **structured** | **0 — refused** | no |
+  | structured | **whole** | **0 — refused** | no |
+  | structured | structured | 5 | yes |
+
+  A mixed pair returns nothing and logs which signature it expected against which it found. `CodeIndexService.has_index` says no for the same pairs, so the index cache rebuilds rather than handing back an index of the wrong shape
+- Command: `$env:CODEATLAS_EMBEDDING_PROVIDER = "hash"`; `$env:CODEATLAS_RECORD_FORMAT = "structured"`; `$env:CODEATLAS_BM25 = "true"`; `python scripts/adoption_check.py --json eval/results/experiments/adoption-hash.json` -> exit 0, 20.4 s. Then with both of the last two removed from the environment: `python -m pytest tests/ -q` -> 1096 passed, 1 skipped; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (184 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; in `codementor-ui`: `npm test` (68 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: `eval/questions/*.json` (dev and held-out) and `eval/questions/holdout2/*.json`, at https://github.com/pallets/itsdangerous 672971d66a2e and https://github.com/pallets/flask d73fa1cdcbd8. **No provider was called and no network beyond the two cached checkouts**
+- Date: 2026-10-11
+- Commit: ce05005
+- Notes: **no default changed.** `CODEATLAS_RECORD_FORMAT` is still `whole` in the committed configuration and `CODEATLAS_BM25` is still off; this entry says the configuration is reachable and correct, not that it is on. The held-out guard still prints 0.750 / 0.645.
+  **One trap found by writing this, and it is the reason the check could not be a flag on the existing script.** `scripts/eval_retrieval.py` reads `CODEATLAS_BM25` but **not** `CODEATLAS_RECORD_FORMAT`: its `IndexSettings` is built from three values and the record format falls back to `whole`, while the embedder it uses is `get_embedder()`, which *is* wrapped and signs itself `|records=structured`. Set both variables and run it and you get `settings: ... "record_format":"whole"` printed beside a structured signature, and overall MRR@10 0.799 on the held-out split — a real number for whole records fused with BM25, and **not** the 0.7785 this configuration actually scores. Nothing is corrupted, because the eval index lives and dies in one process, but a reader would be measuring something other than what they set. It is left as it is here on purpose: changing it is a behaviour change and belongs in its own commit.
+  **What this does not show.** It is the retrieval step only — no model, no prompt, no citation. It says the same records come back, not that the answers are better; the only comparison of answers in this file is the fifteen-question smoke check, whose own entry records a 12/15-against-8/15 swing on run-to-run variation alone. The index-size figures are a FAISS flat index plus a pickled record list on this machine's filesystem, and the indexing seconds are one run each, warm, with the repositories already parsed — they are the right order of magnitude and nothing finer. And the guard check proves refusal for the record format specifically; the signature carries the provider, the dimensions and two hash options besides, and only the format was exercised here
+### Change: holdout3, a third held-out question set, written and left unscored
+- Value: ten new questions per repository, twenty in all, in `eval/questions/holdout3/`. Same two repositories at the same two pinned commits as every other set, so the code they ask about is the code every number in this file describes. **No number on them exists.** They were not scored, no result file mentions them, and nothing in this entry says how the system does on them.
+
+  | | dev | held out (test) | holdout2 | **holdout3** |
+  |---|---|---|---|---|
+  | questions | 20 | 20 | 20 | **20** |
+  | written | before any tuning | before any tuning | 2026-10-11, after both had been used | **2026-10-11, after holdout2 was scored** |
+  | times scored | many | at least six | once | **none** |
+
+  **What "new" is checked to mean.** Six tests, parametrised over both repositories. No question text and no id repeats one of the sixty earlier questions. No question overlaps an earlier one by half its words or more — the same cheap reworded-question check holdout2 got, run here against all thirty earlier questions per repository rather than the first twenty. Every expected path is a real file in the checkout at the pinned commit. Each set is ten questions, all carrying the `holdout3` split, each with at least one expected file.
+
+  **And one test whose whole job is to keep it unscored:** neither `scripts/eval_retrieval.py` nor `scripts/experiment_retrieval.py` may contain the string `holdout3`. Both scripts name the question files they read, so a plain run of either cannot reach this set by accident; scoring it has to be a deliberate act, written down.
+
+  The questions reach parts of each repository the earlier sets did not ask about: the text encoding used before signing, an unrecognised key-derivation name, a signed value with no separator, whether the timestamp is inside what gets signed, a valid signature with no time part, why a date conversion catches `OSError` and `OverflowError`, serializer keyword options, the base exception class, non-ASCII characters in the compact payload, and what a replacement serializer must implement; and for flask, a reused class-based view instance, writing to the session with no secret key, the cookie being rewritten when nothing changed, dictionary key order in a JSON response, the command that lists routes, running a command line callback inside an application context, rendering a template as a stream, reading settings from a TOML file, an invalid JSON request body, and the tutorial app's status for editing someone else's post
+- Command: `python -m pytest tests/test_retrieval_eval.py -q` -> 36 passed (11 new); `python -m pytest tests/ -q` -> 1107 passed, 1 skipped; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (184 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; in `codementor-ui`: `npm test` (68 passed), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: https://github.com/pallets/itsdangerous at 672971d66a2e and https://github.com/pallets/flask at d73fa1cdcbd8, read from the two checkouts already in `.codeatlas/eval-repos`. **No provider was called and nothing was scored**
+- Date: 2026-10-11
+- Commit: 3ace1de
+- Notes: **why a third set exists.** The entry at 5edf06e records that hash's default fell from MRR 0.645 on the original held-out split to 0.396 on holdout2, and concluded that the earlier splits flatter this system. holdout2 has now been scored — six times in one entry, and again in the adoption check above — so the same erosion has started on it. A set that has never been looked at is the only kind that can answer "is this better" honestly, and it stops being one the moment it is used. This one is being banked, not spent.
+  **Limits, and they are the same ones holdout2 has.** Twenty questions: one question is 0.05 of a hit rate. Two Python libraries by the same authors, at one commit each. The questions are mine, written by reading the source with the earlier sets in front of me to avoid repeating them — so "fresh" means unseen by the tuning process, not independent of the person who wrote the other sixty. And the overlap test is word counting: it catches a shuffled rewording and cannot catch two differently worded questions that happen to want the same passage
+### Change: the Benchmarks page says which held-out set to believe, and shows both
+- Value: the page carried one clause about holdout2 being "fresh" and left a reader to work out what that meant for the other column. It now says it three times, where the numbers are.
+
+  **In the Experiments panel**, above the table: the original held-out split was reused — scored in at least six recorded entries since it was written, so it has informed choices before and is a weak confirmation rather than a clean one; holdout2 was written after those runs and scored once, so it is the fresher estimate, and it is the lower one; where they disagree, **holdout2 is the one to believe**. The two column headings come from the summary and now read *held out — reused, scored many times before* and *fresh — written later, scored once*.
+
+  **In the retrieval tables**, the held-out split carries a `reused` badge and the same sentence underneath it; the development split carries neither, and a test asserts both halves of that.
+
+  **And a new side-by-side block**, four rows — each embedder's default and its chosen configuration — with dev, the reused held-out figure, the fresh one and the gap:
+
+  | embedder | configuration | dev | held out (reused) | fresh (holdout2) | difference |
+  |---|---|---|---|---|---|
+  | hash | today's default | 0.663 | 0.645 | **0.396** | **−0.249** |
+  | hash | chosen | 0.743 | 0.779 | **0.576** | **−0.202** |
+  | cloudflare | today's default | 0.804 | 0.854 | **0.587** | **−0.267** |
+  | cloudflare | chosen | 0.825 | 0.873 | **0.641** | **−0.232** |
+
+  **Every configuration is 0.20 to 0.27 of MRR worse on the set that had never been used**, and that is now one glance rather than four files. A baseline's held-out figure is not in the experiment files — it is the recorded retrieval run in the panel above — so each row names the file each of its two numbers came from rather than having one quietly filled in. Two tests assert the *relationship* (fresh is lower, the difference is negative) rather than the values, so the table cannot stop showing it; a third reads every fresh number back out of the file its row names.
+
+  **The two-question trial can no longer be mistaken for the thirty-run comparison.** `chat-modes-trial.json` was a fallback source: with `chat-modes.json` absent it would have been drawn under the same heading, the same "not a benchmark" badge and the same column names, and the only thing distinguishing a four-run block from a thirty-run one would have been a number a reader had to notice. It is now not a source at all, the builder refuses any file that is not 15 questions and 30 runs, and the block prints its own size — *15 questions, 30 runs* — beside the model. The trial file is kept where it is as the record of that run
+- Command: `python scripts/build_benchmarks.py` then `python scripts/build_benchmarks.py --check` -> up to date; `python -m pytest tests/ -q` -> 1114 passed, 1 skipped (`tests/test_build_benchmarks.py` gains 7: the reuse wording in both panels, the four side-by-side rows with their sources, every row worse on the fresh split, each fresh number read back from the file its row names, the trial not being a source, the block stating its scale, and the builder returning nothing when pointed at the trial); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (184 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 0.750, MRR@10 0.645, unchanged; in `codementor-ui`: `npm test` (74 passed, 6 new in `lib/benchmarks.test.ts`), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before), `npm run build`
+- Dataset/repo: the committed result files in `eval/results/` and `eval/results/experiments/`; nothing was re-scored and no number changed
+- Date: 2026-10-11
+- Commit: 7045a97 (the summary and its builder), e6598b9 (the page)
+- Notes: **the regeneration guard still holds.** `eval/benchmarks.json` is still a pure function of its inputs with no timestamp, and the byte-for-byte rebuild test passes.
+  **No measurement is in this entry.** Every figure above was already recorded — at 5edf06e for holdout2, at 016c655 and b1bbfd4 for the two held-out retrieval runs. What changed is which of them sit next to each other and what the page says about them.
+  **What this does not fix.** The side-by-side table is MRR@10 only, because four metrics across three splits does not fit a phone; the rest is in the result files and in the entries above. The reuse count — "at least six" — is a statement about this file written by hand, not something the builder counts, so it will go stale if the split is scored again without the sentence being updated. And saying holdout2 is the fresher estimate is already slightly untrue of today: it has now been scored seven times in all, including in the adoption check above, which is why holdout3 was written and left alone

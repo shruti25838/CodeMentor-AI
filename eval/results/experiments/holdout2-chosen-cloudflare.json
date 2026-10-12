@@ -1,0 +1,69 @@
+{
+  "codementor_commit": "2256e9f",
+  "questions": "holdout2",
+  "arrangements": {
+    "current": "vector candidates, ordered by keyword overlap (what the server does today)"
+  },
+  "embedder": "cloudflare (cloudflare:@cf/baai/bge-small-en-v1.5:pooling=mean:max_chars=2000:prefix=1:stopwords=1, allowed to spend)",
+  "split": "holdout2",
+  "record_format": "structured",
+  "candidates": 20,
+  "repos": {
+    "itsdangerous": {
+      "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
+      "files_indexed": 15,
+      "records_indexed": 159,
+      "questions": 10,
+      "arrangements": {
+        "current": {
+          "questions": 10,
+          "hit@1": 0.9,
+          "hit@3": 0.9,
+          "hit@5": 0.9,
+          "mrr@10": 0.9,
+          "recall@20": 1.0,
+          "recall@candidates(20)": 1.0
+        }
+      }
+    },
+    "flask": {
+      "commit": "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35",
+      "files_indexed": 83,
+      "records_indexed": 1705,
+      "questions": 10,
+      "arrangements": {
+        "current": {
+          "questions": 10,
+          "hit@1": 0.2,
+          "hit@3": 0.5,
+          "hit@5": 0.8,
+          "mrr@10": 0.3817,
+          "recall@20": 0.8,
+          "recall@candidates(20)": 0.8
+        }
+      }
+    }
+  },
+  "overall": {
+    "current": {
+      "questions": 20,
+      "hit@1": 0.55,
+      "hit@3": 0.7,
+      "hit@5": 0.85,
+      "mrr@10": 0.6408,
+      "recall@20": 0.9,
+      "recall@candidates(20)": 0.9
+    }
+  },
+  "seconds": 2.1,
+  "cache": {
+    "file": "98332e737349d50a.json",
+    "hits": 2059,
+    "embedded": 0
+  },
+  "ledger_after": {
+    "estimated_neurons": 250.5934,
+    "calls": 46,
+    "day": "2026-10-11"
+  }
+}

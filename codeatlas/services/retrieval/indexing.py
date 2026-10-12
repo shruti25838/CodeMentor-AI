@@ -10,6 +10,14 @@ from codeatlas.models.repository import Repository
 from codeatlas.observability.timing import stage
 from codeatlas.services.retrieval.embedding import EmbeddingService
 from codeatlas.services.retrieval.interfaces import CodeRetriever
+from codeatlas.services.retrieval.record_format import (
+    DEFAULT_WINDOW_CHARS,
+    DEFAULT_WINDOW_OVERLAP,
+    STRUCTURED,
+    WHOLE,
+    file_header,
+    windows,
+)
 
 
 class IndexingTimeoutError(Exception):
@@ -43,6 +51,9 @@ class CodeIndexService:
         prefix_metadata: bool = False,
         name: str = "",
         sort_by_length: bool = True,
+        record_format: str = WHOLE,
+        window_chars: int | None = None,
+        window_overlap: int = DEFAULT_WINDOW_OVERLAP,
     ) -> None:
         self._embedder = embedder
         self._retriever = retriever
@@ -58,11 +69,23 @@ class CodeIndexService:
         self._name = name
         # Embed the shortest documents first, so each batch holds texts of similar length.
         self._sort_by_length = sort_by_length
+        # What a record is: see services/retrieval/record_format.py. 'whole' is today's.
+        self._record_format = record_format
+        # The window a long function is cut into. Defaults to the per-document clip when one
+        # is set, because a window larger than the clip would be embedded by its opening
+        # alone and the whole point of windowing would be lost.
+        self._window_chars = window_chars or max_chars or DEFAULT_WINDOW_CHARS
+        self._window_overlap = window_overlap
         self._logger = logging.getLogger(__name__)
 
     @property
     def index_format(self) -> str:
-        """Everything that decides an index's vectors. Saved with each repo; the index cache needs a match."""
+        """Everything that decides an index's vectors. Saved with each repo; the index cache needs a match.
+
+        The record format reaches this through the embedder's signature (see
+        `record_format.with_record_format`), so it is here without being named twice.
+        Under "whole" the signature is the one it has always been, so no stored index
+        is invalidated."""
         return f"{self._embedder.signature()}|max_chars={self._max_chars}|prefix={int(self._prefix_metadata)}"
 
     def has_index(self, repo_id: str) -> bool:
@@ -193,16 +216,23 @@ class CodeIndexService:
             document = f"{label}\n{document}"
         return document
 
-    @staticmethod
     def _collect(
-        parsed_repo: ParsedRepository, check_deadline: Callable[[], None]
+        self, parsed_repo: ParsedRepository, check_deadline: Callable[[], None]
     ) -> tuple[list[str], list[EmbeddingRecord]]:
         documents: list[str] = []
         records: list[EmbeddingRecord] = []
+        structured = self._record_format == STRUCTURED
+        by_file: dict[str, list] = {}
+        if structured:
+            for function in parsed_repo.functions:
+                by_file.setdefault(function.file_path, []).append(function)
 
         for source_file in parsed_repo.files:
             check_deadline()
             content = _safe_read(Path(source_file.path))
+            if structured:
+                signatures = [f.signature for f in sorted(by_file.get(source_file.path, []), key=_start_line)]
+                content = file_header(content, source_file.path, signatures, self._window_chars)
             documents.append(content)
             records.append(
                 EmbeddingRecord(
@@ -216,23 +246,53 @@ class CodeIndexService:
         for function in parsed_repo.functions:
             check_deadline()
             snippet = _read_snippet(Path(function.file_path), function.start_line, function.end_line)
-            documents.append(snippet)
-            records.append(
-                EmbeddingRecord(
-                    record_id=f"{function.file_path}:{function.start_line}-{function.end_line}",
-                    scope="function",
-                    vector=[],
-                    metadata={
-                        "path": function.file_path,
-                        "name": function.name,
-                        "signature": function.signature,
-                        "start_line": str(function.start_line),
-                        "end_line": str(function.end_line),
-                    },
+            function_id = f"{function.file_path}:{function.start_line}-{function.end_line}"
+            base = {
+                "path": function.file_path,
+                "name": function.name,
+                "signature": function.signature,
+            }
+            if not structured:
+                documents.append(snippet)
+                records.append(
+                    EmbeddingRecord(
+                        record_id=function_id,
+                        scope="function",
+                        vector=[],
+                        metadata={
+                            **base,
+                            "start_line": str(function.start_line),
+                            "end_line": str(function.end_line),
+                        },
+                    )
                 )
-            )
+                continue
+
+            cut = windows(snippet, function.start_line, self._window_chars, self._window_overlap)
+            for number, window in enumerate(cut, start=1):
+                documents.append(window.text)
+                records.append(
+                    EmbeddingRecord(
+                        record_id=function_id if len(cut) == 1 else f"{function_id}#w{number}",
+                        scope="function",
+                        vector=[],
+                        metadata={
+                            **base,
+                            "start_line": str(window.start_line),
+                            "end_line": str(window.end_line),
+                            # Which function this window belongs to, and how many there are.
+                            # Ranking keeps one result per function_id; see AnswerService.
+                            "function_id": function_id,
+                            "window": f"{number}/{len(cut)}",
+                        },
+                    )
+                )
 
         return documents, records
+
+
+def _start_line(function) -> int:
+    return function.start_line
 
 
 def _safe_read(path: Path) -> str:

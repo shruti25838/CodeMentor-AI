@@ -233,3 +233,155 @@ def test_with_no_clip_nothing_is_counted_as_clipped(tmp_path) -> None:
     counts = service.clipped_counts(parsed)
     assert counts["file"]["clipped"] == 0
     assert counts["file"]["chars_kept"] == counts["file"]["chars"]
+
+
+# ---------------------------------------------------------------- the second held-out set
+
+
+HOLDOUT2_DIR = QUESTIONS_DIR / "holdout2"
+
+
+@pytest.mark.parametrize("name", ["itsdangerous", "flask"])
+def test_holdout2_is_ten_questions_pinned_at_the_same_commit(name):
+    original = load_question_set(QUESTIONS_DIR / f"{name}.json")
+    fresh = load_question_set(HOLDOUT2_DIR / f"{name}.json")
+
+    assert fresh.commit == original.commit, "holdout2 must describe the same code as the first set"
+    assert fresh.repo_url == original.repo_url
+    assert len(fresh.questions) == 10
+    assert len({q.id for q in fresh.questions}) == 10
+    assert all(q.split == "holdout2" for q in fresh.questions)
+    assert all(q.expected_files for q in fresh.questions)
+
+
+@pytest.mark.parametrize("name", ["itsdangerous", "flask"])
+def test_no_holdout2_question_repeats_one_from_the_first_set(name):
+    original = load_question_set(QUESTIONS_DIR / f"{name}.json")
+    fresh = load_question_set(HOLDOUT2_DIR / f"{name}.json")
+
+    assert not {q.question for q in fresh.questions} & {q.question for q in original.questions}
+    assert not {q.id for q in fresh.questions} & {q.id for q in original.questions}
+
+
+@pytest.mark.parametrize("name", ["itsdangerous", "flask"])
+def test_holdout2_questions_are_not_near_duplicates_of_the_first_set(name):
+    """A reworded question is still the same question. Word overlap is the cheap check for that.
+
+    This cannot prove two questions ask different things - only a reader can - but it does catch
+    the failure that matters here, which is writing a "new" set by shuffling the old wording.
+    """
+    original = [_words(q.question) for q in load_question_set(QUESTIONS_DIR / f"{name}.json").questions]
+    for q in load_question_set(HOLDOUT2_DIR / f"{name}.json").questions:
+        words = _words(q.question)
+        for other in original:
+            overlap = len(words & other) / len(words | other)
+            assert overlap < 0.5, f"{q.id} overlaps an existing question by {overlap:.0%} of its words"
+
+
+@pytest.mark.parametrize("name", ["itsdangerous", "flask"])
+def test_holdout2_selects_only_under_its_own_split(name):
+    fresh = load_question_set(HOLDOUT2_DIR / f"{name}.json")
+
+    assert len(fresh.select("holdout2")) == 10
+    assert fresh.select("dev") == [] and fresh.select("test") == []
+    assert len(fresh.select("all")) == 10
+
+
+def test_an_unknown_split_is_still_rejected(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_text(
+        json.dumps(
+            {
+                "name": "x",
+                "repo_url": "u",
+                "commit": "c",
+                "questions": [{"id": "1", "split": "holdout9", "question": "q", "expected_files": ["a.py"]}],
+            }
+        )
+    )
+    with pytest.raises(ValueError):
+        load_question_set(path)
+
+
+# ---------------------------------------------------------------- the third held-out set
+
+
+HOLDOUT3_DIR = QUESTIONS_DIR / "holdout3"
+
+
+def _earlier_sets(name: str) -> list:
+    """Every question that existed before holdout3 was written, for one repository."""
+    return [
+        *load_question_set(QUESTIONS_DIR / f"{name}.json").questions,
+        *load_question_set(HOLDOUT2_DIR / f"{name}.json").questions,
+    ]
+
+
+@pytest.mark.parametrize("name", ["itsdangerous", "flask"])
+def test_holdout3_is_ten_questions_pinned_at_the_same_commit(name):
+    original = load_question_set(QUESTIONS_DIR / f"{name}.json")
+    fresh = load_question_set(HOLDOUT3_DIR / f"{name}.json")
+
+    assert fresh.commit == original.commit, "holdout3 must describe the same code as the earlier sets"
+    assert fresh.repo_url == original.repo_url
+    assert len(fresh.questions) == 10
+    assert len({q.id for q in fresh.questions}) == 10
+    assert all(q.split == "holdout3" for q in fresh.questions)
+    assert all(q.expected_files for q in fresh.questions)
+
+
+@pytest.mark.parametrize("name", ["itsdangerous", "flask"])
+def test_no_holdout3_question_repeats_an_earlier_one(name):
+    """Against dev, the original held-out split **and** holdout2 - all thirty, not just the first set."""
+    earlier = _earlier_sets(name)
+    fresh = load_question_set(HOLDOUT3_DIR / f"{name}.json")
+
+    assert len(earlier) == 30
+    assert not {q.question for q in fresh.questions} & {q.question for q in earlier}
+    assert not {q.id for q in fresh.questions} & {q.id for q in earlier}
+
+
+@pytest.mark.parametrize("name", ["itsdangerous", "flask"])
+def test_holdout3_questions_are_not_near_duplicates_of_an_earlier_one(name):
+    """The same cheap reworded-question check holdout2 gets, run against all thirty earlier ones."""
+    earlier = [_words(q.question) for q in _earlier_sets(name)]
+    for q in load_question_set(HOLDOUT3_DIR / f"{name}.json").questions:
+        words = _words(q.question)
+        for other in earlier:
+            overlap = len(words & other) / len(words | other)
+            assert overlap < 0.5, f"{q.id} overlaps an earlier question by {overlap:.0%} of its words"
+
+
+@pytest.mark.parametrize("name", ["itsdangerous", "flask"])
+def test_holdout3_selects_only_under_its_own_split(name):
+    fresh = load_question_set(HOLDOUT3_DIR / f"{name}.json")
+
+    assert len(fresh.select("holdout3")) == 10
+    assert fresh.select("dev") == [] and fresh.select("test") == [] and fresh.select("holdout2") == []
+    assert len(fresh.select("all")) == 10
+
+
+@pytest.mark.parametrize("name", ["itsdangerous", "flask"])
+def test_holdout3_expects_files_that_exist_in_the_question_set(name):
+    """Every expected path is a real file in the repository the set pins, fetched at that commit."""
+    question_set = load_question_set(HOLDOUT3_DIR / f"{name}.json")
+    root = checkout(question_set, Path(__file__).resolve().parent.parent / ".codeatlas" / "eval-repos")
+
+    for q in question_set.questions:
+        for path in q.expected_files:
+            assert (root / path).is_file(), f"{q.id} expects {path}, which is not in the checkout"
+
+
+def test_holdout3_is_not_wired_into_any_default_question_list():
+    """It has not been scored, and nothing should score it by accident.
+
+    The two eval scripts name the question files they read. holdout3 is in neither list, so a
+    plain run of either cannot reach it - only an explicit --set can.
+    """
+    for script in ("eval_retrieval.py", "experiment_retrieval.py"):
+        source = (Path(__file__).resolve().parent.parent / "scripts" / script).read_text(encoding="utf-8")
+        assert "holdout3" not in source, f"scripts/{script} names holdout3; it must stay unscored"
+
+
+def _words(question: str) -> set[str]:
+    return {w for w in question.lower().replace("?", " ").replace(",", " ").split() if len(w) > 2}

@@ -17,7 +17,9 @@ from codeatlas.observability.agent_metrics import (
 from codeatlas.observability.metrics import RETRIEVAL_FALLBACK
 from codeatlas.observability.timing import stage
 from codeatlas.services.llm.quota import classify_quota, quota_answer
+from codeatlas.services.retrieval.bm25 import Bm25Index, Bm25Settings
 from codeatlas.services.retrieval.embedding import EmbeddingService, EmbeddingUnavailableError, fallback_note
+from codeatlas.services.retrieval.fusion import DEFAULT_RRF_K, reciprocal_rank_fusion
 from codeatlas.services.retrieval.hash_embedder import STOPWORDS, split_identifier
 from codeatlas.services.retrieval.indexing import embedder_mismatch
 from codeatlas.services.retrieval.interfaces import CodeRetriever
@@ -61,6 +63,16 @@ class RetrievalSettings:
     drop_stopwords: bool = False
     # Drop records from test files (test_*.py, *_test.py, conftest.py, or under a tests/ folder).
     skip_tests: bool = False
+    # A second, lexical retriever over every record, fused into the vector candidates by
+    # reciprocal rank fusion before the rerank runs. Off by default; with it off the BM25 index
+    # is never built and the candidate list is exactly what it was.
+    bm25_enabled: bool = False
+    bm25_k1: float = 1.2
+    bm25_b: float = 0.75
+    # Damping constant for the fusion; see services/retrieval/fusion.py.
+    bm25_rrf_k: int = DEFAULT_RRF_K
+    # How far down each list is read before fusing. 0 means "as deep as the vector pool".
+    bm25_depth: int = 0
 
 
 @dataclass(frozen=True)
@@ -99,6 +111,11 @@ class AnswerService:
         self._settings = settings or RetrievalSettings()
         self._snippet_max_chars = snippet_max_chars
         self._total_max_chars = total_max_chars
+        # One BM25 index per repository, built on first use and rebuilt when the repository is
+        # indexed again. Keyed by repo and by the record list's identity, because reindexing
+        # replaces that list: an index built from the old records would answer about code that
+        # is no longer there.
+        self._bm25: dict[str, tuple[int, Bm25Index]] = {}
         self._logger = logging.getLogger(__name__)
         self._prompt = ChatPromptTemplate.from_messages(
             [
@@ -152,14 +169,60 @@ class AnswerService:
             # The reason is one of a fixed list, so the label can never hold anything a visitor
             # typed, a path, or a provider's error text.
             RETRIEVAL_FALLBACK.labels(reason=reason).inc()
+        depth = max(top_k, settings.candidates)
         with stage("search"):
-            records = retriever.search(repo_id, query_vector, max(top_k, settings.candidates))
+            records = retriever.search(repo_id, query_vector, depth)
+            if settings.bm25_enabled:
+                records = self._fuse_lexical(retriever, repo_id, question, records, depth)
         if settings.skip_tests:
             records = [r for r in records if not _is_test_path(r.metadata.get("path", ""))]
         # Reranking reads each candidate's snippet from disk.
         with stage("rerank"):
-            ranked = self._rerank(question, records, query_vector)[:top_k]
+            ranked = _dedupe_windows(self._rerank(question, records, query_vector))[:top_k]
         return ranked, fallback_note(reason) if reason else ""
+
+    def _fuse_lexical(
+        self,
+        retriever: CodeRetriever,
+        repo_id: str,
+        question: str,
+        vector_records: list[EmbeddingRecord],
+        depth: int,
+    ) -> list[EmbeddingRecord]:
+        """The vector candidates fused with BM25's, cut back to the same pool depth.
+
+        The pool stays the same size, so nothing downstream sees a longer list than it used to:
+        what changes is *which* records are in it. The fusion is symmetric, so a record both
+        retrievers rank highly rises, and a record only BM25 found can still enter the pool.
+        """
+        settings = self._settings
+        index = self._bm25_index(retriever, repo_id, settings)
+        if index is None or len(index) == 0:
+            return vector_records
+        lexical = index.search(question, depth if settings.bm25_depth == 0 else settings.bm25_depth)
+        if not lexical:
+            return vector_records
+        fused = reciprocal_rank_fusion([vector_records, lexical], k=settings.bm25_rrf_k)
+        return fused[:depth]
+
+    def _bm25_index(self, retriever: CodeRetriever, repo_id: str, settings: RetrievalSettings) -> Bm25Index | None:
+        """This repository's lexical index, built once and reused until the repository is reindexed."""
+        records = retriever.records(repo_id)
+        if not records:
+            return None
+        cached = self._bm25.get(repo_id)
+        if cached is not None and cached[0] == id(records):
+            return cached[1]
+        # The full text of each record, uncapped - the same text the rerank reads. BM25 is local
+        # and free, so there is no reason to show it only the opening of a long file.
+        index = Bm25Index(
+            records=list(records),
+            texts=[_record_text(record) for record in records],
+            settings=Bm25Settings(k1=settings.bm25_k1, b=settings.bm25_b),
+        )
+        self._bm25[repo_id] = (id(records), index)
+        self._logger.info("Built a BM25 index of %s records for repo %s", len(index), repo_id)
+        return index
 
     def _choose(self, repo_id: str) -> tuple[CodeRetriever | None, EmbeddingService, str]:
         """Which index to search, decided before anything is called."""
@@ -196,17 +259,23 @@ class AnswerService:
             return None
         return retriever, embedder
 
+    def snippets_for(self, records: list[EmbeddingRecord], total_max_chars: int | None = None) -> list[Snippet]:
+        """The code these records point at, each clipped, and only as many as the budget allows.
+
+        Public because grounded chat builds its prompt and its citations from one list of
+        snippets, and reaching into a private method to get it would let the two drift apart.
+        """
+        budget = self._total_max_chars if total_max_chars is None else total_max_chars
+        return fit_snippets([self._snippet_for(record) for record in records], budget)
+
     def answer(self, repo_id: str, question: str, top_k: int = 5) -> GroundedAnswer:
         self._logger.info("Answering question for repo %s", repo_id)
         records, note = self.retrieve_with_note(repo_id, question, top_k)
         self._logger.info("Retrieved %s records for repo %s", len(records), repo_id)
         # Read each record's code once, capped, and keep only what fits the context budget.
         # Citations describe exactly these snippets, so the answer and the citations agree.
-        snippets = fit_snippets(
-            [self._snippet_for(record) for record in records],
-            self._total_max_chars,
-        )
-        citations = [_citation_text(snippet) for snippet in snippets]
+        snippets = self.snippets_for(records)
+        citations = [citation_text(snippet) for snippet in snippets]
         answer_lines = self._format_answer(question, snippets)
         reasoning = [
             f"Embedded query for repo_id={repo_id}.",
@@ -291,12 +360,32 @@ class AnswerService:
         return [record for _, record in scored]
 
 
+def _dedupe_windows(records: list[EmbeddingRecord]) -> list[EmbeddingRecord]:
+    """One result per function: the best-ranked window of it, in the order ranking put them.
+
+    Under the "structured" record format a long function becomes several overlapping windows,
+    so without this a visitor could be shown three slices of one function and nothing else.
+    Records written under "whole" carry no `function_id`, so for them this is provably a
+    no-op - the list comes back in the same order, unchanged, and a test says so.
+    """
+    seen: set[str] = set()
+    kept: list[EmbeddingRecord] = []
+    for record in records:
+        function_id = record.metadata.get("function_id")
+        if function_id is not None:
+            if function_id in seen:
+                continue
+            seen.add(function_id)
+        kept.append(record)
+    return kept
+
+
 def _location_list(snippets: list[Snippet]) -> list[str]:
     """What the caller gets when there is no model: the locations, which are still true."""
     return ["Top relevant locations:"] + [f"- {snippet.location}" for snippet in snippets]
 
 
-def _citation_text(snippet: Snippet) -> str:
+def citation_text(snippet: Snippet) -> str:
     """One citation line: the snippet's own location and its first two lines."""
     preview = " ".join(snippet.text.splitlines()[:2]).strip()
     if len(preview) > 200:

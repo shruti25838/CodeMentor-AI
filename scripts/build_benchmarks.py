@@ -40,13 +40,48 @@ from codeatlas.services.retrieval.cloudflare_embedder import (  # noqa: E402
 
 SUMMARY = ROOT / "eval" / "benchmarks.json"
 RESULTS = ROOT / "eval" / "results"
+EXPERIMENTS = RESULTS / "experiments"
+
+# One dev run per (embedder, record format), each holding all five arrangements.
+DEV_SOURCES = {
+    ("hash", "whole"): "arrangements-dev-hash.json",
+    ("hash", "structured"): "structured-dev-hash.json",
+    ("cloudflare", "whole"): "arrangements-dev-cloudflare.json",
+    ("cloudflare", "structured"): "structured-dev-cloudflare.json",
+}
+# The original held-out split, scored once for the chosen configuration only.
+HELD_OUT_SOURCES = {"hash": "chosen-heldout-hash.json", "cloudflare": "chosen-heldout-cloudflare.json"}
+# holdout2, scored once for today's default and once for the chosen configuration.
+HOLDOUT2_SOURCES = {
+    ("hash", "default"): "holdout2-default-hash.json",
+    ("hash", "chosen"): "holdout2-chosen-hash.json",
+    ("cloudflare", "default"): "holdout2-default-cloudflare.json",
+    ("cloudflare", "chosen"): "holdout2-chosen-cloudflare.json",
+}
+# The chat-mode comparison: the full run and **only** the full run. A two-question trial was made
+# first, while the token accounting was still being fixed, and `chat-modes-trial.json` is kept as
+# the record of it - but it is deliberately not a source here. Falling back to it would put a
+# two-question, four-run block on the page under the same heading, the same badge and the same
+# column names as the fifteen-question, thirty-run comparison, and the only thing distinguishing
+# them would be a number a reader has to notice. If the full run is missing the panel shows no
+# chat-mode block at all, which is the honest outcome.
+CHAT_MODE_SOURCES = ("chat-modes.json",)
+# How many questions and runs the full comparison is, so the block can say so rather than relying
+# on a reader to multiply. A file that does not match these is not the full run.
+CHAT_MODE_QUESTIONS = 15
+CHAT_MODE_RUNS = 30
+
+# What the server runs today, and what the decision entry chose, per embedder.
+BASELINE = ("whole", "current")
+CHOSEN = {"hash": ("structured", "rrf+keyword"), "cloudflare": ("structured", "current")}
+# Arrangements the experiment can score and the application has no setting for. BM25 was built
+# as a second retriever fused with the first, so "BM25 alone" is not a mode the server has.
+NOT_CONFIGURABLE = ("bm25", "vector", "rrf")
 
 SCHEMA = 1
 
 HEADING_NOTE = "Recorded results on small fixed question sets, not live accuracy."
-END_TO_END_NOTE = (
-    "End-to-end latency is not shown. It depends on the model provider and is not benchmarked here."
-)
+END_TO_END_NOTE = "End-to-end latency is not shown. It depends on the model provider and is not benchmarked here."
 
 # Pinned repositories. The two of them are the whole of every question set below.
 REPOS = {
@@ -113,6 +148,16 @@ PROVENANCE = {
         "date": "2026-10-06",
         "results_entry": "Check: third deep smoke pass",
     },
+    "experiments": {
+        "commit": "5edf06e",
+        "date": "2026-10-11",
+        "results_entry": "Check: the chosen configurations on the original held-out split and on holdout2",
+    },
+    "chat_modes": {
+        "commit": "075a613",
+        "date": "2026-10-11",
+        "results_entry": "Feature: a grounded chat mode",
+    },
     "document_cap": {
         "commit": "6933310",
         "date": "2026-10-11",
@@ -123,6 +168,25 @@ PROVENANCE = {
 METRICS = ["hit@1", "hit@3", "hit@5", "p@3", "mrr@10", "recall@20"]
 
 SPLIT_LABELS = {"dev": "development", "test": "held-out"}
+
+# Said once, here, and carried by every panel that shows a held-out number. The original held-out
+# split was written at the same time as dev and has been scored in entry after entry since, so a
+# configuration doing well on it is not being tested on code the process has never seen. holdout2
+# was written after those runs and scored once, so it is the fresher of the two estimates - which
+# is why it is the lower one.
+REUSED_SPLIT_NOTE = (
+    "The original held-out split was reused: it has been scored in at least six recorded entries "
+    "since it was written, so it has informed choices before and is a weak confirmation rather "
+    "than a clean one."
+)
+FRESH_SPLIT_NOTE = (
+    "holdout2 was written after those runs and scored once. It is the fresher estimate of the two, "
+    "and it is the lower one: on this question set the same code scores markedly worse."
+)
+BOTH_SPLITS_NOTE = (
+    "Both are shown side by side wherever a held-out number appears. Where they disagree, holdout2 "
+    "is the one to believe."
+)
 
 
 def _read(path: Path) -> dict:
@@ -181,6 +245,8 @@ def hash_retrieval() -> dict:
                 "source": f"eval/results/{name}.json",
                 "recorded": PROVENANCE["retrieval.hash"],
                 "result_file_commit": data["codementor_commit"],
+                "reused": name == "test",
+                "note": REUSED_SPLIT_NOTE if name == "test" else "",
                 "rows": rows,
             }
         )
@@ -211,6 +277,8 @@ def cloudflare_retrieval() -> dict:
                 "questions": chosen["overall"][ordering]["questions"],
                 "source": f"eval/results/cloudflare/{name}.json",
                 "recorded": PROVENANCE[key],
+                "reused": name == "test",
+                "note": REUSED_SPLIT_NOTE if name == "test" else "",
                 "rows": rows,
             }
         )
@@ -243,6 +311,7 @@ def retrieval() -> dict:
             "keyword overlap. A record counts as relevant when its file is one of the question's expected files."
         ),
         "metrics": METRICS,
+        "splits_note": f"{REUSED_SPLIT_NOTE} {FRESH_SPLIT_NOTE} Both sets are compared in the Experiments panel.",
         "providers": [hash_retrieval(), cloudflare_retrieval()],
     }
 
@@ -376,6 +445,207 @@ def timing() -> dict:
     }
 
 
+# ---------------------------------------------------------------- experiments
+
+
+EXPERIMENT_METRICS = ["hit@5", "mrr@10", "recall@20"]
+
+
+def _scores(metrics: dict | None) -> dict | None:
+    if not metrics:
+        return None
+    return {
+        "questions": metrics["questions"],
+        **{name: metrics.get(name) for name in EXPERIMENT_METRICS},
+    }
+
+
+def _verdict(embedder: str, records: str, arrangement: str, dev: dict, baseline: dict) -> str:
+    """The keep rule, applied: kept only if dev MRR rises and dev hit@5 does not fall."""
+    if (records, arrangement) == BASELINE:
+        return "baseline"
+    if (records, arrangement) == CHOSEN[embedder]:
+        return "chosen"
+    met = dev["mrr@10"] > baseline["mrr@10"] and dev["hit@5"] >= baseline["hit@5"]
+    if not met:
+        return "rejected"
+    if arrangement in NOT_CONFIGURABLE:
+        return "met the rule; the server has no mode for it"
+    return "met the rule; not chosen"
+
+
+def experiments() -> dict:
+    """Every retrieval experiment this batch ran, kept and rejected, from the files it wrote."""
+    dev_runs = {key: _read(EXPERIMENTS / name) for key, name in DEV_SOURCES.items()}
+    held_out = {key: _read(EXPERIMENTS / name) for key, name in HELD_OUT_SOURCES.items()}
+    holdout2 = {key: _read(EXPERIMENTS / name) for key, name in HOLDOUT2_SOURCES.items()}
+
+    rows = []
+    for embedder in ("hash", "cloudflare"):
+        baseline = dev_runs[(embedder, "whole")]["overall"]["current"]
+        for records in ("whole", "structured"):
+            run = dev_runs[(embedder, records)]
+            for arrangement, description in run["arrangements"].items():
+                dev = run["overall"][arrangement]
+                verdict = _verdict(embedder, records, arrangement, dev, baseline)
+                row = {
+                    "embedder": embedder,
+                    "records": records,
+                    "arrangement": arrangement,
+                    "change": f"{records} records, {description}",
+                    "verdict": verdict,
+                    "dev": _scores(dev),
+                    "held_out": None,
+                    "holdout2": None,
+                    "recorded": PROVENANCE["experiments"],
+                    "result_file_commit": run["codementor_commit"],
+                }
+                if verdict == "chosen":
+                    row["held_out"] = _scores(held_out[embedder]["overall"][arrangement])
+                    row["holdout2"] = _scores(holdout2[(embedder, "chosen")]["overall"][arrangement])
+                elif verdict == "baseline":
+                    row["holdout2"] = _scores(holdout2[(embedder, "default")]["overall"][arrangement])
+                rows.append(row)
+
+    return {
+        "title": "Experiments",
+        "note": (
+            "Every retrieval arrangement this batch scored, kept and rejected. Two held-out sets "
+            "are shown, and they are not equally good evidence."
+        ),
+        "keep_rule": "Kept only if dev MRR@10 rises and dev hit@5 does not fall.",
+        "metrics": EXPERIMENT_METRICS,
+        "splits": {
+            "dev": "development - what the choice was made from",
+            "held_out": "held out - reused, scored many times before",
+            "holdout2": "fresh - written later, scored once",
+        },
+        "reused_split_note": REUSED_SPLIT_NOTE,
+        "fresh_split_note": FRESH_SPLIT_NOTE,
+        "both_splits_note": BOTH_SPLITS_NOTE,
+        "source": "eval/results/experiments/",
+        "rows": rows,
+        "splits_compared": splits_compared(dev_runs, held_out, holdout2),
+        "chat_modes": chat_modes(),
+    }
+
+
+def splits_compared(dev_runs: dict, held_out: dict, holdout2: dict) -> dict:
+    """The two held-out sets beside each other, for the four configurations scored on both.
+
+    The chosen rows carry both numbers themselves. A baseline's held-out figure does not live in
+    the experiment files - it is the recorded retrieval run in the panel above - so it is read
+    from there and the source of each number is named, rather than one of them being quietly
+    filled in from somewhere a reader cannot check.
+    """
+    hash_held_out = _read(RESULTS / "test.json")["overall"]["mrr@10"]
+    cloudflare_held_out = next(
+        r for r in _read(RESULTS / "cloudflare" / "test.json")["results"] if r["config"] == "mean-2000"
+    )["overall"]["keyword"]["mrr@10"]
+    baseline_held_out = {
+        "hash": (hash_held_out, "eval/results/test.json"),
+        "cloudflare": (cloudflare_held_out, "eval/results/cloudflare/test.json"),
+    }
+
+    rows = []
+    for embedder in ("hash", "cloudflare"):
+        records, arrangement = CHOSEN[embedder]
+        reused, source = baseline_held_out[embedder]
+        fresh = holdout2[(embedder, "default")]["overall"][BASELINE[1]]["mrr@10"]
+        rows.append(
+            {
+                "embedder": embedder,
+                "configuration": "today's default",
+                "change": f"{BASELINE[0]} records, {BASELINE[1]}",
+                "verdict": "baseline",
+                "dev": dev_runs[(embedder, BASELINE[0])]["overall"][BASELINE[1]]["mrr@10"],
+                "held_out": reused,
+                "holdout2": fresh,
+                "difference": round(fresh - reused, 4),
+                "held_out_source": source,
+                "holdout2_source": f"eval/results/experiments/{HOLDOUT2_SOURCES[(embedder, 'default')]}",
+            }
+        )
+        reused = held_out[embedder]["overall"][arrangement]["mrr@10"]
+        fresh = holdout2[(embedder, "chosen")]["overall"][arrangement]["mrr@10"]
+        rows.append(
+            {
+                "embedder": embedder,
+                "configuration": "chosen",
+                "change": f"{records} records, {arrangement}",
+                "verdict": "chosen",
+                "dev": dev_runs[(embedder, records)]["overall"][arrangement]["mrr@10"],
+                "held_out": reused,
+                "holdout2": fresh,
+                "difference": round(fresh - reused, 4),
+                "held_out_source": f"eval/results/experiments/{HELD_OUT_SOURCES[embedder]}",
+                "holdout2_source": f"eval/results/experiments/{HOLDOUT2_SOURCES[(embedder, 'chosen')]}",
+            }
+        )
+
+    return {
+        "title": "The two held-out sets, side by side",
+        "metric": "mrr@10",
+        "note": f"{REUSED_SPLIT_NOTE} {FRESH_SPLIT_NOTE} {BOTH_SPLITS_NOTE}",
+        "columns": ["dev", "held out (reused)", "fresh (holdout2)", "difference"],
+        "rows": rows,
+    }
+
+
+def chat_modes() -> dict | None:
+    """The legacy-against-grounded comparison, labelled for exactly what it is."""
+    for name in CHAT_MODE_SOURCES:
+        path = EXPERIMENTS / name
+        if path.exists():
+            data = _read(path)
+            break
+    else:
+        return None
+
+    summary = data["summary"]
+    runs = sum(block["runs"] for block in summary.values())
+    if data["questions"] != CHAT_MODE_QUESTIONS or runs != CHAT_MODE_RUNS:
+        # Not the full comparison. Rather than drawing a smaller run under the same heading and
+        # trusting a reader to spot the question count, the block is left out entirely.
+        return None
+    return {
+        "title": "Chat mode: legacy against grounded",
+        "label": "one local run, one model, one question set - not a benchmark",
+        "model": data["model"],
+        "questions": data["questions"],
+        "runs": runs,
+        "scale_note": (
+            f"{data['questions']} questions, {runs} runs - each mode answered every question once. "
+            "A shorter trial run exists in the result folder and is deliberately not shown here."
+        ),
+        "weak_check": data["weak_check"],
+        "stopped_early": data.get("stopped_early", ""),
+        "source": f"eval/results/experiments/{path.name}",
+        "recorded": PROVENANCE["chat_modes"],
+        "note": (
+            "Measured on this machine against one provider on one day. The timings are the "
+            "client's own, over a local socket, and say nothing about a deployed server."
+        ),
+        "modes": [
+            {
+                "mode": mode,
+                "runs": block["runs"],
+                "passed": block["passed"],
+                "expected_file_cited": block["expected_file_cited"],
+                "fact_present": block["fact_present"],
+                "no_answer": block["no_answer"],
+                "first_token_seconds_median": block["first_token_seconds_median"],
+                "total_seconds_median": block["total_seconds_median"],
+                "model_calls_total": block["model_calls_total"],
+                "tokens_total": block["tokens_total"],
+                "cited_files_in_prompt": block["cited_files_in_prompt"],
+                "cited_files_total": block["cited_files_total"],
+            }
+            for mode, block in summary.items()
+        ],
+    }
+
+
 # ---------------------------------------------------------------- limitations
 
 
@@ -423,7 +693,11 @@ def limitations() -> dict:
         },
         "sample_sizes": [
             {"what": "retrieval", "questions": 40, "detail": "20 per repository, 10 development and 10 held out each"},
-            {"what": "structural", "questions": 49, "detail": "24 itsdangerous and 25 flask, 26 development / 23 held out"},
+            {
+                "what": "structural",
+                "questions": 49,
+                "detail": "24 itsdangerous and 25 flask, 26 development / 23 held out",
+            },
             {"what": "answer smoke check", "questions": 15, "detail": "run in each of the two chat modes"},
         ],
         "sample_size_note": (
@@ -431,9 +705,7 @@ def limitations() -> dict:
             "questions is not a result. The subjects were chosen by hand, which is a bias a held-out split "
             "narrows but does not remove."
         ),
-        "repos": [
-            {"name": name, "url": repo["url"], "commit": repo["commit"]} for name, repo in REPOS.items()
-        ],
+        "repos": [{"name": name, "url": repo["url"], "commit": repo["commit"]} for name, repo in REPOS.items()],
         "repos_note": (
             "Two Python libraries by the same authors. Nothing here says how the system behaves on another "
             "language, a larger repository, or code written in a different style."
@@ -465,6 +737,7 @@ def build() -> dict:
         "structural": structural(),
         "system": system(),
         "timing": timing(),
+        "experiments": experiments(),
         "limitations": limitations(),
     }
 

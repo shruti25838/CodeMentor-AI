@@ -1,0 +1,88 @@
+{
+  "name": "flask",
+  "repo_url": "https://github.com/pallets/flask",
+  "commit": "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35",
+  "note": "holdout3: a third held-out set, written from the source at this commit after the dev, test and holdout2 sets existed. Every question is about a fact none of the thirty questions in eval/questions/flask.json and eval/questions/holdout2/flask.json asks about, and none is a rewording of one. expected_files are paths relative to the repo root; a retrieved record counts as relevant if its file is in the list. Not scored, and no result on it has been looked at.",
+  "questions": [
+    {
+      "id": "h3-flask-01",
+      "split": "holdout3",
+      "question": "Can one instance of a class-based view be shared by every request instead of a new one each time?",
+      "expected_files": [
+        "src/flask/views.py"
+      ]
+    },
+    {
+      "id": "h3-flask-02",
+      "split": "holdout3",
+      "question": "What goes wrong when something stores a value in the session and no secret key was configured?",
+      "expected_files": [
+        "src/flask/sessions.py"
+      ]
+    },
+    {
+      "id": "h3-flask-03",
+      "split": "holdout3",
+      "question": "When is the cookie written again on a response even though nothing in it was changed?",
+      "expected_files": [
+        "src/flask/sessions.py"
+      ]
+    },
+    {
+      "id": "h3-flask-04",
+      "split": "holdout3",
+      "question": "Are the keys of a dictionary put in order when it is encoded for a response body?",
+      "expected_files": [
+        "src/flask/json/provider.py"
+      ]
+    },
+    {
+      "id": "h3-flask-05",
+      "split": "holdout3",
+      "question": "Which command prints every registered rule with its endpoint and methods?",
+      "expected_files": [
+        "src/flask/cli.py"
+      ]
+    },
+    {
+      "id": "h3-flask-06",
+      "split": "holdout3",
+      "question": "How do I make sure my own command line callback runs with an application context around it?",
+      "expected_files": [
+        "src/flask/cli.py"
+      ]
+    },
+    {
+      "id": "h3-flask-07",
+      "split": "holdout3",
+      "question": "How can a template be rendered as an iterator of pieces rather than one finished string?",
+      "expected_files": [
+        "src/flask/templating.py"
+      ]
+    },
+    {
+      "id": "h3-flask-08",
+      "split": "holdout3",
+      "question": "How do I read settings out of a TOML file, passing my own callable to parse it?",
+      "expected_files": [
+        "src/flask/config.py"
+      ]
+    },
+    {
+      "id": "h3-flask-09",
+      "split": "holdout3",
+      "question": "What does the incoming body object do when its payload turns out not to be valid JSON?",
+      "expected_files": [
+        "src/flask/wrappers.py"
+      ]
+    },
+    {
+      "id": "h3-flask-10",
+      "split": "holdout3",
+      "question": "In the tutorial app, which status is returned when someone edits a post they did not write?",
+      "expected_files": [
+        "examples/tutorial/flaskr/blog.py"
+      ]
+    }
+  ]
+}
