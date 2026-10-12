@@ -35,8 +35,10 @@ from codeatlas.services.retrieval.sentence_transformer_embedder import SentenceT
 # The splits a question can be in. "dev" is what settings are chosen on; "test" is the original
 # held-out set, which by now has been scored several times and is a weak confirmation rather than
 # a clean one; "holdout2" is a second set written later, from the same two repositories, to be
-# scored once. "all" is not a split a question carries - it selects every question in a file.
-QUESTION_SPLITS = ("dev", "test", "holdout2")
+# scored once. "holdout3" is a third, written after holdout2 had been scored, and **has not been
+# scored at all** - no number on it appears anywhere, which is what makes it still worth spending.
+# "all" is not a split a question carries - it selects every question in a file.
+QUESTION_SPLITS = ("dev", "test", "holdout2", "holdout3")
 SPLITS = (*QUESTION_SPLITS, "all")
 # Results kept per question; MRR is computed over these.
 RANKED_DEPTH = 10

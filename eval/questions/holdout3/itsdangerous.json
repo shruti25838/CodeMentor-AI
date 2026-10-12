@@ -1,0 +1,88 @@
+{
+  "name": "itsdangerous",
+  "repo_url": "https://github.com/pallets/itsdangerous",
+  "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
+  "note": "holdout3: a third held-out set, written from the source at this commit after the dev, test and holdout2 sets existed. Every question is about a fact none of the thirty questions in eval/questions/itsdangerous.json and eval/questions/holdout2/itsdangerous.json asks about, and none is a rewording of one. expected_files are paths relative to the repo root; a retrieved record counts as relevant if its file is in the list. Not scored, and no result on it has been looked at.",
+  "questions": [
+    {
+      "id": "h3-itsd-01",
+      "split": "holdout3",
+      "question": "Which text encoding is used when a string has to become bytes before it is signed?",
+      "expected_files": [
+        "src/itsdangerous/encoding.py"
+      ]
+    },
+    {
+      "id": "h3-itsd-02",
+      "split": "holdout3",
+      "question": "What happens if the derivation scheme is set to a name the code does not recognise?",
+      "expected_files": [
+        "src/itsdangerous/signer.py"
+      ]
+    },
+    {
+      "id": "h3-itsd-03",
+      "split": "holdout3",
+      "question": "What error comes back when the value handed in has no separator in it at all?",
+      "expected_files": [
+        "src/itsdangerous/signer.py"
+      ]
+    },
+    {
+      "id": "h3-itsd-04",
+      "split": "holdout3",
+      "question": "Does the signature cover the time information as well, or is that appended afterwards?",
+      "expected_files": [
+        "src/itsdangerous/timed.py"
+      ]
+    },
+    {
+      "id": "h3-itsd-05",
+      "split": "holdout3",
+      "question": "What is raised when the signature verifies but the value carries no time part?",
+      "expected_files": [
+        "src/itsdangerous/timed.py"
+      ]
+    },
+    {
+      "id": "h3-itsd-06",
+      "split": "holdout3",
+      "question": "Why does turning a stored number into a date catch OSError and OverflowError?",
+      "expected_files": [
+        "src/itsdangerous/timed.py"
+      ]
+    },
+    {
+      "id": "h3-itsd-07",
+      "split": "holdout3",
+      "question": "How do I pass extra options through to the dumps call of the serializer underneath?",
+      "expected_files": [
+        "src/itsdangerous/serializer.py"
+      ]
+    },
+    {
+      "id": "h3-itsd-08",
+      "split": "holdout3",
+      "question": "Which single class is the ancestor of every error this library defines?",
+      "expected_files": [
+        "src/itsdangerous/exc.py"
+      ]
+    },
+    {
+      "id": "h3-itsd-09",
+      "split": "holdout3",
+      "question": "Are accented and non-Latin characters escaped in the compact payload, or kept as they are?",
+      "expected_files": [
+        "src/itsdangerous/_json.py"
+      ]
+    },
+    {
+      "id": "h3-itsd-10",
+      "split": "holdout3",
+      "question": "What must an object I supply in place of the built-in json module implement?",
+      "expected_files": [
+        "src/itsdangerous/serializer.py"
+      ]
+    }
+  ]
+}
