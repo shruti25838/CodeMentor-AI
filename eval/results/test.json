@@ -1,18 +1,27 @@
 {
-  "codementor_commit": "016c655",
-  "embedder": "hash (HashEmbeddingService, 384 dims, subtokens, hashed bag of words, not semantic)",
+  "codementor_commit": "a0004b2-dirty",
+  "embedder": "hash (HashEmbeddingService, 384 dims, subtokens, hashed bag of words, not semantic), records structured",
   "settings": {
     "retrieval": {
       "candidates": 20,
       "rerank_weight": 1.0,
       "rerank_subtokens": false,
       "drop_stopwords": true,
-      "skip_tests": false
+      "skip_tests": false,
+      "bm25_enabled": true,
+      "bm25_k1": 1.2,
+      "bm25_b": 0.75,
+      "bm25_rrf_k": 60,
+      "bm25_depth": 0,
+      "bm25_max_indexes": 4
     },
     "index": {
       "max_chars": null,
       "prefix_metadata": true,
-      "batch_size": 64
+      "batch_size": 64,
+      "record_format": "structured",
+      "window_chars": 2000,
+      "window_overlap": 200
     }
   },
   "split": "test",
@@ -25,28 +34,28 @@
         "file": {
           "records": 15,
           "clipped": 0,
-          "chars": 59558,
-          "chars_kept": 59558
+          "chars": 12053,
+          "chars_kept": 12053
         },
         "function": {
-          "records": 144,
+          "records": 162,
           "clipped": 0,
-          "chars": 90647,
-          "chars_kept": 90647
+          "chars": 93620,
+          "chars_kept": 93620
         }
       },
       "questions": 10,
       "hit_rate": {
         "@1": 0.8,
         "@3": 0.8,
-        "@5": 0.9
+        "@5": 0.8
       },
       "precision": {
         "@1": 0.8,
-        "@3": 0.7,
-        "@5": 0.56
+        "@3": 0.6667,
+        "@5": 0.58
       },
-      "mrr@10": 0.82,
+      "mrr@10": 0.8278,
       "recall@20": 1.0
     },
     "flask": {
@@ -57,45 +66,45 @@
         "file": {
           "records": 83,
           "clipped": 0,
-          "chars": 589406,
-          "chars_kept": 589406
+          "chars": 67722,
+          "chars_kept": 67722
         },
         "function": {
-          "records": 1622,
+          "records": 1779,
           "clipped": 0,
-          "chars": 824235,
-          "chars_kept": 824235
+          "chars": 851287,
+          "chars_kept": 851287
         }
       },
       "questions": 10,
       "hit_rate": {
-        "@1": 0.4,
-        "@3": 0.5,
-        "@5": 0.6
+        "@1": 0.6,
+        "@3": 0.9,
+        "@5": 0.9
       },
       "precision": {
-        "@1": 0.4,
-        "@3": 0.3667,
-        "@5": 0.28
+        "@1": 0.6,
+        "@3": 0.6333,
+        "@5": 0.48
       },
-      "mrr@10": 0.47,
-      "recall@20": 0.6
+      "mrr@10": 0.7292,
+      "recall@20": 1.0
     }
   },
   "overall": {
     "questions": 20,
     "hit_rate": {
-      "@1": 0.6,
-      "@3": 0.65,
-      "@5": 0.75
+      "@1": 0.7,
+      "@3": 0.85,
+      "@5": 0.85
     },
     "precision": {
-      "@1": 0.6,
-      "@3": 0.5333,
-      "@5": 0.42
+      "@1": 0.7,
+      "@3": 0.65,
+      "@5": 0.53
     },
-    "mrr@10": 0.645,
-    "recall@20": 0.8
+    "mrr@10": 0.7785,
+    "recall@20": 1.0
   },
   "per_question": {
     "itsdangerous": [
@@ -104,8 +113,8 @@
         "top5": [
           "src/itsdangerous/url_safe.py",
           "src/itsdangerous/__init__.py",
+          "src/itsdangerous/exc.py",
           "src/itsdangerous/url_safe.py",
-          "tests/test_itsdangerous/test_url_safe.py",
           "tests/test_itsdangerous/test_url_safe.py"
         ],
         "hit@5": 1.0,
@@ -117,9 +126,9 @@
         "top5": [
           "src/itsdangerous/signer.py",
           "src/itsdangerous/signer.py",
-          "src/itsdangerous/signer.py",
           "src/itsdangerous/serializer.py",
-          "src/itsdangerous/serializer.py"
+          "src/itsdangerous/serializer.py",
+          "src/itsdangerous/signer.py"
         ],
         "hit@5": 1.0,
         "rr": 1.0,
@@ -131,8 +140,8 @@
           "src/itsdangerous/signer.py",
           "src/itsdangerous/serializer.py",
           "src/itsdangerous/signer.py",
-          "src/itsdangerous/signer.py",
-          "src/itsdangerous/serializer.py"
+          "src/itsdangerous/serializer.py",
+          "src/itsdangerous/signer.py"
         ],
         "hit@5": 1.0,
         "rr": 1.0,
@@ -144,8 +153,8 @@
           "src/itsdangerous/url_safe.py",
           "src/itsdangerous/url_safe.py",
           "src/itsdangerous/url_safe.py",
-          "src/itsdangerous/exc.py",
-          "src/itsdangerous/exc.py"
+          "src/itsdangerous/timed.py",
+          "src/itsdangerous/url_safe.py"
         ],
         "hit@5": 1.0,
         "rr": 1.0,
@@ -157,7 +166,7 @@
           "src/itsdangerous/timed.py",
           "src/itsdangerous/timed.py",
           "src/itsdangerous/timed.py",
-          "src/itsdangerous/timed.py",
+          "src/itsdangerous/signer.py",
           "src/itsdangerous/timed.py"
         ],
         "hit@5": 1.0,
@@ -167,24 +176,24 @@
       {
         "id": "itsd-12",
         "top5": [
+          "src/itsdangerous/timed.py",
           "tests/test_itsdangerous/test_timed.py",
           "tests/test_itsdangerous/test_timed.py",
           "tests/test_itsdangerous/test_timed.py",
-          "tests/test_itsdangerous/test_timed.py",
-          "src/itsdangerous/exc.py"
+          "tests/test_itsdangerous/test_timed.py"
         ],
-        "hit@5": 1.0,
-        "rr": 0.2,
+        "hit@5": 0.0,
+        "rr": 0.1667,
         "recall@20": 1.0
       },
       {
         "id": "itsd-14",
         "top5": [
           "src/itsdangerous/serializer.py",
-          "src/itsdangerous/exc.py",
+          "src/itsdangerous/serializer.py",
           "src/itsdangerous/timed.py",
           "src/itsdangerous/serializer.py",
-          "tests/test_itsdangerous/test_serializer.py"
+          "src/itsdangerous/exc.py"
         ],
         "hit@5": 1.0,
         "rr": 1.0,
@@ -196,8 +205,8 @@
           "src/itsdangerous/signer.py",
           "src/itsdangerous/signer.py",
           "src/itsdangerous/signer.py",
-          "src/itsdangerous/serializer.py",
-          "src/itsdangerous/serializer.py"
+          "src/itsdangerous/signer.py",
+          "tests/test_itsdangerous/test_serializer.py"
         ],
         "hit@5": 1.0,
         "rr": 1.0,
@@ -219,14 +228,14 @@
       {
         "id": "itsd-20",
         "top5": [
-          "tests/test_itsdangerous/test_timed.py",
-          "tests/test_itsdangerous/test_signer.py",
-          "tests/test_itsdangerous/test_signer.py",
           "src/itsdangerous/exc.py",
-          "tests/test_itsdangerous/test_timed.py"
+          "tests/test_itsdangerous/test_timed.py",
+          "tests/test_itsdangerous/test_timed.py",
+          "tests/test_itsdangerous/test_timed.py",
+          "src/itsdangerous/exc.py"
         ],
         "hit@5": 0.0,
-        "rr": 0.0,
+        "rr": 0.1111,
         "recall@20": 1.0
       }
     ],
@@ -237,8 +246,8 @@
           "src/flask/config.py",
           "src/flask/config.py",
           "src/flask/config.py",
-          "tests/test_config.py",
-          "tests/test_config.py"
+          "src/flask/app.py",
+          "src/flask/app.py"
         ],
         "hit@5": 1.0,
         "rr": 1.0,
@@ -249,22 +258,22 @@
         "top5": [
           "src/flask/sessions.py",
           "src/flask/sessions.py",
-          "src/flask/ctx.py",
-          "tests/test_basic.py",
-          "src/flask/json/tag.py"
+          "src/flask/json/tag.py",
+          "src/flask/json/tag.py",
+          "src/flask/app.py"
         ],
         "hit@5": 1.0,
-        "rr": 0.2,
+        "rr": 0.3333,
         "recall@20": 1.0
       },
       {
         "id": "flask-06",
         "top5": [
           "tests/test_basic.py",
-          "src/flask/sansio/app.py",
+          "src/flask/app.py",
           "src/flask/sansio/scaffold.py",
-          "tests/test_user_error_handler.py",
-          "tests/test_user_error_handler.py"
+          "src/flask/sansio/scaffold.py",
+          "src/flask/sansio/app.py"
         ],
         "hit@5": 1.0,
         "rr": 0.5,
@@ -277,7 +286,7 @@
           "src/flask/sansio/blueprints.py",
           "src/flask/sansio/blueprints.py",
           "src/flask/sansio/blueprints.py",
-          "src/flask/wrappers.py"
+          "src/flask/sansio/app.py"
         ],
         "hit@5": 1.0,
         "rr": 1.0,
@@ -286,53 +295,53 @@
       {
         "id": "flask-10",
         "top5": [
+          "src/flask/helpers.py",
+          "src/flask/helpers.py",
           "tests/test_basic.py",
-          "src/flask/app.py",
-          "src/flask/ctx.py",
           "tests/test_basic.py",
-          "src/flask/ctx.py"
+          "tests/test_basic.py"
         ],
-        "hit@5": 0.0,
-        "rr": 0.0,
-        "recall@20": 0.0
+        "hit@5": 1.0,
+        "rr": 1.0,
+        "recall@20": 1.0
       },
       {
         "id": "flask-12",
         "top5": [
+          "src/flask/json/provider.py",
+          "src/flask/json/provider.py",
+          "src/flask/json/provider.py",
           "tests/test_basic.py",
-          "src/flask/helpers.py",
-          "tests/test_json.py",
-          "examples/celery/src/task_app/__init__.py",
-          "tests/test_blueprints.py"
+          "src/flask/json/__init__.py"
         ],
-        "hit@5": 0.0,
-        "rr": 0.0,
-        "recall@20": 0.0
+        "hit@5": 1.0,
+        "rr": 1.0,
+        "recall@20": 1.0
       },
       {
         "id": "flask-14",
         "top5": [
+          "src/flask/app.py",
+          "src/flask/app.py",
           "tests/test_async.py",
           "tests/test_async.py",
-          "tests/test_async.py",
-          "src/flask/views.py",
-          "tests/test_blueprints.py"
+          "tests/test_async.py"
         ],
-        "hit@5": 0.0,
-        "rr": 0.0,
-        "recall@20": 0.0
+        "hit@5": 1.0,
+        "rr": 1.0,
+        "recall@20": 1.0
       },
       {
         "id": "flask-16",
         "top5": [
-          "src/flask/templating.py",
-          "tests/test_apps/blueprintapp/apps/frontend/__init__.py",
-          "src/flask/templating.py",
-          "src/flask/templating.py",
-          "tests/test_blueprints.py"
+          "tests/test_templating.py",
+          "tests/test_templating.py",
+          "tests/test_templating.py",
+          "src/flask/debughelpers.py",
+          "src/flask/sansio/blueprints.py"
         ],
-        "hit@5": 1.0,
-        "rr": 1.0,
+        "hit@5": 0.0,
+        "rr": 0.125,
         "recall@20": 1.0
       },
       {
@@ -340,9 +349,9 @@
         "top5": [
           "src/flask/wrappers.py",
           "src/flask/wrappers.py",
-          "src/flask/helpers.py",
-          "src/flask/app.py",
-          "src/flask/app.py"
+          "src/flask/debughelpers.py",
+          "src/flask/debughelpers.py",
+          "src/flask/debughelpers.py"
         ],
         "hit@5": 1.0,
         "rr": 1.0,
@@ -351,17 +360,17 @@
       {
         "id": "flask-20",
         "top5": [
-          "tests/test_basic.py",
-          "tests/test_cli.py",
-          "tests/test_cli.py",
-          "tests/test_cli.py",
-          "examples/celery/src/task_app/__init__.py"
+          "src/flask/sansio/app.py",
+          "src/flask/wrappers.py",
+          "examples/tutorial/flaskr/auth.py",
+          "tests/test_blueprints.py",
+          "tests/test_basic.py"
         ],
-        "hit@5": 0.0,
-        "rr": 0.0,
-        "recall@20": 0.0
+        "hit@5": 1.0,
+        "rr": 0.3333,
+        "recall@20": 1.0
       }
     ]
   },
-  "seconds": 3.7
+  "seconds": 4.3
 }

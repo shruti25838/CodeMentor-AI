@@ -55,21 +55,35 @@ def _nothing_set(monkeypatch):
 # ---------------------------------------------------------------- what the settings resolve to
 
 
-def test_with_nothing_set_both_kinds_are_what_the_server_already_was() -> None:
-    """The whole of backwards compatibility, in one assertion per kind."""
+def test_with_nothing_set_each_kind_is_the_configuration_its_own_numbers_chose() -> None:
+    """The default change, in one assertion per kind. Both were measured, once each, on holdout3."""
     config = load_config()
-    for kind in ("hash", "cloudflare"):
-        assert config.record_format_for(kind) == WHOLE
-        assert config.bm25_enabled_for(kind) is False
+
+    assert (config.record_format_for("hash"), config.bm25_enabled_for("hash")) == (STRUCTURED, True)
+    assert (config.record_format_for("cloudflare"), config.bm25_enabled_for("cloudflare")) == (WHOLE, False)
 
 
-def test_the_old_global_variables_still_move_both_kinds(monkeypatch) -> None:
+def test_the_old_globals_still_move_every_kind_that_has_no_default_of_its_own(monkeypatch) -> None:
+    """hash follows the globals as it always did; cloudflare is pinned and has to be named.
+
+    That is what being pinned means, and it is deliberate: cloudflare's configuration rests on
+    a margin of 0.0071 of MRR@10 with hit@3 and hit@5 both falling, so it must not move
+    because someone changed a variable meant for the index the server is actually running.
+    """
+    monkeypatch.setenv("CODEATLAS_RECORD_FORMAT", "whole")
+    monkeypatch.setenv("CODEATLAS_BM25", "false")
+    config = load_config()
+
+    assert (config.record_format_for("hash"), config.bm25_enabled_for("hash")) == (WHOLE, False)
+    assert (config.record_format_for("fastembed"), config.bm25_enabled_for("fastembed")) == (WHOLE, False)
+    assert (config.record_format_for("cloudflare"), config.bm25_enabled_for("cloudflare")) == (WHOLE, False)
+
     monkeypatch.setenv("CODEATLAS_RECORD_FORMAT", "structured")
     monkeypatch.setenv("CODEATLAS_BM25", "true")
     config = load_config()
-    for kind in ("hash", "cloudflare"):
-        assert config.record_format_for(kind) == STRUCTURED
-        assert config.bm25_enabled_for(kind) is True
+
+    assert (config.record_format_for("hash"), config.bm25_enabled_for("hash")) == (STRUCTURED, True)
+    assert (config.record_format_for("cloudflare"), config.bm25_enabled_for("cloudflare")) == (WHOLE, False)
 
 
 def test_a_per_kind_variable_overrides_the_global_one_for_that_kind_only(monkeypatch) -> None:
@@ -117,12 +131,12 @@ def test_a_per_kind_value_that_is_not_a_setting_stops_the_app(monkeypatch, name,
 
 
 def test_an_empty_per_kind_variable_means_unset(monkeypatch) -> None:
-    monkeypatch.setenv("CODEATLAS_RECORD_FORMAT", "structured")
+    monkeypatch.setenv("CODEATLAS_RECORD_FORMAT", "whole")
     monkeypatch.setenv("CODEATLAS_HASH_RECORD_FORMAT", "")
     monkeypatch.setenv("CODEATLAS_HASH_BM25", "   ")
     config = load_config()
     assert config.hash_record_format is None and config.hash_bm25_enabled is None
-    assert config.record_format_for("hash") == STRUCTURED
+    assert config.record_format_for("hash") == WHOLE
 
 
 def test_setting_every_kind_at_once_clears_the_overrides(monkeypatch) -> None:

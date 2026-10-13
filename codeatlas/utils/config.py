@@ -29,6 +29,7 @@ from codeatlas.services.retrieval.fusion import DEFAULT_RRF_K as DEFAULT_BM25_RR
 from codeatlas.services.retrieval.record_format import (
     DEFAULT_WINDOW_CHARS,
     DEFAULT_WINDOW_OVERLAP,
+    STRUCTURED,
     WHOLE,
     validate_record_format,
 )
@@ -125,11 +126,13 @@ class AppConfig:
     hash_lowercase: bool = False
     hash_subtokens: bool = True
     # A second, lexical retriever (BM25) whose results are fused into the vector candidates by
-    # reciprocal rank fusion. Off by default, and with it off not one line of the BM25 path
-    # runs, so every number recorded in docs/RESULTS.md still describes the defaults. k1 and b
-    # are Okapi BM25's own parameters; rrf_k damps the top of each list during fusion; depth is
-    # how far down each list is read before fusing, and 0 means "as deep as the vector pool".
-    bm25_enabled: bool = False
+    # reciprocal rank fusion. **On** since the default change recorded in docs/RESULTS.md: it is
+    # worth about +0.105 of MRR@10 to the hash embedder on holdout3, the largest single effect
+    # this repository has measured. Off for cloudflare, below, where it was measured costing
+    # 0.031 of dev MRR. k1 and b are Okapi BM25's own parameters; rrf_k damps the top of each
+    # list during fusion; depth is how far down each list is read before fusing, and 0 means
+    # "as deep as the vector pool".
+    bm25_enabled: bool = True
     bm25_k1: float = DEFAULT_BM25_K1
     bm25_b: float = DEFAULT_BM25_B
     bm25_rrf_k: int = DEFAULT_BM25_RRF_K
@@ -140,11 +143,13 @@ class AppConfig:
     # the cap the least recently used one is dropped and rebuilt on demand.
     bm25_max_indexes: int = DEFAULT_BM25_MAX_INDEXES
     # What a record is: "whole" (one per file, one per function, each entire) or "structured"
-    # (file records become a header, long functions become overlapping windows). The default is
-    # today's, and it is what every number in docs/RESULTS.md was measured with. The format is
-    # part of the embedder's signature when it is not the default, so an index built under one
-    # is refused by a server running the other rather than searched and answered wrongly.
-    record_format: str = WHOLE
+    # (file records become a header, long functions become overlapping windows). "structured"
+    # since the default change recorded in docs/RESULTS.md; the figures measured under "whole"
+    # are kept, reproducible, in eval/results/legacy/. The format is part of the embedder's
+    # signature when it is not "whole", so an index built under one is refused by a server
+    # running the other rather than searched and answered wrongly - which means this default
+    # invalidates every index built before it, by design.
+    record_format: str = STRUCTURED
     record_window_chars: int = DEFAULT_WINDOW_CHARS
     record_window_overlap: int = DEFAULT_WINDOW_OVERLAP
     # The same two settings again, per index kind, because one server can hold two indexes of
@@ -154,14 +159,21 @@ class AppConfig:
     # BM25 fusion is worth about +0.105 of MRR@10 to hash on holdout3 and cost cloudflare 0.031
     # of dev MRR, because an embedder already at recall@20 1.000 has nothing to be rescued from.
     #
-    # None means "whatever the global setting above says", so the two global variables keep
-    # working exactly as they did and a server that sets neither pair is configured as before.
+    # None means "whatever the global setting above says". **hash is None**, so the two global
+    # variables still move it exactly as they always did and the legacy configuration is one
+    # CODEATLAS_RECORD_FORMAT away. **cloudflare is pinned**, because a measurement says so:
+    # structured passed the holdout3 rule by 0.0071 of MRR@10 with hit@3 and hit@5 both falling,
+    # and BM25 fusion cost it 0.031 of dev MRR. A configuration resting on a margin that small
+    # must not move because someone set a variable meant for the index the server is actually
+    # running, so the globals do not reach it: CODEATLAS_CLOUDFLARE_RECORD_FORMAT and
+    # CODEATLAS_CLOUDFLARE_BM25 move it, and nothing else does.
+    #
     # Only these two settings are per kind: the BM25 parameters (k1, b, rrf_k, depth) and the
     # window settings stay global, because nothing has measured them differing per index.
     hash_record_format: str | None = None
-    cloudflare_record_format: str | None = None
+    cloudflare_record_format: str | None = WHOLE
     hash_bm25_enabled: bool | None = None
-    cloudflare_bm25_enabled: bool | None = None
+    cloudflare_bm25_enabled: bool | None = False
     # How a repository question is answered. "legacy" is the agent pipeline every recorded
     # measurement describes and stays the default. "grounded" is one search and one streamed
     # model call over the snippets it found. Deep mode is unaffected either way.
@@ -307,10 +319,11 @@ def load_config() -> AppConfig:
         # 0 means no limit, which is what None is inside the app.
         embed_max_chars=_non_negative_int("CODEATLAS_EMBED_MAX_CHARS", 0) or None,
         embed_prefix_metadata=_flag("CODEATLAS_EMBED_PREFIX_METADATA", True),
-        # BM25, off by default. Every one of these is rejected at startup if it is not a number
-        # in range, for the reason _number gives: a retrieval setting that silently reverts
-        # makes a measurement describe something other than what was configured.
-        bm25_enabled=_flag("CODEATLAS_BM25", False),
+        # BM25, on by default for hash and pinned off for cloudflare. Every one of these is
+        # rejected at startup if it is not a number in range, for the reason _number gives: a
+        # retrieval setting that silently reverts makes a measurement describe something other
+        # than what was configured.
+        bm25_enabled=_flag("CODEATLAS_BM25", True),
         bm25_k1=_positive_float("CODEATLAS_BM25_K1", DEFAULT_BM25_K1),
         bm25_b=_weight("CODEATLAS_BM25_B", DEFAULT_BM25_B),
         bm25_rrf_k=_positive_int("CODEATLAS_BM25_RRF_K", DEFAULT_BM25_RRF_K),
@@ -319,16 +332,18 @@ def load_config() -> AppConfig:
         # At least 1: a cap of 0 would rebuild the index for every question, which is not a
         # memory setting but a way of making the feature slow enough to look broken.
         bm25_max_indexes=_positive_int("CODEATLAS_BM25_MAX_INDEXES", DEFAULT_BM25_MAX_INDEXES),
-        record_format=validate_record_format(os.getenv("CODEATLAS_RECORD_FORMAT", WHOLE)),
+        record_format=validate_record_format(os.getenv("CODEATLAS_RECORD_FORMAT", STRUCTURED)),
         record_window_chars=_positive_int("CODEATLAS_RECORD_WINDOW_CHARS", DEFAULT_WINDOW_CHARS),
         record_window_overlap=_non_negative_int("CODEATLAS_RECORD_WINDOW_OVERLAP", DEFAULT_WINDOW_OVERLAP),
         # Per index kind, each falling back to the global variable above when it is not set, so
         # that a server configured before these existed is configured exactly as it was. An
         # unreadable value still stops the app: "set but wrong" must never read as "not set".
         hash_record_format=_optional_record_format("CODEATLAS_HASH_RECORD_FORMAT"),
-        cloudflare_record_format=_optional_record_format("CODEATLAS_CLOUDFLARE_RECORD_FORMAT"),
+        # `or WHOLE` for the same reason as _pinned_off: unset means whole here, not "ask the
+        # global variable".
+        cloudflare_record_format=_optional_record_format("CODEATLAS_CLOUDFLARE_RECORD_FORMAT") or WHOLE,
         hash_bm25_enabled=_optional_flag("CODEATLAS_HASH_BM25"),
-        cloudflare_bm25_enabled=_optional_flag("CODEATLAS_CLOUDFLARE_BM25"),
+        cloudflare_bm25_enabled=_pinned_off("CODEATLAS_CLOUDFLARE_BM25"),
         chat_mode=validate_chat_mode(os.getenv("CODEATLAS_CHAT_MODE", LEGACY)),
         fastembed_model=os.getenv("CODEATLAS_FASTEMBED_MODEL", DEFAULT_FASTEMBED_MODEL),
         fastembed_batch_size=int(os.getenv("CODEATLAS_FASTEMBED_BATCH_SIZE", str(DEFAULT_FASTEMBED_BATCH_SIZE))),
@@ -392,6 +407,17 @@ def _optional_flag(name: str) -> bool | None:
     if raw is None or raw.strip() == "":
         return None
     return _flag(name, False)
+
+
+def _pinned_off(name: str) -> bool:
+    """One on/off setting that is off unless this variable says otherwise.
+
+    Unlike `_optional_flag` it does not fall back to the global setting, which is the whole
+    point: the index kind this guards was measured wanting fusion off, and it must not be turned
+    on by a variable aimed at the index the server is actually running.
+    """
+    setting = _optional_flag(name)
+    return False if setting is None else setting
 
 
 def _optional_record_format(name: str) -> str | None:

@@ -89,8 +89,10 @@ def _config(provider: str):
 
 
 def test_hash_is_still_the_default(monkeypatch) -> None:
+    """Still hash, now inside a record-format wrapper: the default format is no longer "whole"."""
     monkeypatch.delenv("CODEATLAS_EMBEDDING_PROVIDER", raising=False)
-    assert isinstance(build_embedder(load_config()), HashEmbeddingService)
+    embedder = build_embedder(load_config())
+    assert isinstance(getattr(embedder, "inner", embedder), HashEmbeddingService)
 
 
 def test_cloudflare_is_selected_by_name_and_builds_without_calling_anything(monkeypatch) -> None:

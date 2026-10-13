@@ -87,9 +87,21 @@ CHAT_MODE_SOURCES = ("chat-modes.json",)
 CHAT_MODE_QUESTIONS = 15
 CHAT_MODE_RUNS = 30
 
-# What the server runs today, and what the decision entry chose, per embedder.
-BASELINE = ("whole", "current")
+# What the server runs **today**, per embedder, after the default change. hash moved; cloudflare
+# did not, and the entry that moved hash records why it did not.
+DEFAULT = {"hash": ("structured", "rrf+keyword"), "cloudflare": ("whole", "current")}
+# What the server ran **before** that change, for both embedders. Every figure in
+# eval/results/legacy/ and every holdout3 incumbent row describes this one.
+LEGACY = ("whole", "current")
+# What the decision entry put forward as each embedder's candidate on holdout3. For hash this
+# is now the default; for cloudflare it passed the rule and was **not** adopted.
 CHOSEN = {"hash": ("structured", "rrf+keyword"), "cloudflare": ("structured", "current")}
+# Per embedder: what the configuration is called on the page, now that "the default" and "the
+# candidate" are the same row for one embedder and different rows for the other.
+CONFIGURATION_LABELS = {
+    "hash": {"legacy": "the previous default", "chosen": "the default"},
+    "cloudflare": {"legacy": "the default", "chosen": "candidate, not adopted"},
+}
 # Arrangements the experiment can score and the application has no setting for. BM25 was built
 # as a second retriever fused with the first, so "BM25 alone" is not a mode the server has.
 NOT_CONFIGURABLE = ("bm25", "vector", "rrf")
@@ -110,6 +122,11 @@ REPOS = {
 # neither, so both live here. tests/test_build_benchmarks.py checks every heading still exists.
 PROVENANCE = {
     "retrieval.hash": {
+        "commit": "a0004b2",
+        "date": "2026-10-12",
+        "results_entry": "Change: the hash default is structured records with BM25 fusion",
+    },
+    "retrieval.hash.legacy": {
         "commit": "016c655",
         "date": "2026-10-11",
         "results_entry": "Change: the committed hash retrieval results carry recall@20",
@@ -225,10 +242,43 @@ def _row(scope: str, metrics: dict) -> dict:
 
 
 def hash_retrieval() -> dict:
-    """scripts/eval_retrieval.py with the default (hash) embedder, both splits."""
+    """scripts/eval_retrieval.py with the default (hash) embedder, both splits.
+
+    Twice over: the configuration the server runs now, and the one it ran before. The legacy
+    runs are kept and drawn rather than deleted, because this file quotes the held-out pair
+    0.750 / 0.645 in entry after entry and a reader has to be able to see what moved.
+    """
+    splits = _hash_splits(RESULTS, PROVENANCE["retrieval.hash"], "")
+    splits += _hash_splits(
+        RESULTS / "legacy",
+        PROVENANCE["retrieval.hash.legacy"],
+        "legacy",
+        note=(
+            "The configuration the server ran before the default change: whole records, BM25 off. "
+            "Kept and reproducible - see eval/results/legacy/README.md - because almost every entry "
+            "in docs/RESULTS.md was measured under it. These are not the server's current numbers."
+        ),
+    )
+    return {
+        "id": "hash",
+        "label": "hash",
+        "default": True,
+        "configuration": "structured records, BM25 fusion on",
+        "embedder": _read(RESULTS / "dev.json")["embedder"],
+        "note": (
+            "The server's default. A hashed bag of words over identifier subtokens, not a semantic "
+            "embedding, searched alongside a BM25 index of the same records and fused. Records are "
+            "structured: a file is a header of its signatures, a long function is overlapping windows."
+        ),
+        "splits": splits,
+    }
+
+
+def _hash_splits(folder: Path, recorded: dict, suffix: str, note: str = "") -> list[dict]:
+    """The dev and held-out tables for one hash configuration, read from one folder."""
     splits = []
     for name in ("dev", "test"):
-        data = _read(RESULTS / f"{name}.json")
+        data = _read(folder / f"{name}.json")
         rows = []
         for repo in REPOS:
             m = data["repos"][repo]
@@ -261,27 +311,34 @@ def hash_retrieval() -> dict:
                 },
             )
         )
+        label = f"{SPLIT_LABELS[name]} ({suffix})" if suffix else SPLIT_LABELS[name]
+        reused_note = REUSED_SPLIT_NOTE if name == "test" else ""
         splits.append(
             {
-                "id": SPLIT_LABELS[name],
+                "id": label,
                 "questions": o["questions"],
-                "source": f"eval/results/{name}.json",
-                "recorded": PROVENANCE["retrieval.hash"],
+                "configuration": _configuration_of(data),
+                "source": f"{folder.relative_to(ROOT).as_posix()}/{name}.json",
+                "recorded": recorded,
                 "result_file_commit": data["codementor_commit"],
                 "reused": name == "test",
-                "note": REUSED_SPLIT_NOTE if name == "test" else "",
+                "note": " ".join(part for part in (note, reused_note) if part),
                 "rows": rows,
             }
         )
+    return splits
 
-    return {
-        "id": "hash",
-        "label": "hash",
-        "default": True,
-        "embedder": _read(RESULTS / "dev.json")["embedder"],
-        "note": "The server's default. A hashed bag of words over identifier subtokens, not a semantic embedding.",
-        "splits": splits,
-    }
+
+def _configuration_of(data: dict) -> str:
+    """What a result file says it was measured under, read from the file rather than assumed.
+
+    The files recorded at 016c655 predate both settings, so a file that names neither is reported
+    as the configuration that was the only one then: whole records with BM25 off.
+    """
+    settings = data.get("settings", {})
+    records = settings.get("index", {}).get("record_format", LEGACY[0])
+    bm25 = settings.get("retrieval", {}).get("bm25_enabled", False)
+    return f"{records} records, BM25 {'on' if bm25 else 'off'}"
 
 
 def cloudflare_retrieval() -> dict:
@@ -485,7 +542,7 @@ def _scores(metrics: dict | None) -> dict | None:
 
 def _verdict(embedder: str, records: str, arrangement: str, dev: dict, baseline: dict) -> str:
     """The keep rule, applied: kept only if dev MRR rises and dev hit@5 does not fall."""
-    if (records, arrangement) == BASELINE:
+    if (records, arrangement) == LEGACY:
         return "baseline"
     if (records, arrangement) == CHOSEN[embedder]:
         return "chosen"
@@ -518,6 +575,10 @@ def experiments() -> dict:
                     "arrangement": arrangement,
                     "change": f"{records} records, {description}",
                     "verdict": verdict,
+                    # Which row the server actually runs, now that the default has moved for one
+                    # embedder and not the other. Computed, never typed beside a number.
+                    "is_default": (records, arrangement) == DEFAULT[embedder],
+                    "is_previous_default": (records, arrangement) == LEGACY,
                     "dev": _scores(dev),
                     "held_out": None,
                     "holdout2": None,
@@ -567,30 +628,35 @@ def splits_compared(dev_runs: dict, held_out: dict, holdout2: dict, holdout3_run
     there and the source of each number is named, rather than one of them being quietly filled
     in from somewhere a reader cannot check.
     """
-    hash_held_out = _read(RESULTS / "test.json")["overall"]["mrr@10"]
+    # The **legacy** file, deliberately. This row describes whole records with BM25 off, and
+    # eval/results/test.json now describes the default, which for hash is a different thing.
+    hash_held_out_source = "eval/results/legacy/test.json"
+    hash_held_out = _read(RESULTS / "legacy" / "test.json")["overall"]["mrr@10"]
     cloudflare_held_out = next(
         r for r in _read(RESULTS / "cloudflare" / "test.json")["results"] if r["config"] == "mean-2000"
     )["overall"]["keyword"]["mrr@10"]
     baseline_held_out = {
-        "hash": (hash_held_out, "eval/results/test.json"),
+        "hash": (hash_held_out, hash_held_out_source),
         "cloudflare": (cloudflare_held_out, "eval/results/cloudflare/test.json"),
     }
 
     rows = []
     for embedder in ("hash", "cloudflare"):
         records, arrangement = CHOSEN[embedder]
+        labels = CONFIGURATION_LABELS[embedder]
         reused, source = baseline_held_out[embedder]
-        fresh = holdout2[(embedder, "default")]["overall"][BASELINE[1]]["mrr@10"]
+        fresh = holdout2[(embedder, "default")]["overall"][LEGACY[1]]["mrr@10"]
         rows.append(
             {
                 "embedder": embedder,
-                "configuration": "today's default",
-                "change": f"{BASELINE[0]} records, {BASELINE[1]}",
+                "configuration": labels["legacy"],
+                "change": f"{LEGACY[0]} records, {LEGACY[1]}",
                 "verdict": "baseline",
-                "dev": dev_runs[(embedder, BASELINE[0])]["overall"][BASELINE[1]]["mrr@10"],
+                "is_default": DEFAULT[embedder] == LEGACY,
+                "dev": dev_runs[(embedder, LEGACY[0])]["overall"][LEGACY[1]]["mrr@10"],
                 "held_out": reused,
                 "holdout2": fresh,
-                "holdout3": holdout3_runs[(embedder, "default")]["overall"][BASELINE[1]]["mrr@10"],
+                "holdout3": holdout3_runs[(embedder, "default")]["overall"][LEGACY[1]]["mrr@10"],
                 "difference": round(fresh - reused, 4),
                 "held_out_source": source,
                 "holdout2_source": f"eval/results/experiments/{HOLDOUT2_SOURCES[(embedder, 'default')]}",
@@ -602,9 +668,10 @@ def splits_compared(dev_runs: dict, held_out: dict, holdout2: dict, holdout3_run
         rows.append(
             {
                 "embedder": embedder,
-                "configuration": "chosen",
+                "configuration": labels["chosen"],
                 "change": f"{records} records, {arrangement}",
                 "verdict": "chosen",
+                "is_default": (records, arrangement) == DEFAULT[embedder],
                 "dev": dev_runs[(embedder, records)]["overall"][arrangement]["mrr@10"],
                 "held_out": reused,
                 "holdout2": fresh,
@@ -639,14 +706,14 @@ def holdout3(runs: dict) -> dict:
     rows = []
     for embedder in ("hash", "cloudflare"):
         guard = HOLDOUT3_GUARD[embedder]
-        incumbent = runs[(embedder, "default")]["overall"][BASELINE[1]]
+        incumbent = runs[(embedder, "default")]["overall"][LEGACY[1]]
         records, arrangement = CHOSEN[embedder]
         candidate = runs[(embedder, "chosen")]["overall"][arrangement]
         rows.append(
             _holdout3_row(
                 embedder,
-                "today's default",
-                f"{BASELINE[0]} records, {BASELINE[1]}",
+                "the configuration it was scored against",
+                f"{LEGACY[0]} records, {LEGACY[1]}",
                 incumbent,
                 eligible=True,
                 verdict="the incumbent",
@@ -689,10 +756,13 @@ def holdout3(runs: dict) -> dict:
             "cloudflare whole only if its MRR@10 is higher and its recall@20 is not lower."
         ),
         "guards": HOLDOUT3_GUARD,
+        "adopted": {embedder: CHOSEN[embedder] == DEFAULT[embedder] for embedder in HOLDOUT3_GUARD},
         "note": (
             "One run per candidate, each made once, with no setting changed afterwards and nothing "
             "re-scored. The verdicts below are computed from the committed result files against that "
-            "rule. Passing it makes a default change proposable, not applied: the server still runs "
+            "rule. Both candidates passed it; only the hash one was adopted. The cloudflare candidate "
+            "passed by 0.0071 of MRR@10 while hit@3 fell 0.900 to 0.850 and hit@5 fell 0.950 to 0.900, "
+            "and flipping it would mean paying to embed every document again, so cloudflare still runs "
             "whole records with BM25 off."
         ),
         "source": "eval/results/experiments/",

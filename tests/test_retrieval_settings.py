@@ -169,8 +169,13 @@ def test_index_max_chars_and_metadata_prefix(tmp_path):
 
 def test_server_uses_the_tuned_settings():
     assert get_retrieval_settings() == RetrievalSettings(
-        candidates=20, rerank_weight=1.0, rerank_subtokens=False, drop_stopwords=True, skip_tests=False
+        candidates=20,
+        rerank_weight=1.0,
+        rerank_subtokens=False,
+        drop_stopwords=True,
+        skip_tests=False,
+        bm25_enabled=True,
     )
-    assert get_embedder().signature() == "hash:384:lowercase=0:subtokens=1"
+    assert get_embedder().signature() == "hash:384:lowercase=0:subtokens=1|records=structured"
     config = get_config()
     assert (config.embed_max_chars, config.embed_prefix_metadata) == (None, True)

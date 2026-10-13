@@ -31,21 +31,115 @@
         "id": "hash",
         "label": "hash",
         "default": true,
-        "embedder": "hash (HashEmbeddingService, 384 dims, subtokens, hashed bag of words, not semantic)",
-        "note": "The server's default. A hashed bag of words over identifier subtokens, not a semantic embedding.",
+        "configuration": "structured records, BM25 fusion on",
+        "embedder": "hash (HashEmbeddingService, 384 dims, subtokens, hashed bag of words, not semantic), records structured",
+        "note": "The server's default. A hashed bag of words over identifier subtokens, not a semantic embedding, searched alongside a BM25 index of the same records and fused. Records are structured: a file is a header of its signatures, a long function is overlapping windows.",
         "splits": [
           {
             "id": "development",
             "questions": 20,
+            "configuration": "structured records, BM25 on",
             "source": "eval/results/dev.json",
+            "recorded": {
+              "commit": "a0004b2",
+              "date": "2026-10-12",
+              "results_entry": "Change: the hash default is structured records with BM25 fusion"
+            },
+            "result_file_commit": "a0004b2-dirty",
+            "reused": false,
+            "note": "",
+            "rows": [
+              {
+                "scope": "itsdangerous",
+                "questions": 10,
+                "hit@1": 0.6,
+                "hit@3": 0.7,
+                "hit@5": 0.8,
+                "p@3": 0.5667,
+                "mrr@10": 0.685,
+                "recall@20": 1.0
+              },
+              {
+                "scope": "flask",
+                "questions": 10,
+                "hit@1": 0.6,
+                "hit@3": 1.0,
+                "hit@5": 1.0,
+                "p@3": 0.6,
+                "mrr@10": 0.8,
+                "recall@20": 1.0
+              },
+              {
+                "scope": "overall",
+                "questions": 20,
+                "hit@1": 0.6,
+                "hit@3": 0.85,
+                "hit@5": 0.9,
+                "p@3": 0.5833,
+                "mrr@10": 0.7425,
+                "recall@20": 1.0
+              }
+            ]
+          },
+          {
+            "id": "held-out",
+            "questions": 20,
+            "configuration": "structured records, BM25 on",
+            "source": "eval/results/test.json",
+            "recorded": {
+              "commit": "a0004b2",
+              "date": "2026-10-12",
+              "results_entry": "Change: the hash default is structured records with BM25 fusion"
+            },
+            "result_file_commit": "a0004b2-dirty",
+            "reused": true,
+            "note": "The original held-out split was reused: it has been scored in at least six recorded entries since it was written, so it has informed choices before and is a weak confirmation rather than a clean one.",
+            "rows": [
+              {
+                "scope": "itsdangerous",
+                "questions": 10,
+                "hit@1": 0.8,
+                "hit@3": 0.8,
+                "hit@5": 0.8,
+                "p@3": 0.6667,
+                "mrr@10": 0.8278,
+                "recall@20": 1.0
+              },
+              {
+                "scope": "flask",
+                "questions": 10,
+                "hit@1": 0.6,
+                "hit@3": 0.9,
+                "hit@5": 0.9,
+                "p@3": 0.6333,
+                "mrr@10": 0.7292,
+                "recall@20": 1.0
+              },
+              {
+                "scope": "overall",
+                "questions": 20,
+                "hit@1": 0.7,
+                "hit@3": 0.85,
+                "hit@5": 0.85,
+                "p@3": 0.65,
+                "mrr@10": 0.7785,
+                "recall@20": 1.0
+              }
+            ]
+          },
+          {
+            "id": "development (legacy)",
+            "questions": 20,
+            "configuration": "whole records, BM25 off",
+            "source": "eval/results/legacy/dev.json",
             "recorded": {
               "commit": "016c655",
               "date": "2026-10-11",
               "results_entry": "Change: the committed hash retrieval results carry recall@20"
             },
-            "result_file_commit": "016c655",
+            "result_file_commit": "5312156",
             "reused": false,
-            "note": "",
+            "note": "The configuration the server ran before the default change: whole records, BM25 off. Kept and reproducible - see eval/results/legacy/README.md - because almost every entry in docs/RESULTS.md was measured under it. These are not the server's current numbers.",
             "rows": [
               {
                 "scope": "itsdangerous",
@@ -80,17 +174,18 @@
             ]
           },
           {
-            "id": "held-out",
+            "id": "held-out (legacy)",
             "questions": 20,
-            "source": "eval/results/test.json",
+            "configuration": "whole records, BM25 off",
+            "source": "eval/results/legacy/test.json",
             "recorded": {
               "commit": "016c655",
               "date": "2026-10-11",
               "results_entry": "Change: the committed hash retrieval results carry recall@20"
             },
-            "result_file_commit": "016c655",
+            "result_file_commit": "5312156",
             "reused": true,
-            "note": "The original held-out split was reused: it has been scored in at least six recorded entries since it was written, so it has informed choices before and is a weak confirmation rather than a clean one.",
+            "note": "The configuration the server ran before the default change: whole records, BM25 off. Kept and reproducible - see eval/results/legacy/README.md - because almost every entry in docs/RESULTS.md was measured under it. These are not the server's current numbers. The original held-out split was reused: it has been scored in at least six recorded entries since it was written, so it has informed choices before and is a weak confirmation rather than a clean one.",
             "rows": [
               {
                 "scope": "itsdangerous",
@@ -502,6 +597,8 @@
         "arrangement": "current",
         "change": "whole records, vector candidates, ordered by keyword overlap (what the server does today)",
         "verdict": "baseline",
+        "is_default": false,
+        "is_previous_default": true,
         "dev": {
           "questions": 20,
           "hit@5": 0.75,
@@ -534,6 +631,8 @@
         "arrangement": "bm25",
         "change": "whole records, BM25 over every record, ordered by BM25 score",
         "verdict": "met the rule; the server has no mode for it",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.85,
@@ -556,6 +655,8 @@
         "arrangement": "vector",
         "change": "whole records, vector candidates, ordered by vector similarity",
         "verdict": "rejected",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.55,
@@ -578,6 +679,8 @@
         "arrangement": "rrf",
         "change": "whole records, reciprocal rank fusion of the vector and BM25 rankings",
         "verdict": "rejected",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.8,
@@ -600,6 +703,8 @@
         "arrangement": "rrf+keyword",
         "change": "whole records, reciprocal rank fusion of vector and BM25, then ordered by keyword overlap",
         "verdict": "met the rule; not chosen",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.9,
@@ -622,6 +727,8 @@
         "arrangement": "current",
         "change": "structured records, vector candidates, ordered by keyword overlap (what the server does today)",
         "verdict": "met the rule; not chosen",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.75,
@@ -644,6 +751,8 @@
         "arrangement": "bm25",
         "change": "structured records, BM25 over every record, ordered by BM25 score",
         "verdict": "met the rule; the server has no mode for it",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.85,
@@ -666,6 +775,8 @@
         "arrangement": "vector",
         "change": "structured records, vector candidates, ordered by vector similarity",
         "verdict": "rejected",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.6,
@@ -688,6 +799,8 @@
         "arrangement": "rrf",
         "change": "structured records, reciprocal rank fusion of the vector and BM25 rankings",
         "verdict": "rejected",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.8,
@@ -710,6 +823,8 @@
         "arrangement": "rrf+keyword",
         "change": "structured records, reciprocal rank fusion of vector and BM25, then ordered by keyword overlap",
         "verdict": "chosen",
+        "is_default": true,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.9,
@@ -747,6 +862,8 @@
         "arrangement": "current",
         "change": "whole records, vector candidates, ordered by keyword overlap (what the server does today)",
         "verdict": "baseline",
+        "is_default": true,
+        "is_previous_default": true,
         "dev": {
           "questions": 20,
           "hit@5": 1.0,
@@ -779,6 +896,8 @@
         "arrangement": "bm25",
         "change": "whole records, BM25 over every record, ordered by BM25 score",
         "verdict": "rejected",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.85,
@@ -801,6 +920,8 @@
         "arrangement": "vector",
         "change": "whole records, vector candidates, ordered by vector similarity",
         "verdict": "rejected",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.9,
@@ -823,6 +944,8 @@
         "arrangement": "rrf",
         "change": "whole records, reciprocal rank fusion of the vector and BM25 rankings",
         "verdict": "rejected",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.95,
@@ -845,6 +968,8 @@
         "arrangement": "rrf+keyword",
         "change": "whole records, reciprocal rank fusion of vector and BM25, then ordered by keyword overlap",
         "verdict": "rejected",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.95,
@@ -867,6 +992,8 @@
         "arrangement": "current",
         "change": "structured records, vector candidates, ordered by keyword overlap (what the server does today)",
         "verdict": "chosen",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 1.0,
@@ -904,6 +1031,8 @@
         "arrangement": "bm25",
         "change": "structured records, BM25 over every record, ordered by BM25 score",
         "verdict": "rejected",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.85,
@@ -926,6 +1055,8 @@
         "arrangement": "vector",
         "change": "structured records, vector candidates, ordered by vector similarity",
         "verdict": "rejected",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.9,
@@ -948,6 +1079,8 @@
         "arrangement": "rrf",
         "change": "structured records, reciprocal rank fusion of the vector and BM25 rankings",
         "verdict": "rejected",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.95,
@@ -970,6 +1103,8 @@
         "arrangement": "rrf+keyword",
         "change": "structured records, reciprocal rank fusion of vector and BM25, then ordered by keyword overlap",
         "verdict": "rejected",
+        "is_default": false,
+        "is_previous_default": false,
         "dev": {
           "questions": 20,
           "hit@5": 0.95,
@@ -1001,23 +1136,25 @@
       "rows": [
         {
           "embedder": "hash",
-          "configuration": "today's default",
+          "configuration": "the previous default",
           "change": "whole records, current",
           "verdict": "baseline",
+          "is_default": false,
           "dev": 0.6625,
           "held_out": 0.645,
           "holdout2": 0.3956,
           "holdout3": 0.5517,
           "difference": -0.2494,
-          "held_out_source": "eval/results/test.json",
+          "held_out_source": "eval/results/legacy/test.json",
           "holdout2_source": "eval/results/experiments/holdout2-default-hash.json",
           "holdout3_source": "eval/results/experiments/holdout3-default-hash.json"
         },
         {
           "embedder": "hash",
-          "configuration": "chosen",
+          "configuration": "the default",
           "change": "structured records, rrf+keyword",
           "verdict": "chosen",
+          "is_default": true,
           "dev": 0.7425,
           "held_out": 0.7785,
           "holdout2": 0.5763,
@@ -1029,9 +1166,10 @@
         },
         {
           "embedder": "cloudflare",
-          "configuration": "today's default",
+          "configuration": "the default",
           "change": "whole records, current",
           "verdict": "baseline",
+          "is_default": true,
           "dev": 0.8042,
           "held_out": 0.8538,
           "holdout2": 0.5867,
@@ -1043,9 +1181,10 @@
         },
         {
           "embedder": "cloudflare",
-          "configuration": "chosen",
+          "configuration": "candidate, not adopted",
           "change": "structured records, current",
           "verdict": "chosen",
+          "is_default": false,
           "dev": 0.825,
           "held_out": 0.8729,
           "holdout2": 0.6408,
@@ -1074,7 +1213,11 @@
         "hash": "hit@5",
         "cloudflare": "recall@20"
       },
-      "note": "One run per candidate, each made once, with no setting changed afterwards and nothing re-scored. The verdicts below are computed from the committed result files against that rule. Passing it makes a default change proposable, not applied: the server still runs whole records with BM25 off.",
+      "adopted": {
+        "hash": true,
+        "cloudflare": false
+      },
+      "note": "One run per candidate, each made once, with no setting changed afterwards and nothing re-scored. The verdicts below are computed from the committed result files against that rule. Both candidates passed it; only the hash one was adopted. The cloudflare candidate passed by 0.0071 of MRR@10 while hit@3 fell 0.900 to 0.850 and hit@5 fell 0.950 to 0.900, and flipping it would mean paying to embed every document again, so cloudflare still runs whole records with BM25 off.",
       "source": "eval/results/experiments/",
       "recorded": {
         "commit": "ecf3744",
@@ -1084,7 +1227,7 @@
       "rows": [
         {
           "embedder": "hash",
-          "configuration": "today's default",
+          "configuration": "the configuration it was scored against",
           "change": "whole records, current",
           "questions": 20,
           "hit@1": 0.5,
@@ -1126,7 +1269,7 @@
         },
         {
           "embedder": "cloudflare",
-          "configuration": "today's default",
+          "configuration": "the configuration it was scored against",
           "change": "whole records, current",
           "questions": 20,
           "hit@1": 0.7,

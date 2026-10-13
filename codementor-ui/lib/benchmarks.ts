@@ -32,6 +32,8 @@ export interface Split {
     id: string;
     questions: number;
     source?: string;
+    /** The record format and BM25 setting this table was measured under, as its file records them. */
+    configuration?: string;
     recorded?: Recorded;
     /** True for the original held-out split, which earlier runs scored again and again. */
     reused?: boolean;
@@ -43,6 +45,8 @@ export interface Provider {
     id: string;
     label: string;
     default?: boolean;
+    /** The settings this provider's current tables describe; absent on a provider with one. */
+    configuration?: string;
     embedder?: string;
     note?: string;
     splits?: Split[];
@@ -311,6 +315,8 @@ export interface RetrievalSplit {
     questions: number;
     recordedLabel: string;
     source: string;
+    /** What this table was measured under, read out of the result file it came from. */
+    configuration: string;
     /** The original held-out split was scored again and again; the page has to say so. */
     reused: boolean;
     note: string;
@@ -321,6 +327,8 @@ export interface RetrievalProvider {
     id: string;
     label: string;
     isDefault: boolean;
+    /** The settings the default panel's current numbers describe, named rather than implied. */
+    configuration: string;
     embedder: string;
     note: string;
     splits: RetrievalSplit[];
@@ -350,6 +358,7 @@ export function retrievalView(summary?: Summary): RetrievalView | null {
             id: provider.id,
             label: provider.label,
             isDefault: provider.default === true,
+            configuration: provider.configuration ?? "",
             embedder: provider.embedder ?? "",
             note: provider.note ?? "",
             splits: (provider.splits ?? []).map((split) => ({
@@ -357,6 +366,7 @@ export function retrievalView(summary?: Summary): RetrievalView | null {
                 questions: split.questions,
                 recordedLabel: recordedLabel(split.recorded),
                 source: split.source ?? "",
+                configuration: split.configuration ?? "",
                 reused: split.reused === true,
                 note: split.note ?? "",
                 rows: (split.rows ?? []).map((row) => ({
