@@ -2134,3 +2134,34 @@ Every number or claim here comes from a command that can be re-run.
   **The dashboards are provisioned read-only** (`"editable": false` on `codementor.json`), so these files are the dashboard rather than a starting point someone has since edited in the browser — which is what makes a test over the JSON worth anything.
   **The existing test now walks nested panels.** It read `dashboard["panels"]` flat, which was correct while there were no rows; a panel inside a collapsed row would have been skipped and its query never checked. `_panels` descends one level, which is as deep as Grafana nests.
   **What is still not checked.** Nothing validates the PromQL — a query that names real metrics and is nonsense passes every test here. Nothing checks that a panel's `datasource` uid matches the provisioned one. And nothing asserts a panel is *reachable*: the semantic row is `"collapsed": false`, and if someone collapses it the panels keep their queries and simply stop being visible
+### Change: the evaluation page opens with five numbers, and everything else is behind one closed panel
+- Value: the Benchmarks section opened with the full retrieval tables for two providers across four splits, then the structural tables, then the system facts, then the stage timings, then a **twenty-row** Experiments table with three held-out comparisons and a chat-mode block inside it, then the limitations. Every number on it was true, carried its provenance, and nobody was ever going to read it.
+
+  **What is now at the top**, in a block called *At a glance*:
+
+  | | holdout2 (20 q) | | holdout3 (20 q) | |
+  |---|---|---|---|---|
+  | | **MRR@10** | **hit@5** | **MRR@10** | **hit@5** |
+  | **hash — the default** — structured records, BM25 fusion on | 0.576 | 0.750 | 0.690 | 0.800 |
+  | **cloudflare — opt-in** — whole records, no fusion | 0.587 | 0.800 | 0.804 | 0.950 |
+
+  plus **precision 1.000 / recall 0.967** over 49 questions against Python's `ast`, the model-free chat timing — **45 ms** warm on itsdangerous, 19 ms of it the rerank — labelled *"excludes the language model"*, and one line: *"Recorded results on small fixed question sets, not live accuracy."*
+
+  **Three choices in that block worth stating.**
+
+  1. **holdout2 and holdout3, not the original held-out split.** Those two were written after the configurations were chosen and scored once each; the first was reused run after run and flatters everything on it. It is still on the page, in the tables below, where the panel that draws it says what it is.
+  2. **Only the configuration each embedder actually runs.** The experiments table has twenty rows, four of them scored and rejected. A rejected row beside an adopted one with no verdict between them is how a summary misleads, so the block takes the row the builder marked `is_default` — which is *chosen* for hash and *baseline* for cloudflare, because cloudflare's candidate passed its rule and was not adopted.
+  3. **The wording matches the defaults as they are now**: hash *structured records, BM25 fusion on*; cloudflare *whole records, no fusion*. Both strings are in the builder beside the `DEFAULT` map they describe.
+
+  **Everything else is inside one `Details` disclosure, closed by default** — the retrieval tables, the structural tables, the system facts, the stage timings, the Experiments table with its held-out comparisons and chat-mode block, and the limitations. It is a **native `<details>` element**, not React state: it is closed on first paint with no hydration step, the browser's own find-in-page opens it to reach a number inside, and it needs no JavaScript at all. A test asserts there is no `open` attribute and no `useState` in it, because both would quietly undo all three.
+
+  **The headline cannot disagree with the tables it summarises.** `build()` builds the structural, timing and experiments blocks once and hands them to `headline()`, which reads no result file of its own. A test asserts that by reading the function's source for `_read(` and for each builder's name; six more compare every headline figure against the block of the same build it came from.
+
+  **The session telemetry above the section is untouched** — queries, latency, citations, agent utilisation, indexed repositories and recent queries are exactly as they were
+- Command: `python scripts/build_benchmarks.py` then `--check` -> up to date; `python -m pytest tests/ -q` -> **1290 passed**, 1 skipped (`tests/test_build_benchmarks.py` gains 8); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (195 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (**106 passed**, `lib/benchmarks.test.ts` gains 15), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before), `npm run build`
+- Dataset/repo: no new measurement. Every figure is the committed `eval/benchmarks.json`, which is built from `eval/results/`; the holdout2 and holdout3 numbers are the ones scored once at ecf3744 and 16464d2 and re-drawn here, not re-run. **No provider was called**
+- Date: 2026-10-14
+- Commit: a1167bd
+- Notes: **the page was not opened in a browser.** `npm run build` succeeds and `npx tsc --noEmit` is clean, and the tests cover the view model and read the component's source, but nothing here has seen it rendered — so every claim about how it *looks*, including that it reads well on a phone, rests on the markup rather than on a screenshot. What is actually asserted about the phone case is structural: the block is a grid of figures rather than a table, so it has no `min-w-[640px]` and nothing to scroll sideways, and every long string is `break-words`. The tables inside `Details` keep their horizontal scrollers, which is what they had before.
+  **The headline duplicates numbers that are also in the tables below it**, by design, and the tests are what keep the two the same. If someone adds a figure to the headline by hand rather than deriving it, nothing in `test_build_benchmarks.py` will catch it — the guard is that `headline()` has no way to read a file, not that every field is cross-checked.
+  **One thing a reader of the headline can still get wrong.** Cloudflare's numbers are higher than hash's on both sets, and the block says cloudflare is *opt-in* without saying why it was not adopted. That reasoning — a 0.0071 margin on a twenty-question set, two metrics the rule did not name going backwards, and a paid re-index — is in the holdout3 block inside `Details`, which is closed. The headline names the default and marks it; it does not argue for it
