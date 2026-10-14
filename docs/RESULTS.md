@@ -2199,3 +2199,27 @@ Every number or claim here comes from a command that can be re-run.
   **`retry_wait` is attributed to whichever request's timer is current on the sleeping thread**, which is the right one for a chat question because the model call happens under `run_timed`. A provider call made outside any request would have its backoff counted nowhere, which is the intended behaviour and not a loss.
   **`in_tokens` is absent, not zero, when the provider reports nothing.** The two are kept distinguishable deliberately, but it means the number of entries in `in_tokens_each` need not equal `llm_calls`.
   **Nothing here measures anything yet.** This change only makes the measurement possible; what the fields actually say about a real session is the next entry
+### Fix: the last two per-minute panels on the agents dashboard count per minute
+- Value: `rate()` is per second. **Agent failures per minute, by reason** and **Planner routes per minute** each computed a per-second rate, titled themselves *per minute*, and set the axis unit to `reqps`, which Grafana renders as **req/s** — three claims about one number, with nothing to tell a reader which to believe.
+
+  | panel | was | now |
+  |---|---|---|
+  | Agent failures per minute, by reason | `sum by (agent, reason) (rate(codeatlas_agent_failures_total[5m]))`, unit `reqps` | the same `* 60`, unit `cpm` |
+  | Planner routes per minute | `sum by (route) (rate(codeatlas_planner_routes_total[5m]))`, unit `reqps` | the same `* 60`, unit `cpm` |
+
+  `cpm` is Grafana's counts/min. `reqps` was wrong twice over on both: an agent failure is not a request, and neither is a planner route.
+
+  **These are exactly the two panels 76246ed recorded as left with the same defect** and chose not to fix. *Agent runs per minute* was fixed there; it already multiplies by 60 and already reads `cpm`, and it is **untouched** here — it was named in the request for this change, but there was nothing left wrong with it, so the second panel of the pair is the one the earlier entry listed beside *Planner routes*.
+
+  **The test that named panels by hand is gone.** It asserted the rule for two titles, which is why two more panels could carry the same defect for as long as they did. In its place is one test over **every** panel whose title says *per minute*: all five must multiply by 60, and none may use a per-second axis unit (`reqps`, `pps`, `cps`, `wps`, `iops`, `rps`, `ops`). A panel added later with this mistake now fails a test rather than being found by somebody reading a graph.
+
+  A second test keeps the four **counting** panels on `cpm` specifically, and says in its own docstring why *Tokens per minute, by agent* is not one of them: tokens are counted per minute too, and that panel already multiplied by 60, but `cpm` would label its axis counts/min and a token is not a count of something that happened. `short` stays.
+
+  **The test that every panel names a metric the app defines is unchanged**, as is every other panel on either dashboard
+- Command: `python -m pytest tests/ -q` -> **1312 passed**, 1 skipped (`tests/test_agent_metrics.py` loses 1 test and gains 2); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (197 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before). The file was re-parsed as JSON after editing and every panel's unit and expression printed back
+- Dataset/repo: none. No provider was called
+- Date: 2026-10-14
+- Commit: 6feab58
+- Notes: **Grafana was not started**, which was the instruction. Every claim here about how a panel reads is taken from the JSON and from Grafana's unit names, not from a screen; if a Grafana version renders `cpm` differently these panels are wrong in a way no test here can catch.
+  **The new test's strength is its weakness.** It keys off the words "per minute" in a panel title, so a panel that computes a per-second rate and simply does not say "per minute" anywhere passes it. What it does guarantee is that the title cannot lie.
+  **The unit list is a denylist.** `PER_SECOND_UNITS` holds the seven Grafana per-second ids worth guarding against; a per-second unit outside that list would pass. An allowlist was the alternative and would have had to be revised for every new panel
