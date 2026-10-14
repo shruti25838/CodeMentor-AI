@@ -2422,3 +2422,49 @@ Every number or claim here comes from a command that can be re-run.
   **A defect found on this path and deliberately left.** `_answer_from` rebuilds the result without `note`, so the semantic-fallback sentence has never reached the browser in the default mode -- it predates this split, which only moved the code around it. It is visible only under the cloudflare provider, which the default is not, and fixing it is a behaviour change with its own before-and-after. There is a comment at the drop saying so.
   **Three orchestrator stand-ins in the tests had to learn `search` and `answer_from`**, because the controller now calls those. `handle_question_fast` remains the combined entry point and is still tested; it is no longer called from the controller, so a stand-in that implements only it would silently never be exercised by an endpoint test.
   **What is still not checked**: that the early list equals the citations is asserted per path, not enforced by a type. A third path could send the event while holding a different list, and only a test of that path would catch it
+### Check: the default mode after the discarded call was removed, against the recorded figures
+- Value: four questions, one session, local server, committed defaults (legacy chat mode, hash embeddings, `openai/gpt-oss-20b` on Groq, `CODEATLAS_LLM_MAX_TOKENS` 2048), paced under the per-minute limit, hard cap 12,000 tokens. **All four completed with 2,282 of the cap left.** The *was* columns are the first four questions of the five-question run recorded earlier today, which asked the same questions in the same order in one session.
+
+  | q | calls | was | tokens | was | first token ms | was | total ms | was |
+  |---|---|---|---|---|---|---|---|---|
+  | 1 | 1 | 2 | 1,741 | 4,402 | 1,703 | 3,749 | 964 | 2,994 |
+  | 2 | 1 | 2 | 1,907 | 4,959 | 1,138 | 2,628 | 1,154 | 2,632 |
+  | 3 | **2** | 3 | 2,731 | 5,311 | 1,539 | 4,194 | 1,550 | 4,212 |
+  | 4 | **2** | 3 | 3,339 | 7,417 | 1,421 | 3,855 | 1,428 | 3,864 |
+  | **all** | **6** | **10** | **9,718** | **22,089** | | | **5,095** | **13,702** |
+
+  `calls` counts every call to the provider, so the rewrite on questions 3 and 4 is in it. **The ledger agrees**: 6 calls, not 10.
+
+  | | was | now | |
+  |---|---|---|---|
+  | provider calls | 10 | 6 | |
+  | tokens | 22,089 | 9,718 | **-56.0%** |
+  | input tokens | 13,714 | 7,703 | -43.8% |
+  | output tokens | 8,375 | 2,015 | -75.9% |
+  | time in the model | 12,028 ms | 3,609 ms | **-70.0%** |
+  | time in the request | 13,702 ms | 5,095 ms | -62.8% |
+
+  **The prediction was 11,009 tokens** -- the earlier run's per-call figures with the retrieval summary's share struck out. The actual is 9,718, **11.7% below it**, because answer length is the model's choice and it wrote shorter answers this time. The input side is the sounder half of the comparison: the removed call's prompt was the snippets, about 1,400 tokens every question, and input fell 43.8%.
+
+  **The early file list lands long before the first token**, computed from the stage durations as `rewrite + embed_query + search + rerank`:
+
+  | q | file list at | first token at |
+  |---|---|---|
+  | 1 | 210 ms | 953 ms |
+  | 2 | 13 ms | 1,133 ms |
+  | 3 | 440 ms | 1,530 ms |
+  | 4 | 731 ms | 1,413 ms |
+
+  Question 1's 210 ms is the BM25 index being built once; thereafter the search is under a millisecond and the wait is the follow-up rewrite where there is one. **The first token itself did not get earlier relative to the answer** -- this path still assembles the whole answer and then types it out four words at a time, so `first token ms` and `total ms` stay within about 20 ms of each other. What arrives early is the file list, not the answer.
+
+  **Every line carries one model call.** `llm_calls` is absent from all four timing lines, and `in_tokens_each` appears only on questions 3 and 4, with two entries - the rewrite and the mentor. **No retries**: `retry_wait` is absent on all four and the server log holds zero `Retrying request` lines
+- Command: in one shell `$env:CODEATLAS_CHAT_MODE = "legacy"; $env:CODEATLAS_EMBEDDING_PROVIDER = "hash"; $env:CODEATLAS_LLM_PROVIDER = "groq"; python -m uvicorn codeatlas.app.main:app --host 127.0.0.1 --port 8000`, in another `python scripts/chat_latency_probe.py --base-url http://127.0.0.1:8000 -n 4 --token-cap 12000 --tpm-limit 8000`. Mode read off `agents_used`, which said `legacy` on every row
+- Dataset/repo: pallets/itsdangerous, re-analysed by the probe; the first four of the probe's eight fixed questions, two of which lean on the turn before them. **No Cloudflare call** - the embedding provider was pinned to hash
+- Date: 2026-10-14
+- Commit: 9690592 (the state measured); nothing changed to take the measurement
+- Notes: **this is not a controlled comparison, and the output column is where that shows.** Output fell 75.9%, and only part of that is the removed call: its replies were about 4,800 of the earlier run's 8,375 output tokens, and the rest is the mentor writing shorter answers this time. Nothing here pins answer length, so the headline 56% is one run against one run.
+  **The two runs were not simultaneous.** Both were on 2026-10-14 against the same provider and model, but a quieter provider would read as a win and a busier one as a regression, and nothing separates that from the change.
+  **One session, four questions, no repeats and no error bars.** The earlier run reached five; the cap allowed four here because the cap was 12,000 rather than 24,000.
+  **History is not comparable turn for turn** with the earlier run: the answers differ, so what the history occupies in the prompt differs. `history_turns` ran 0, 1, 2, 3 in both.
+  **The per-minute limit is still unpriced.** Halving the tokens per question should make an 8,000-per-minute limit bite about half as often, and this run cannot show that, because the pacer again held the window under it - which is why there were no retries to count.
+  **Nothing here looked at a browser.** That the file list arrives at 13-731 ms is read off the server's own stage durations; whether a visitor notices it is not measured
