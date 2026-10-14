@@ -6,7 +6,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_openai import ChatOpenAI
 
 from codeatlas.observability.agent_metrics import AgentUsageCallback
-from codeatlas.utils.config import AppConfig
+from codeatlas.utils.config import REASONING_EFFORT_MODELS, AppConfig
 
 
 class LlmProvider:
@@ -46,8 +46,39 @@ class LlmProvider:
                 max_tokens=self._config.llm_max_tokens,
                 # See the openai branch: a streamed call is otherwise invisible to the ledger.
                 stream_usage=True,
+                # Empty unless the setting is on *and* this model takes it; see below.
+                **reasoning_effort_kwargs(self._config),
             )
         return FallbackChatModel()
+
+
+def reasoning_effort_kwargs(config: AppConfig) -> dict:
+    """`model_kwargs={"reasoning_effort": ...}` when the setting applies, otherwise nothing.
+
+    **Why model_kwargs and not a field.** The Groq client here is `ChatOpenAI` pointed at
+    Groq's OpenAI-compatible endpoint, and the installed langchain-openai (0.1.22) has no
+    `reasoning_effort` field - it predates the parameter. `model_kwargs` is that class's own
+    mechanism for a body parameter it does not model: whatever is in it is merged into the
+    request body alongside `model`, `temperature` and `max_tokens`. So the call Groq receives
+    carries `"reasoning_effort": "low"` at the top level, which is where Groq documents it.
+    Nothing about the output budget changes; `max_tokens` is still passed exactly as before.
+
+    **Why it is sent to two models and no others.** Groq documents `reasoning_effort` as
+    supported only by `openai/gpt-oss-20b` and `openai/gpt-oss-120b`. Sending it to any other
+    model is at best ignored and at worst a 400 that turns every answer into an error, so the
+    model name is checked here rather than trusted. The provider is checked too: the OpenAI
+    branch builds a client against OpenAI's own API, where the same two names do not exist and
+    the parameter means something else.
+
+    Returning a dict rather than setting a field is deliberate - `**{}` adds nothing at all to
+    the constructor call, so with the setting unset the client is built exactly as it was.
+    """
+    effort = config.llm_reasoning_effort
+    if not effort:
+        return {}
+    if config.llm_provider != "groq" or config.llm_model not in REASONING_EFFORT_MODELS:
+        return {}
+    return {"model_kwargs": {"reasoning_effort": effort}}
 
 
 class FallbackChatModel(BaseChatModel):

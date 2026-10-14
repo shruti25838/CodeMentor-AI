@@ -42,6 +42,17 @@ from codeatlas.services.retrieval.record_format import (
 DEFAULT_LLM_MODEL = "openai/gpt-oss-20b"
 DEFAULT_LLM_MAX_TOKENS = 2048
 
+# How hard a reasoning model is asked to think before it writes. Unset is the default and
+# means the parameter is not sent at all, so nothing about a call changes.
+REASONING_EFFORTS = ("low", "medium", "high")
+
+# The only models this may be sent to. Groq documents `reasoning_effort` as supported by these
+# two and no others, so the name is checked rather than trusted: sending it elsewhere is at
+# best ignored and at worst a 400 that turns every answer into an error. The provider is
+# checked as well, in codeatlas/services/llm/provider.py:reasoning_effort_kwargs - these are
+# Groq model names, and the same strings mean nothing on OpenAI's own API.
+REASONING_EFFORT_MODELS = ("openai/gpt-oss-20b", "openai/gpt-oss-120b")
+
 # Every embedding provider the app knows how to build. A name outside this list is a typo or a
 # provider that was never wired up, and either way it must not fall through to some default:
 # the vectors would silently be the wrong ones. See codeatlas/app/di.py:build_embedder.
@@ -96,6 +107,9 @@ class AppConfig:
     api_key: str | None
     auth_enabled: bool
     llm_max_tokens: int = DEFAULT_LLM_MAX_TOKENS
+    # None - the default - sends nothing and changes nothing. A value reaches the request body
+    # only for the two Groq models that document the parameter; see REASONING_EFFORT_MODELS.
+    llm_reasoning_effort: str | None = None
     clone_timeout_seconds: int = 60
     index_timeout_seconds: int = 120
     max_repo_mb: int = 100
@@ -269,6 +283,27 @@ def unknown_provider_message(provider: str) -> str:
     )
 
 
+def unknown_reasoning_effort_message(value: str) -> str:
+    return (
+        f"Unknown reasoning effort {value!r}. Set CODEATLAS_REASONING_EFFORT to one of: "
+        f"{', '.join(REASONING_EFFORTS)}, or leave it unset. Unset is the default and sends the "
+        f"parameter not at all, which is not the same as any of the three values."
+    )
+
+
+def validate_reasoning_effort(value: str) -> str:
+    """The effort, normalized; anything that is not one of the three raises ValueError.
+
+    Rejected at startup rather than at the first model call, for the reason `_number` gives
+    and one more: a typo here would otherwise reach Groq inside the request body, and a 400
+    from the provider turns every answer on the site into an error message.
+    """
+    normalized = value.strip().lower()
+    if normalized not in REASONING_EFFORTS:
+        raise ValueError(unknown_reasoning_effort_message(value))
+    return normalized
+
+
 def validate_embedding_provider(provider: str) -> str:
     """The provider name, normalized; a name that is not a known provider raises ValueError."""
     normalized = provider.strip().lower()
@@ -288,6 +323,7 @@ def load_config() -> AppConfig:
         llm_model=os.getenv("CODEATLAS_LLM_MODEL", DEFAULT_LLM_MODEL),
         llm_temperature=float(os.getenv("CODEATLAS_LLM_TEMPERATURE", "0.2")),
         llm_max_tokens=int(os.getenv("CODEATLAS_LLM_MAX_TOKENS", str(DEFAULT_LLM_MAX_TOKENS))),
+        llm_reasoning_effort=_optional_reasoning_effort("CODEATLAS_REASONING_EFFORT"),
         api_key=os.getenv("CODEATLAS_API_KEY"),
         auth_enabled=os.getenv("CODEATLAS_AUTH_ENABLED", "true").lower() == "true",
         clone_timeout_seconds=int(os.getenv("CODEATLAS_CLONE_TIMEOUT_SECONDS", "60")),
@@ -418,6 +454,19 @@ def _pinned_off(name: str) -> bool:
     """
     setting = _optional_flag(name)
     return False if setting is None else setting
+
+
+def _optional_reasoning_effort(name: str) -> str | None:
+    """One reasoning effort that may be unset. Unset is None; set-but-unknown still raises.
+
+    Unset is a meaning of its own here and is the default: it is "do not send the parameter",
+    which is what every measurement in docs/RESULTS.md was made under. There is no value that
+    means the same thing, so this cannot collapse into `_flag`-style defaulting.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return None
+    return validate_reasoning_effort(raw)
 
 
 def _optional_record_format(name: str) -> str | None:
