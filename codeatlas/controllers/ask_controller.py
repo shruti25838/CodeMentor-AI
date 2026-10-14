@@ -198,13 +198,33 @@ async def ask_stream(
                     if result is None:  # pragma: no cover - the generator always ends with one
                         raise RuntimeError("deep mode produced no answer")
                 else:
+                    # ---- Repo mode, the default: one search, then one model call ----
                     yield _sse(stage_event(STAGE_RETRIEVING, "Retrieving context..."))
                     loop = asyncio.get_event_loop()
+                    search_question = await loop.run_in_executor(
+                        None,
+                        run_timed,
+                        timer,
+                        lambda: _search_question(llm_provider, request.question, history),
+                    )
+                    retrieved = await loop.run_in_executor(
+                        None,
+                        run_timed,
+                        timer,
+                        lambda: orchestrator.search(search_question or request.question, request.repo_id),
+                    )
+                    # The search is finished and the model has not been asked anything yet. This
+                    # path could not send this event while it summarised its own search through
+                    # the model first; now that it does not, the one moment grounded mode has -
+                    # after retrieval, before any spending - exists here too. The files are
+                    # `retrieved.snippets`, and the citations below are `retrieved.citations`,
+                    # built from that same list by the same search, so the two cannot disagree.
+                    yield _sse(retrieved_event(retrieved.snippets))
                     result = await loop.run_in_executor(
                         None,
                         run_timed,
                         timer,
-                        lambda: _answer_with_history(orchestrator, llm_provider, request, history),
+                        lambda: _answer_from(orchestrator, request, retrieved, history, search_question),
                     )
 
                 yield _sse(stage_event(STAGE_ANSWERING, "Streaming answer..."))
@@ -297,7 +317,7 @@ async def _run_grounded(answers, llm_provider, request: AskRequest, history, tim
     # the visitor with a retrieval message that is already stale, they get the file list they
     # are about to be shown underneath the answer. It is the same list, by construction - see
     # retrieved_event - and no question text goes into it.
-    yield retrieved_event(context)
+    yield retrieved_event(context.snippets)
 
     llm = llm_provider.get_chat_model()
     messages = build_messages(request.question, context, history)
@@ -404,20 +424,27 @@ async def _run_deep(orchestrator, llm_provider, request: AskRequest, history: li
         await worker
 
 
-def _answer_with_history(orchestrator, llm_provider, request: AskRequest, history: list[Turn]):
-    """Repo-mode answer that sees earlier turns; a follow-up is rewritten for search first."""
-    search_question = _search_question(llm_provider, request.question, history)
-    result = orchestrator.handle_question_fast(
+def _answer_from(orchestrator, request: AskRequest, retrieved, history: list[Turn], search_question: str | None):
+    """The default path's answer, over snippets the controller already holds.
+
+    The two halves are run separately so the file list can go out between them; this is the
+    second. It adds the same conversation notes the combined call used to add.
+    """
+    result = orchestrator.answer_from(
         request.question,
+        retrieved,
         request.repo_id,
         history=format_history(history),
-        search_question=search_question,
     )
     steps = list(result.reasoning_steps)
     if history:
         steps.append(f"Used {len(history)} earlier turn(s) of this conversation.")
     if search_question is not None:
         steps.append(f"Searched with the follow-up rewritten as: {search_question}")
+    # `note` is deliberately not carried across, which is what this path has always done: the
+    # semantic-fallback sentence has never reached the browser in the default mode. It is a
+    # defect, it predates this split, and fixing it is a behaviour change of its own - see the
+    # notes on the RESULTS entry for this change.
     return type(result)(
         answer=result.answer,
         citations=result.citations,

@@ -75,6 +75,9 @@ class FailingSpy(ModelSpy):
     def handle_question_fast(self, question, repo_id, **kwargs):
         raise RuntimeError("boom")
 
+    def search(self, question, repo_id, **kwargs):
+        raise RuntimeError("boom")
+
 
 def test_unhandled_exception_and_stream_error_are_counted():
     client = _client(FailingSpy())

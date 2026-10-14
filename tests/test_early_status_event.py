@@ -6,11 +6,14 @@ name and the files that are about to be cited, so the page can say *Found 3 file
 them while the model is still thinking.
 
 The rule the whole thing rests on: **the early file list is only sent where it is guaranteed
-to equal the final citation list.** In grounded mode it is the same list - `grounded_context`
-builds the snippets once and the event, the prompt and the `done` citations are all read from
-it. Every other path sends a stage name and nothing else, because on those paths the citations
-are not known until the model has spoken, and a file list that the answer then contradicts is
-worse than a spinner.
+to equal the final citation list.** Two paths qualify, both because one search produced one
+list of snippets and the event, the prompt and the `done` citations are all read from it:
+grounded mode, through `grounded_context`, and the **default** mode, through
+`AgentOrchestrator.search` - which qualified only once it stopped summarising its own search
+through the model, because until then there was no point in that path that was both after
+retrieval and before a model call. Deep mode and the no-repository path send a stage name and
+nothing else, because there the citations are not known until the model has spoken, and a file
+list the answer then contradicts is worse than a spinner.
 
 Every model here is a fake; nothing reaches a provider and no credential is read.
 """
@@ -24,7 +27,16 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from codeatlas.app.di import get_retrieval_service
+from codeatlas.app.di import (
+    get_agent_orchestrator,
+    get_llm_provider,
+    get_repo_state_store,
+    get_retrieval_service,
+)
+from codeatlas.app.main import create_app
+from codeatlas.services.agents.coding_mentor_agent import CodingMentorAgent
+from codeatlas.services.agents.orchestration import AgentOrchestrator
+from codeatlas.services.agents.retrieval_agent import RetrievalAgent
 from codeatlas.services.llm.quota import DAILY, FILES_HEADING, MESSAGES, TRUNCATED_NOTE
 from codeatlas.services.qa.grounded_chat import (
     LEGACY,
@@ -38,12 +50,15 @@ from codeatlas.services.qa.grounded_chat import (
     stage_event,
 )
 from codeatlas.services.retrieval.snippets import Snippet
+from tests.test_conversation_memory import RecordingModel
 from tests.test_grounded_chat import (
     CONFIG,
     REPO,
     Chunk,
+    FakeProvider,
     FakeStreamingModel,
     _events,
+    _state_store,
     app_with,  # noqa: F401 - a fixture, used by name
     indexed,  # noqa: F401 - a fixture, used by name
 )
@@ -77,7 +92,7 @@ def test_the_event_names_its_stage_and_counts_the_files() -> None:
         citations=["a/b.py (lines 10-42)", "c/d.py (lines 1-5)"],
     )
 
-    event = retrieved_event(context)
+    event = retrieved_event(context.snippets)
 
     assert event["type"] == "status"
     assert event["stage"] == STAGE_RETRIEVED
@@ -90,7 +105,7 @@ def test_the_event_names_its_stage_and_counts_the_files() -> None:
 
 
 def test_one_file_is_not_called_files() -> None:
-    event = retrieved_event(GroundedContext(snippets=[Snippet("a.py", 1, 2, "x")], citations=["a.py"]))
+    event = retrieved_event([Snippet("a.py", 1, 2, "x")])
 
     assert event["content"] == "Found 1 file"
 
@@ -102,7 +117,7 @@ def test_two_ranges_of_one_file_count_as_one_file_and_two_locations() -> None:
         citations=["a.py (lines 1-20)", "a.py (lines 40-60)"],
     )
 
-    event = retrieved_event(context)
+    event = retrieved_event(context.snippets)
 
     assert event["count"] == 1
     assert event["content"] == "Found 1 file"
@@ -110,7 +125,7 @@ def test_two_ranges_of_one_file_count_as_one_file_and_two_locations() -> None:
 
 
 def test_a_search_that_found_nothing_says_so_rather_than_being_skipped() -> None:
-    event = retrieved_event(GroundedContext(snippets=[], citations=[]))
+    event = retrieved_event([])
 
     assert event["count"] == 0
     assert event["files"] == []
@@ -130,7 +145,7 @@ def test_the_event_carries_only_paths_and_line_numbers(indexed) -> None:  # noqa
     marker = "private-marker-9f2b"
     context = grounded_context(answers, REPO, f"{marker} how does it sign?", top_k=5, total_max_chars=6000)
 
-    event = retrieved_event(context)
+    event = retrieved_event(context.snippets)
 
     assert marker not in json.dumps(event)
     for entry in event["files"]:
@@ -273,14 +288,14 @@ def test_an_unknown_repository_is_a_404_before_any_event_at_all(app_with) -> Non
 # ---------------------------------------------------------------- the other paths
 
 
-@pytest.mark.parametrize("mode", ["fast", "deep"])
-def test_a_path_that_cannot_promise_the_citations_sends_no_file_list(app_with, mode: str) -> None:  # noqa: F811
-    """Legacy and deep retrieve inside the agent graph, after model calls of their own, so
-    the citations are not knowable at the point this event would be sent."""
+def test_deep_mode_cannot_promise_the_citations_and_sends_no_file_list(app_with) -> None:  # noqa: F811
+    """Deep mode retrieves inside the agent graph, behind a planner and whatever steps it
+    chooses, so at the point this event would be sent the citations do not exist yet. It still
+    gets the stage name, which promises nothing."""
     model = FakeStreamingModel([Chunk("ok")])
     legacy = replace(CONFIG, chat_mode=LEGACY)
     with TestClient(app_with(model, config=legacy)) as client:
-        response = client.post("/ask/stream", json={"repo_id": REPO, "question": "how does it sign?", "mode": mode})
+        response = client.post("/ask/stream", json={"repo_id": REPO, "question": "how does it sign?", "mode": "deep"})
 
     events = _events(response)
     statuses = _statuses(events)
@@ -289,6 +304,114 @@ def test_a_path_that_cannot_promise_the_citations_sends_no_file_list(app_with, m
     assert all("files" not in e for e in statuses)
     assert _stage(events, STAGE_RETRIEVED) is None
     assert events[-1]["type"] == "done"
+
+
+# ---------------------------------------------------------------- the default mode
+
+#: The default mode sends the same event as grounded, for the same reason and now with the
+#: same guarantee: its search finishes before anything is asked of the model, and the object
+#: the controller holds is the one both the event and the `done` citations are built from.
+DEFAULT = replace(CONFIG, chat_mode=LEGACY)
+
+
+@pytest.fixture
+def default_mode(indexed):  # noqa: F811
+    """The real agent graph over the real two-file index, with a fake model for the mentor.
+
+    The shared `app_with` fixture stands the orchestrator down, which is right for grounded
+    mode - it never reaches one - but this path *is* the orchestrator, so it gets a real one.
+    """
+    answers, _ = indexed
+    llm = RecordingModel()
+    mentor = CodingMentorAgent(llm=llm)
+    orchestrator = AgentOrchestrator(
+        planner=mentor,
+        retrieval_agent=RetrievalAgent(answer_service=answers),
+        analyst_agent=mentor,
+        mentor_agent=mentor,
+        memory_agent=mentor,
+    )
+
+    def ask(repo_id: str = REPO, question: str = "how does it sign?"):
+        app = create_app(DEFAULT)
+        app.dependency_overrides[get_llm_provider] = lambda: FakeProvider(llm)
+        app.dependency_overrides[get_agent_orchestrator] = lambda: orchestrator
+        app.dependency_overrides[get_retrieval_service] = lambda: answers
+        app.dependency_overrides[get_repo_state_store] = _state_store
+        with TestClient(app) as client:
+            return client.post("/ask/stream", json={"repo_id": repo_id, "question": question})
+
+    return ask, llm
+
+
+def test_the_default_mode_now_sends_the_file_list_too(default_mode) -> None:
+    """It could not while it summarised its own search through the model first: there was no
+    point in the path that was both after retrieval and before a model call. There is now."""
+    ask, _ = default_mode
+    events = _events(ask())
+    early = _stage(events, STAGE_RETRIEVED)
+
+    assert early is not None
+    assert early["files"], "the question has to find something for this test to mean anything"
+    assert early["count"] == len({entry["path"] for entry in early["files"]})
+
+
+def test_the_default_modes_early_files_are_its_final_citations(default_mode) -> None:
+    """The claim the feature rests on, asserted on this path as well as on grounded."""
+    ask, _ = default_mode
+    events = _events(ask())
+    early = _stage(events, STAGE_RETRIEVED)
+    done = events[-1]
+
+    assert done["citations"]
+    assert len(early["files"]) == len(done["citations"])
+    for entry, citation in zip(early["files"], done["citations"]):
+        assert citation.startswith(f"{entry['path']} (lines {entry['start_line']}-{entry['end_line']})")
+
+
+def test_the_default_modes_order_is_retrieving_then_retrieved_then_answering_then_tokens(default_mode) -> None:
+    ask, _ = default_mode
+    events = _events(ask())
+    stages = [e.get("stage") for e in _statuses(events)]
+
+    assert stages == [STAGE_RETRIEVING, STAGE_RETRIEVED, STAGE_ANSWERING]
+    first_token = next(i for i, e in enumerate(events) if e["type"] == "token")
+    assert events.index(_stage(events, STAGE_RETRIEVED)) < first_token
+    assert events[-1]["type"] == "done"
+
+
+def test_the_default_modes_early_event_comes_before_the_model_is_asked(default_mode) -> None:
+    """Not just before the first token: before the call. The fake records every prompt."""
+    ask, llm = default_mode
+    events = _events(ask())
+
+    assert len(llm.prompts) == 1, "one model call per question on this path"
+    early = _stage(events, STAGE_RETRIEVED)
+    # Every file in the event is in the prompt of the one call that followed it.
+    for entry in early["files"]:
+        assert entry["path"] in llm.prompts[0]
+
+
+def test_an_unknown_repository_is_still_a_404_before_any_event_in_the_default_mode(default_mode) -> None:
+    """The guard runs before the stream opens, so the failure is a 404 and not a 200 with an
+    error inside it. Adding an event earlier in the path must not have moved it."""
+    ask, llm = default_mode
+    response = ask(repo_id="nope")
+
+    assert response.status_code == 404
+    assert _events(response) == [], "a 404 must not be a 200 with a status event in it"
+    assert llm.prompts == []
+
+
+def test_no_question_text_reaches_the_default_modes_early_event(default_mode) -> None:
+    ask, _ = default_mode
+    marker = "private-marker-9f2b"
+    events = _events(ask(question=f"{marker} how does it sign?"))
+
+    early = _stage(events, STAGE_RETRIEVED)
+    assert marker not in json.dumps(early)
+    for entry in early["files"]:
+        assert set(entry) == {"path", "start_line", "end_line"}
 
 
 def test_every_status_event_names_a_stage(app_with) -> None:  # noqa: F811

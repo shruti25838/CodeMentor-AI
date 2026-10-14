@@ -9,6 +9,7 @@ visitor as a sentence rather than as an exception or an empty bubble.
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -87,6 +88,12 @@ class _FakeOrchestrator:
     """Stands in for the agent graph. Legacy and deep mode land here; grounded never does."""
 
     def handle_question_fast(self, question, repo_id, history="", search_question=None):
+        return _Result("legacy answer", [], ["legacy"], ["mentor"])
+
+    def search(self, question, repo_id):
+        return SimpleNamespace(snippets=[], citations=[], note="")
+
+    def answer_from(self, question, retrieved, repo_id, history=""):
         return _Result("legacy answer", [], ["legacy"], ["mentor"])
 
     def handle_question(self, question, repo_id, session_id=None):

@@ -132,14 +132,16 @@ def stage_event(stage: str, content: str) -> dict:
     return {"type": "status", "stage": stage, "content": content}
 
 
-def retrieved_event(context: GroundedContext) -> dict:
+def retrieved_event(snippets: list[Snippet]) -> dict:
     """The status event sent the moment retrieval is done, before the model is asked to answer.
 
-    **The files are the citations.** They are read from `context.snippets`, which is the same
-    list `context.citations` is built from and the same list rendered into the prompt - one
-    list seen three times, built once by `grounded_context`. So the files shown while the
-    visitor waits cannot disagree with the files shown under the answer; a test asserts the
-    two are equal rather than trusting this paragraph.
+    **The files are the citations**, and that is the caller's promise, not this function's: it
+    takes the snippet list itself, so a caller may send this event only where it is holding the
+    very list the final citations are built from. Two callers are, and for the same reason -
+    one search produced one list, seen as the prompt, as this event and as the citations:
+    `grounded_context` in grounded mode, and `AgentOrchestrator.search` in the default one. A
+    test asserts the early files equal the `done` citations on both, rather than trusting this
+    paragraph.
 
     `count` is the number of distinct **files**, because "Found 3 files" is what the browser
     says and it has to be true: one file can appear twice under different line ranges, and
@@ -149,10 +151,9 @@ def retrieved_event(context: GroundedContext) -> dict:
     response body that a proxy may log, and the question is the visitor's.
     """
     files = [
-        {"path": snippet.path, "start_line": snippet.start_line, "end_line": snippet.end_line}
-        for snippet in context.snippets
+        {"path": snippet.path, "start_line": snippet.start_line, "end_line": snippet.end_line} for snippet in snippets
     ]
-    count = len({snippet.path for snippet in context.snippets})
+    count = len({snippet.path for snippet in snippets})
     return {
         "type": "status",
         "stage": STAGE_RETRIEVED,
