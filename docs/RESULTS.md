@@ -2165,3 +2165,37 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **the page was not opened in a browser.** `npm run build` succeeds and `npx tsc --noEmit` is clean, and the tests cover the view model and read the component's source, but nothing here has seen it rendered — so every claim about how it *looks*, including that it reads well on a phone, rests on the markup rather than on a screenshot. What is actually asserted about the phone case is structural: the block is a grid of figures rather than a table, so it has no `min-w-[640px]` and nothing to scroll sideways, and every long string is `break-words`. The tables inside `Details` keep their horizontal scrollers, which is what they had before.
   **The headline duplicates numbers that are also in the tables below it**, by design, and the tests are what keep the two the same. If someone adds a figure to the headline by hand rather than deriving it, nothing in `test_build_benchmarks.py` will catch it — the guard is that `headline()` has no way to read a file, not that every field is cross-checked.
   **One thing a reader of the headline can still get wrong.** Cloudflare's numbers are higher than hash's on both sets, and the block says cloudflare is *opt-in* without saying why it was not adopted. That reasoning — a 0.0071 margin on a twenty-question set, two metrics the rule did not name going backwards, and a paid re-index — is in the holdout3 block inside `Details`, which is closed. The headline names the default and marks it; it does not argue for it
+### Change: the chat timing line says what the question cost, not only how long it took
+- Value: chat latency rises as one session asks more questions, and the timing line could not say why. It carried stage durations and nothing else, so four different causes — the prompt growing with history, the follow-up rewrite making an extra model call, the provider making the request wait, and the model simply thinking for longer — all looked identical from outside: a larger `llm` number.
+
+  **Five fields, one per candidate.**
+
+  | field | what it is | which candidate it separates |
+  |---|---|---|
+  | `history_turns` | earlier turns put into the prompt | the prompt growing with history |
+  | `rewrite_ran` | 0 or 1: did the follow-up rewrite call the model | the extra model call |
+  | `in_tokens`, `in_tokens_each` | input tokens the provider reported, totalled and per call | a prompt that is growing, seen growing |
+  | `llm_each` | how long **each** model call took, not their sum | which of two calls was the slow one |
+  | `retry_wait` | the provider client's own 429 backoff, as a stage | a wait the provider imposed |
+
+  `out_tokens` is recorded as well. It comes out of the same already-parsed usage object as `in_tokens` at no extra cost, and without it a call that was slow cannot be told from a call that wrote a long answer — which is the one distinction the other five fields cannot make.
+
+  **`retry_wait` is the field that did not exist anywhere.** The OpenAI-compatible client retries a 429 itself and `time.sleep`s inside the call, so from the application's side the wait is invisible: it only makes the model call look slow. The client logs `Retrying request to %s in %f seconds` at INFO immediately before each sleep, and a `logging.Handler` on the `openai` logger reads the number of seconds out of that line and adds it to whichever request's timer is current. **Only the number**: not the URL logged beside it, not the request being retried. It is recorded as a stage, so it also reaches the existing `codeatlas_stage_duration_seconds` histogram with no new metric defined. It is *inside* the model call, so `llm` already contains it — both are reported and a reader subtracts.
+
+  **No metric was added and none changed.** `observe_stages` is still fed from the stage totals alone, so counts and facts cannot reach Prometheus as if they were seconds.
+
+  **`as_dict()` is no longer all durations**, which forced one correction: `server_timing()` now builds from a new `durations()` method rather than from `as_dict()`. A Server-Timing header's `dur` is milliseconds by definition, so `in_tokens;dur=1800` would have been read by the browser as 1.8 seconds.
+
+  **Grounded mode gained the `llm` stage it never had.** Its one model call is pulled on a worker thread, which had no timer in its context, so a grounded question's line had an embed, a search and a rerank and no model call at all. The stream is now pulled under `run_timed` — which is also what lets the usage callback and the retry handler find a timer — and the call is timed around the loop. Side effect, stated rather than hidden: the grounded path now always makes one executor hop for `_search_question` instead of only when a rewrite is needed. That function is a regular-expression test over the question when no rewrite is due.
+
+  **The rewrite decision moved into one function.** `needs_rewrite` plus `rewrite_question` appeared in three places — grounded, deep and the legacy fast path. `rewrite_ran` would have had to be recorded in all three, so instead `_search_question` does both and all three call it. The fact is written on **both** branches: a line with no `rewrite_ran` at all would be indistinguishable from a line written before the field existed
+
+  **Nothing new can carry text.** Every field added is a duration, a token count the provider reported, or a count of turns. The existing assertions that no question text reaches the timings or the log line are untouched and still pass
+- Command: `python -m pytest tests/ -q` -> **1296 passed**, 1 skipped (was 1290; `tests/test_timing.py` gains 5, `tests/test_grounded_chat.py` gains 1); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (195 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none. **No provider was called** — the retry handler is tested by logging the client's own line, args and all, through `openai._base_client` and reading the stage back
+- Date: 2026-10-14
+- Commit: 924b90e
+- Notes: **the retry handler depends on a log line in someone else's library.** `openai==1.109.1` logs that sentence at two places in `_base_client.py`; a future version that reworded it, logged it below INFO or moved it off a logger under `openai` would make `retry_wait` silently always absent, and no test here would fail — the test logs the line itself rather than provoking a real retry. Absence of the field is therefore weak evidence that no retry happened.
+  **`retry_wait` is attributed to whichever request's timer is current on the sleeping thread**, which is the right one for a chat question because the model call happens under `run_timed`. A provider call made outside any request would have its backoff counted nowhere, which is the intended behaviour and not a loss.
+  **`in_tokens` is absent, not zero, when the provider reports nothing.** The two are kept distinguishable deliberately, but it means the number of entries in `in_tokens_each` need not equal `llm_calls`.
+  **Nothing here measures anything yet.** This change only makes the measurement possible; what the fields actually say about a real session is the next entry
