@@ -24,7 +24,8 @@ stop the run cleanly rather than letting it overrun:
 * a **token cap** for the whole session, checked against the on-disk ledger before every
   question. The cap is applied inside the guard, against this session's own spend -- the
   ledger total when the run started is subtracted, so an earlier run's spend today neither
-  counts against this cap nor hides it.
+  counts against this cap nor hides it. The guard also **reserves what the next question is
+  expected to cost**, so the cap holds after the last question as well as before it.
 * a **pacer** that keeps the tokens spent in any trailing 60 seconds under the provider's
   per-minute allowance, estimating the next question from the most expensive one so far.
 
@@ -129,15 +130,21 @@ class Pacer:
         return time.monotonic() - started
 
 
-def budget_guard(cap: int, baseline: int, ledger: Path | None) -> tuple[bool, int, int]:
+def budget_guard(cap: int, baseline: int, ledger: Path | None, reserve: int = 0) -> tuple[bool, int, int]:
     """(may this session spend more, what it has spent, what is left of the cap).
 
     The cap lives in here rather than at the call site so that there is exactly one place that
     decides the run may continue. `baseline` is the ledger's total when the run started, so the
     spend measured is this session's and not today's.
+
+    `reserve` is what the next question is expected to cost, and it is the difference between a
+    cap and a tripwire. Asking only whether the spend so far is under the cap lets the last
+    question push past it, because its cost is not known until it has been paid: the first run
+    of this script overran 40,000 by 3,958 that way. With the next question's cost reserved,
+    the run stops while there is still room for it, so the cap holds on the way out too.
     """
     spent = max(token_ledger.spent_today(path=ledger).total - baseline, 0)
-    return spent < cap, spent, max(cap - spent, 0)
+    return spent < cap and spent + reserve <= cap, spent, max(cap - spent, 0)
 
 
 @dataclass
@@ -258,9 +265,16 @@ def main() -> None:
         print(HEADER)
 
         for index, question in enumerate(questions, 1):
-            may_continue, spent, left = budget_guard(args.token_cap, baseline, ledger)
+            # The worst question so far is the only estimate that cannot be optimistic about
+            # what has already happened. Before the first one there is nothing to go on, so the
+            # pacer's standing figure stands in and the cap has to be at least that large.
+            reserve = pacer.estimate()
+            may_continue, spent, left = budget_guard(args.token_cap, baseline, ledger, reserve)
             if not may_continue:
-                stopped = f"token cap reached: {spent} of {args.token_cap} spent before question {index}"
+                stopped = (
+                    f"token cap reached before question {index}: {spent} of {args.token_cap} spent, "
+                    f"and the next question is expected to cost about {reserve}"
+                )
                 break
             if index > 1:
                 waited = pacer.wait() + _sleep(args.min_gap)

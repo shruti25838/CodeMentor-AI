@@ -63,6 +63,19 @@ def test_the_guard_stops_the_run_once_the_cap_is_reached(tmp_path):
     assert budget_guard(40_000, 0, ledger) == (False, 41_000, 0)
 
 
+def test_the_guard_reserves_the_next_questions_cost_so_the_cap_holds_on_the_way_out(tmp_path):
+    """Without the reserve the last question overruns the cap by its own size, which is how the
+    first run of this script spent 43,958 under a cap of 40,000."""
+    ledger = _ledger(tmp_path / "ledger.json", "m", 38_000)
+
+    # Room by the old rule - 38,000 is under 40,000 - but the next question costs about 5,000.
+    assert budget_guard(40_000, 0, ledger)[0] is True
+    assert budget_guard(40_000, 0, ledger, reserve=5_000)[0] is False
+    # A question that fits exactly is allowed; the cap is a ceiling, not a strict bound.
+    assert budget_guard(40_000, 0, ledger, reserve=2_000)[0] is True
+    assert budget_guard(40_000, 0, ledger, reserve=2_001)[0] is False
+
+
 def test_a_missing_ledger_reads_as_nothing_spent(tmp_path):
     assert budget_guard(40_000, 0, tmp_path / "absent.json") == (True, 0, 40_000)
 
