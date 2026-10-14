@@ -2355,3 +2355,41 @@ Every number or claim here comes from a command that can be re-run.
   **"Same distribution, not identical answers."** The mentor's prompt is unchanged, so nothing about what it is asked changes; but the two calls share a per-minute budget, so removing the first one also changes *when* the second is served, and the model is sampled at the configured temperature either way.
   **One behaviour would genuinely be lost.** `_format_answer` catches a provider refusal and turns it into the quota sentence with the locations beneath it (`answer_service.py:369-383`). On this path that handler is redundant -- the mentor has its own at `orchestration.py:164-170` -- but it is also the only thing that records `fallback_to_location_list` for the retrieval agent, so that metric would go quiet rather than go to zero for a good reason.
   **This entry does not recommend the removal.** It prices it. The change touches the default chat path, four test assertions and five metric series, and belongs in its own entry with its own before-and-after measurement
+### Change: the default chat path no longer summarises a search nobody reads
+- Value: the entry two above priced this call at **48.5% of a session's tokens and 62.5% of its model time**, traced its output to a local that fell out of scope, and showed the mentor's prompt is byte-identical without it. It is now gone from the default path.
+
+  **What was removed.** `handle_question_fast` searched through `RetrievalAgent.retrieve`, which called `AnswerService.answer`, which asked the model to write a prose summary of the snippets it had found. The result went into `GroundedAnswer.answer`; the function then used `.citations`, `.snippets` and `.note` and returned. On one measured question the discarded reply used **the whole 2,048-token output budget**.
+
+  **How.** `AnswerService.locate()` is `answer()` without that call -- the same search, snippets, citations and fallback note. Both now run through one `_grounded(..., summarise: bool)`, so they cannot drift. `locate`'s `answer` field holds the locations, which is **exactly what `answer()` returns when no model is attached to the service at all**; a test asserts those two strings are equal. `RetrievalAgent` grows the matching `locate`, and `_retrieve` asks for it when the caller does not want prose.
+
+  **`handle_question_fast` split into `search()` and `answer_from()`**, with the old method calling both, so a streaming caller can send what the search found while the model is still writing. That is what the next entry uses.
+
+  **The three readers of the summary text, all unchanged:**
+
+  | reader | why it still wants the summary |
+  |---|---|
+  | `orchestration.py:_retrieval_node` (deep mode) | renders it into the step transcript a later agent reads |
+  | `retrieval_agent.py:run` (the text `Agent` contract) | used by `handle_generation` and by a planned retrieval step |
+  | `AnswerService.answer` itself | including the location-list fallback and the quota sentence it builds when the provider refuses |
+
+  **What did not change:** `agents_used` is still `["retrieval", "mentor"]` -- retrieval still runs, still searches, still gets its `agent_run` timing and its `codeatlas_agent_runs_total` increment. Citations, snippets, the semantic-fallback note, the quota behaviour and the answer's prompt are all identical. An agent with no `locate` falls back to `retrieve`, so a stand-in implementing only the older method keeps working rather than quietly returning nothing.
+
+  **The four assertions that had to move, and what each now means:**
+
+  | where | was | now means |
+  |---|---|---|
+  | `test_timing.py` chat stages | `llm_calls == 2` | `llm_calls` **absent** -- one call per question, so no stage ran twice and `llm` is that call |
+  | `test_timing.py` follow-up | `llm_calls == 2` | still absent: the rewrite is its own stage, so a follow-up is two calls under two names, not one name twice |
+  | `test_conversation_memory.py` | `llm_calls == 2` | the same, for the three-calls-to-two case recorded earlier |
+  | `test_conversation_memory.py` | the rewrite appears in the summary's prompt | that prompt no longer exists, so it reads the server's own reasoning step, **and** asserts no prompt carries the summary template at all |
+
+  **Metric expectations.** `codeatlas_agent_model_calls_total{agent="retrieval"}` and `codeatlas_agent_tokens_total{agent="retrieval", ...}` no longer move on this path. `codeatlas_stage_duration_seconds{endpoint="ask_stream", stage="model"}` falls to one call's worth. `codeatlas_agent_failures_total{agent="retrieval", reason="fallback_to_location_list"}` is no longer reachable from the default path -- it still is from deep mode and from `answer()`, and `tests/test_agent_metrics.py` still covers that through `AnswerService.answer` directly. `codeatlas_agent_runs_total{agent="retrieval"}` and `codeatlas_agent_duration_seconds{agent="retrieval"}` are **unchanged**, which is the point: the agent ran.
+
+  **Proved two ways.** `tests/test_retrieval_summary_removed.py` runs the default path twice with the same snippets and a different summary -- the second telling the model to ignore the snippets and look in a file that does not exist -- and asserts the mentor's prompt is byte-identical, then asserts that prompt in full. And a recording fake model counts the calls: **one per question, two with a rewrite, none carrying the summary template**
+- Command: `python -m pytest tests/ -q` -> **1323 passed**, 1 skipped (was 1313; `tests/test_retrieval_summary_removed.py` is new and adds 10); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (198 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none -- every test here uses a fake model over a real two-file index in a temporary directory. **No provider was called**
+- Date: 2026-10-14
+- Commit: 794fc3c
+- Notes: **the identical call is still made in one place off this path, and is left alone.** `CodingMentorAgent.run` calls `self._answer_service.answer(...)` and then reads only `retrieved.snippets` -- the same waste, the same shape. It is the mentor's text `Agent` contract, reached from `handle_generation` and from a planned step, not from the default chat path, and changing it would move an admin endpoint's model-call count that nothing here measures. Recorded rather than quietly fixed or quietly left.
+  **`locate`'s `answer` field is not empty, and that is a choice.** Filling it with the locations keeps every reader of `GroundedAnswer` working and makes the field mean the same thing it means with no model configured. An empty string would have been a second way for a reader to be surprised.
+  **The duck-typing fallback hides a mistake.** `_retrieve` falls back from `locate` to `retrieve`, so an agent that forgets `locate` silently goes on paying for the summary rather than failing. The alternative -- requiring `locate` -- would break any stand-in written against the older contract, and several tests use one. The real `RetrievalAgent` has both, and the call-counting test is what would catch a regression
