@@ -2223,3 +2223,57 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **Grafana was not started**, which was the instruction. Every claim here about how a panel reads is taken from the JSON and from Grafana's unit names, not from a screen; if a Grafana version renders `cpm` differently these panels are wrong in a way no test here can catch.
   **The new test's strength is its weakness.** It keys off the words "per minute" in a panel title, so a panel that computes a per-second rate and simply does not say "per minute" anywhere passes it. What it does guarantee is that the title cannot lie.
   **The unit list is a denylist.** `PER_SECOND_UNITS` holds the seven Grafana per-second ids worth guarding against; a per-second unit outside that list would pass. An allowlist was the alternative and would have had to be revised for every new panel
+### Check: what a chat session actually spends, question by question, in both chat modes
+- Value: the first run of `scripts/chat_latency_probe.py`. One session per mode against a real local server, the same eight questions in the same order, model `openai/gpt-oss-20b` on Groq, hash embeddings, itsdangerous. **The session token cap stopped both runs before question 8**, so the measurement is five questions in the default mode and six in grounded.
+
+  **The committed default mode (legacy), five questions**
+
+  | q | turns | rewrite | model calls | in | out | llm ms | per call ms | total ms |
+  |---|---|---|---|---|---|---|---|---|
+  | 1 | 0 | no | 2 | 2,882 | 1,520 | 2,843 | 1,863 / 980 | 2,994 |
+  | 2 | 1 | no | 2 | 3,143 | 1,816 | 2,589 | 1,821 / 768 | 2,632 |
+  | 3 | 2 | **yes** | 2 | 2,869 | 2,442 | 3,286 | 1,473 / 1,813 | 4,212 |
+  | 4 | 3 | **yes** | 2 | 4,820 | 2,597 | 3,310 | 2,558 / 752 | 3,864 |
+  | 5 | 4 | no | 2 | 3,465 | 1,373 | 2,528 | 1,384 / 1,144 | 2,553 |
+
+  **Grounded mode, six questions**
+
+  | q | turns | rewrite | model calls | in | out | llm ms | first token ms | total ms |
+  |---|---|---|---|---|---|---|---|---|
+  | 1 | 0 | no | 1 | 1,420 | 226 | 626 | 805 | 878 |
+  | 2 | 1 | no | 1 | 1,553 | 130 | 568 | 555 | 613 |
+  | 3 | 2 | **yes** | 1 | 1,481 | 946 | 2,079 | 1,005 | 2,512 |
+  | 4 | 3 | **yes** | 1 | 2,895 | 1,158 | 1,606 | 1,526 | 2,334 |
+  | 5 | 2 | no | 1 | 2,608 | 589 | 1,224 | 936 | 1,273 |
+  | 6 | 2 | **yes** | 1 | 3,393 | 632 | 1,135 | 1,014 | 1,635 |
+
+  **The premise did not reproduce. Latency did not rise with position in the session.** Legacy went 2,994 -> 2,632 -> 4,212 -> 3,864 -> 2,553 ms; the *last* question was the fastest. Grounded rose from under a second to 1.2-2.5 s, but its two cheapest questions are also the two that wrote the shortest answers (226 and 130 output tokens against 589-1,158 later). In both modes `llm` tracks **output length**, which is a property of the question, not of how many came before it.
+
+  **Candidate 1, history growing the prompt: real, measured, and bounded.** The legacy path gives a controlled comparison for free, because each question makes two model calls over *the same snippets* - the retrieval summary, which is given no history, and the mentor, which is given all of it:
+
+  | turns | retrieval call in | mentor call in | difference |
+  |---|---|---|---|
+  | 0 | 1,385 | 1,497 | 112 |
+  | 1 | 1,465 | 1,678 | 213 |
+  | 2 | 1,115 | 1,427 | 312 |
+  | 3 | 1,439 | 2,399 | 960 |
+  | 4 | 1,203 | 2,262 | 1,059 |
+
+  The 112 at zero turns is the two prompt templates differing; above it the history costs about **950 tokens by the fourth turn**, close to the 1,500-token budget `chat_history_tokens` sets. It **cannot keep growing**: `chat_history_turns` is 4 and the store drops the oldest turns that do not fit, which the grounded run shows directly - `history_turns` went 0, 1, 2, 3, **2, 2**, falling as answers got longer. And the retrieval call's input is flat across the whole run (1,385 / 1,465 / 1,115 / 1,439 / 1,203) while the mentor's climbs, so the growth is history and not the snippets. The matching latency effect is **not visible**: the mentor call took 980, 768, 1,813, 752 and 1,144 ms as its prompt grew by a thousand tokens.
+
+  **Candidate 2, the rewrite call: real, and the only field that marks the slow questions.** It ran on exactly the questions written to lean on the one before them. In legacy it cost 859 ms and 520 ms and 1,632 tokens over the run (**6.1%** of the session); in grounded, 392, 673 and 443 ms. The two legacy questions it ran on are the two slowest. It does not explain all of the gap - take the rewrite stage off and q3 and q4 are still 3,353 and 3,344 ms against 2,553-2,994 for the rest - but it is the only one of the five fields that moves with them.
+
+  **Candidate 3, the per-minute limit: not seen, and this run cannot price it.** `retry_wait` is absent on all eleven questions and both server logs contain **zero** `Retrying request` lines. That is what the pacer was for: it held the trailing-60-second window under 8,000 tokens by waiting about 60 s between legacy questions. A visitor asking three questions in a minute would meet the limit this run was built to avoid, so **no retries happening here is not evidence that the limit does not cause them.**
+
+  **Candidate 4, memory pressure: no support, and weakly measured.** The local stages do not grow: `embed_query` 0.1-0.4 ms, `rerank` 8-23 ms, `search` 0.5-0.8 ms after the first question. The one place a later question is *faster* than an earlier one is `search`, 122 ms (legacy) and 207 ms (grounded) on question 1 and under a millisecond thereafter - the BM25 index being built once and then reused. That is the opposite of the reported effect. **Nothing here samples process memory**, so this is an argument from "the work that would get slower did not", not a measurement of RSS.
+
+  **The two modes, side by side.** Legacy spent **26,927 tokens over 12 model calls** for five questions; grounded spent **17,031 over 9 calls** for six. Per question that is 5,385 against 2,839, and a median total of 2,994 ms against 1,454 ms
+- Command: in one shell, `$env:CODEATLAS_CHAT_MODE = "legacy"; $env:CODEATLAS_EMBEDDING_PROVIDER = "hash"; $env:CODEATLAS_LLM_PROVIDER = "groq"; python -m uvicorn codeatlas.app.main:app --host 127.0.0.1 --port 8000`, then in another `python scripts/chat_latency_probe.py --base-url http://127.0.0.1:8000 -n 8 --token-cap 24000 --tpm-limit 8000`; the server restarted with `CODEATLAS_CHAT_MODE = "grounded"` and the probe re-run with `--token-cap 13073` (what was left of the 40,000). Mode in both tables is read off `agents_used`, not off the command line
+- Dataset/repo: pallets/itsdangerous, re-analysed by the probe at the start of each run; eight fixed questions, four of which lean on the turn before them. Model `openai/gpt-oss-20b` (Groq), `CODEATLAS_LLM_MAX_TOKENS` at its default 2048, hash embeddings with the committed defaults. **No Cloudflare call was made** - the embedding provider was pinned to hash for both servers
+- Date: 2026-10-14
+- Commit: 598bc15 (the probe); nothing in the repository changed to take this measurement
+- Notes: **the 40,000-token cap was exceeded, by 3,958 tokens (9.9%).** The ledger went from 65,202 to 109,160 across the two runs: **43,958 tokens over 21 model calls**. The guard is a pre-flight check - it asks whether the session has spent less than the cap and then asks a question whose cost is only known once it has been paid - so it bounds the spend *before* the last question, not after it. Legacy stopped at 26,927 against 24,000 and grounded at 17,031 against 13,073. This is a defect in the guard as committed, not a surprise from the provider, and it is fixed in the next entry.
+  **Five questions and six questions, not eight.** Both runs stopped cleanly on the cap, which is the guard working. It does mean the legacy table never gets past the fourth turn of history, which is exactly where `chat_history_turns` caps it anyway.
+  **`llm_calls` does not count the rewrite**, which has its own stage; so a legacy row reading 2 calls with `rewrite` present was three calls to the provider. `in_tokens_each` does show all three, which is why the retrieval-versus-mentor table above can be built at all.
+  **The attribution of the two legacy calls rests on their order**, retrieval before mentor in `handle_question_fast`, confirmed independently by prompt size: the retrieval prompt built offline for one of these questions is 5,622 characters and the mentor's 6,110, and the first and second `in_tokens_each` entries sit on the same side of that gap on every question.
+  **One run of one session per mode.** The model is non-deterministic and output length drives most of the variation, so none of these timings should be read to three figures; what is solid is the direction of `in_tokens` per call, the presence and cost of the rewrite, and the absence of retries
