@@ -13,13 +13,13 @@
       "id": 1,
       "type": "timeseries",
       "title": "Agent runs per minute",
-      "description": "Which agents actually ran, taken from the graph as it executed.",
+      "description": "Which agents actually ran, taken from the graph as it executed. Per minute, as the title says: rate() is per second, so the query multiplies by 60 and the axis reads counts/min. It used to show a per-second rate under a per-minute title with a req/s axis, so every value on it read 60 times too small.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "cpm" }, "overrides": [] },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (agent) (rate(codeatlas_agent_runs_total[5m]))",
+          "expr": "sum by (agent) (rate(codeatlas_agent_runs_total[5m])) * 60",
           "legendFormat": "{{agent}}"
         }
       ]
@@ -43,13 +43,13 @@
       "id": 3,
       "type": "timeseries",
       "title": "Model calls per minute, by agent",
-      "description": "Model calls made while each agent was running.",
+      "description": "Model calls made while each agent was running. Per minute, as the title says: rate() is per second, so the query multiplies by 60 and the axis reads counts/min. It used to show a per-second rate under a per-minute title with a req/s axis, so every value on it read 60 times too small.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "cpm" }, "overrides": [] },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (agent) (rate(codeatlas_agent_model_calls_total[5m]))",
+          "expr": "sum by (agent) (rate(codeatlas_agent_model_calls_total[5m])) * 60",
           "legendFormat": "{{agent}}"
         }
       ]

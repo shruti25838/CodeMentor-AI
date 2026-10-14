@@ -253,3 +253,19 @@ def test_the_grafana_dashboard_queries_the_metrics_that_exist() -> None:
         "codeatlas_planner_plans_total",
     ):
         assert metric in expressions, f"{metric} has no panel"
+
+
+def test_the_two_counting_panels_show_per_minute_because_that_is_what_they_are_titled() -> None:
+    """`rate()` is per second. These two said "per minute" in the title, computed a per-second
+    rate, and labelled the axis req/s, so every value on them read 60 times too small."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    dashboard = json.loads((root / "ops" / "grafana" / "dashboards" / "codeatlas-agents.json").read_text("utf-8"))
+
+    for title in ("Agent runs per minute", "Model calls per minute, by agent"):
+        panel = next(p for p in dashboard["panels"] if p["title"] == title)
+        assert panel["targets"][0]["expr"].endswith("* 60"), title
+        # cpm is counts/min. An agent run is not a request, so reqps was wrong twice over.
+        assert panel["fieldConfig"]["defaults"]["unit"] == "cpm", title
+        assert "per minute" in panel["title"]
