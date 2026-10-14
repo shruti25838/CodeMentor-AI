@@ -15,7 +15,7 @@ from codeatlas.app.di import (
 )
 from codeatlas.controllers.repo_guard import require_known_repo
 from codeatlas.observability.metrics import ERROR_COUNT
-from codeatlas.observability.timing import StageTimer, run_timed, stage, timed_request
+from codeatlas.observability.timing import StageTimer, record_fact, run_timed, stage, timed_request
 from codeatlas.observability.tracker import tracker
 from codeatlas.schemas.ask import AskRequest, AskResponse
 from codeatlas.services.agents.orchestration import ANSWER_ERROR_PREFIX, AgentOrchestrator
@@ -129,6 +129,9 @@ async def ask_stream(
         timer = StageTimer()
         session_id = request.session_id
         history = conversations.history(session_id, request.repo_id) if session_id else []
+        # How much of this conversation goes into the prompt. The first candidate for a chat
+        # that slows down as it goes on, and the one number no stage duration can reveal.
+        timer.fact("history_turns", len(history))
         try:
             if not request.repo_id:
                 # ---- General mode: true LLM token streaming ----
@@ -273,14 +276,13 @@ async def _run_grounded(answers, llm_provider, request: AskRequest, history, tim
     loop = asyncio.get_event_loop()
     yield stage_event(STAGE_RETRIEVING, "Retrieving context...")
 
-    search_question = request.question
-    if needs_rewrite(request.question, history):
-        search_question = await loop.run_in_executor(
-            None,
-            run_timed,
-            timer,
-            lambda: _rewrite(llm_provider, request.question, history),
-        )
+    rewritten = await loop.run_in_executor(
+        None,
+        run_timed,
+        timer,
+        lambda: _search_question(llm_provider, request.question, history),
+    )
+    search_question = rewritten or request.question
 
     context = await loop.run_in_executor(
         None,
@@ -301,8 +303,13 @@ async def _run_grounded(answers, llm_provider, request: AskRequest, history, tim
     messages = build_messages(request.question, context, history)
     outcome = None
     stream = stream_tokens(llm, messages, context, on_first_token=lambda: timer.mark("first_model_token"))
+    # This mode's one model call, timed as the `llm` stage the other paths record, so a grounded
+    # question's line can be read beside a legacy one. `run_timed` reaches the worker thread the
+    # stream is pulled on: the usage callback and the retry watcher both report into the timer
+    # from in there, and without it neither had one to report into.
+    model_started = time.perf_counter()
     while True:
-        item = await loop.run_in_executor(None, lambda it=stream: next(it, None))
+        item = await loop.run_in_executor(None, run_timed, timer, lambda it=stream: next(it, None))
         if item is None:
             break
         token, finished = item
@@ -312,6 +319,7 @@ async def _run_grounded(answers, llm_provider, request: AskRequest, history, tim
         if token:
             timer.mark("first_token_sent")
             yield {"type": "token", "content": token}
+    timer.add("llm", (time.perf_counter() - model_started) * 1000)
 
     answer = outcome.answer if outcome else ""
     steps = list(context.reasoning_steps)
@@ -339,7 +347,18 @@ async def _run_grounded(answers, llm_provider, request: AskRequest, history, tim
     }
 
 
-def _rewrite(llm_provider, question: str, history):
+def _search_question(llm_provider, question: str, history: list[Turn]) -> str | None:
+    """The standalone rewrite of a follow-up, or None when the question stands on its own.
+
+    One place rather than three, so `rewrite_ran` - whether this question paid for an extra
+    model call - is recorded on every path that could make one, instead of on whichever paths
+    someone remembered. The fact is recorded either way: a line with no `rewrite_ran` at all
+    would be indistinguishable from an older line that never had the field.
+    """
+    if not needs_rewrite(question, history):
+        record_fact("rewrite_ran", 0)
+        return None
+    record_fact("rewrite_ran", 1)
     with stage("rewrite"):
         return rewrite_question(llm_provider.get_chat_model(), question, history)
 
@@ -359,10 +378,7 @@ async def _run_deep(orchestrator, llm_provider, request: AskRequest, history: li
             # A follow-up is rewritten into a standalone question for search, exactly as the
             # fast path does, so deep mode searches with the visitor's meaning rather than
             # with "why does it do that?".
-            search_question = None
-            if needs_rewrite(request.question, history):
-                with stage("rewrite"):
-                    search_question = rewrite_question(llm_provider.get_chat_model(), request.question, history)
+            search_question = _search_question(llm_provider, request.question, history)
             for event in orchestrator.stream_question(
                 request.question, request.repo_id, request.session_id, search_question=search_question
             ):
@@ -390,10 +406,7 @@ async def _run_deep(orchestrator, llm_provider, request: AskRequest, history: li
 
 def _answer_with_history(orchestrator, llm_provider, request: AskRequest, history: list[Turn]):
     """Repo-mode answer that sees earlier turns; a follow-up is rewritten for search first."""
-    search_question = None
-    if needs_rewrite(request.question, history):
-        with stage("rewrite"):
-            search_question = rewrite_question(llm_provider.get_chat_model(), request.question, history)
+    search_question = _search_question(llm_provider, request.question, history)
     result = orchestrator.handle_question_fast(
         request.question,
         request.repo_id,

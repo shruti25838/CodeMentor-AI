@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from prometheus_client import Counter, Histogram
 
 from codeatlas.observability import token_ledger
+from codeatlas.observability.timing import record_count
 
 # The only agent names that may appear as a label.
 AGENTS = ("planner", "retrieval", "analyst", "mentor", "memory")
@@ -149,6 +150,13 @@ class AgentUsageCallback:
         # Prometheus counters live and die with the process; a long run needs a total that
         # survives one, so the same usage is also added to the on-disk ledger.
         token_ledger.record(_model_of(response), prompt_tokens, completion_tokens)
+        # And onto this request's timer, so one question's line says how large each of its
+        # prompts was. A call the provider reported nothing for adds no entry at all, which is
+        # how "it did not say" stays distinguishable from "it said zero".
+        if prompt_tokens:
+            record_count("in_tokens", prompt_tokens)
+        if completion_tokens:
+            record_count("out_tokens", completion_tokens)
 
     def on_llm_error(self, error, **kwargs) -> None:
         record_failure(current_agent(), classify(error))

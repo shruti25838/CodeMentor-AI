@@ -482,3 +482,18 @@ def test_no_question_text_reaches_the_timings_or_the_reasoning(app_with):
     done = _events(response)[-1]
     assert marker not in json.dumps(done["timings_ms"])
     assert marker not in json.dumps(done["reasoning_steps"])
+
+
+def test_the_one_model_call_is_timed_as_a_stage_like_every_other_path(app_with):
+    """Grounded mode's model call is pulled on a worker thread; until it was timed there, a
+    grounded question's line had an embed, a search and a rerank and no model call at all."""
+    model = FakeStreamingModel([Chunk("It "), Chunk("signs.")])
+    with TestClient(app_with(model)) as client:
+        response = client.post("/ask/stream", json={"repo_id": REPO, "question": "how does it sign?"})
+
+    timings = _events(response)[-1]["timings_ms"]
+    assert timings["llm"] >= 0
+    # One call, so no per-call list and no repeat count: the total is that call.
+    assert "llm_calls" not in timings and "llm_each" not in timings
+    assert timings["llm"] <= timings["total"]
+    assert timings["history_turns"] == 0 and timings["rewrite_ran"] == 0
