@@ -93,7 +93,7 @@ def build_embedder(config: AppConfig) -> EmbeddingService:
     Every known name is listed here. An unknown name raises rather than falling back to a
     default: a typo must not quietly produce a different kind of vector than the one asked for.
     """
-    return with_record_format(_provider_embedder(config), config.record_format)
+    return with_record_format(_provider_embedder(config), config.record_format_for(config.embedding_provider))
 
 
 def _provider_embedder(config: AppConfig) -> EmbeddingService:
@@ -180,9 +180,16 @@ def index_options(config: AppConfig) -> dict:
 
 
 def _record_options(config: AppConfig) -> dict:
-    """What a record is, for every provider. The same three settings whichever one is running."""
+    """What a record is, for the index kind this config names.
+
+    The format is per index kind, because the dual-index path builds two indexes of different
+    kinds from the same records in the same analysis and they need not agree: `get_index_service`
+    builds the fallback half from this same function with `embedding_provider` replaced by
+    "hash", so the hash index is formatted as a hash index whatever the semantic one is doing.
+    The two window settings stay global - nothing has measured them differing per kind.
+    """
     return {
-        "record_format": config.record_format,
+        "record_format": config.record_format_for(config.embedding_provider),
         "window_chars": config.record_window_chars,
         "window_overlap": config.record_window_overlap,
     }
@@ -227,21 +234,46 @@ def get_index_service() -> CodeIndexService | DualIndexService:
     )
 
 
-@lru_cache
-def get_retrieval_settings() -> RetrievalSettings:
-    config = get_config()
+def retrieval_settings_for(config: AppConfig, index_kind: str) -> RetrievalSettings:
+    """How a question is searched against one kind of index.
+
+    Everything here is global except `bm25_enabled`, which is per index kind for the reason
+    docs/RESULTS.md records: fusion is a large gain for hash and a loss for cloudflare, and under
+    the cloudflare provider both indexes exist at once, so one global answer cannot be right for
+    both. The BM25 parameters themselves stay global - what was measured is on and off.
+    """
     return RetrievalSettings(
         candidates=config.retrieval_candidates,
         rerank_weight=config.rerank_weight,
         rerank_subtokens=config.rerank_subtokens,
         drop_stopwords=config.drop_stopwords,
         skip_tests=config.skip_tests,
-        bm25_enabled=config.bm25_enabled,
+        bm25_enabled=config.bm25_enabled_for(index_kind),
         bm25_k1=config.bm25_k1,
         bm25_b=config.bm25_b,
         bm25_rrf_k=config.bm25_rrf_k,
         bm25_depth=config.bm25_depth,
+        bm25_max_indexes=config.bm25_max_indexes,
     )
+
+
+@lru_cache
+def get_retrieval_settings() -> RetrievalSettings:
+    config = get_config()
+    return retrieval_settings_for(config, config.embedding_provider)
+
+
+@lru_cache
+def get_fallback_retrieval_settings() -> RetrievalSettings | None:
+    """How the fallback index is searched, or None when there is no fallback index.
+
+    Present for exactly the providers `get_fallback_retriever` gives an index to, and built for
+    the kind that index is - "hash" - rather than for the provider the server is running.
+    """
+    config = get_config()
+    if config.embedding_provider != "cloudflare":
+        return None
+    return retrieval_settings_for(config, FALLBACK_NAME)
 
 
 @lru_cache
@@ -253,6 +285,7 @@ def get_answer_service() -> AnswerService:
         settings=get_retrieval_settings(),
         fallback_retriever=get_fallback_retriever(),
         fallback_embedder=get_fallback_embedder(),
+        fallback_settings=get_fallback_retrieval_settings(),
     )
 
 
@@ -272,6 +305,7 @@ def get_retrieval_service() -> AnswerService:
         settings=get_retrieval_settings(),
         fallback_retriever=get_fallback_retriever(),
         fallback_embedder=get_fallback_embedder(),
+        fallback_settings=get_fallback_retrieval_settings(),
     )
 
 

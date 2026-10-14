@@ -354,13 +354,24 @@ def test_the_holdout3_rule_is_applied_rather_than_asserted(committed):
 
     for embedder, guard in guards.items():
         rows = [r for r in block["rows"] if r["embedder"] == embedder]
-        incumbent = next(r for r in rows if r["configuration"] == "today's default")
+        incumbent = next(r for r in rows if r["configuration"] == "the configuration it was scored against")
         candidate = next(r for r in rows if r["configuration"] == "candidate")
         passes = candidate["mrr@10"] > incumbent["mrr@10"] and candidate[guard] >= incumbent[guard]
 
         assert candidate["verdict"].startswith("passes") == passes, candidate
         assert guard in candidate["verdict"], candidate
         assert incumbent["verdict"] == "the incumbent"
+
+
+def test_passing_the_rule_and_being_adopted_are_recorded_as_two_different_things(committed):
+    """Both candidates passed holdout3; only one became the default, and the page says which."""
+    block = committed["experiments"]["holdout3"]
+
+    assert block["adopted"] == {"hash": True, "cloudflare": False}
+    for embedder in block["guards"]:
+        candidate = next(r for r in block["rows"] if r["embedder"] == embedder and r["configuration"] == "candidate")
+        assert candidate["verdict"].startswith("passes"), candidate
+    assert "only the hash one was adopted" in block["note"]
 
 
 def test_the_ineligible_configuration_is_shown_and_says_it_is_ineligible(committed):
@@ -449,3 +460,76 @@ def test_the_experiments_block_claims_no_end_to_end_latency(committed):
     printed = json.dumps(committed["experiments"]).lower()
     for banned in ("ttfb", "end_to_end", "p95", "latency"):
         assert banned not in printed, f"the experiments block must not claim {banned}"
+
+
+# ---------------------------------------------------------------- which configuration is the default
+
+
+def test_the_hash_panel_names_the_configuration_the_server_runs(committed):
+    provider = next(p for p in committed["retrieval"]["providers"] if p["id"] == "hash")
+
+    assert provider["default"] is True
+    assert provider["configuration"] == "structured records, BM25 fusion on"
+    assert "BM25" in provider["note"] and "structured" in provider["note"]
+
+
+@pytest.mark.parametrize("split_id", ["development", "held-out"])
+def test_each_hash_table_says_which_configuration_it_was_measured_under(committed, split_id):
+    """Read out of the result file itself, so a file that changed would change the label with it."""
+    current = _split(committed, "hash", split_id)
+    legacy = _split(committed, "hash", f"{split_id} (legacy)")
+
+    assert current["configuration"] == "structured records, BM25 on"
+    assert legacy["configuration"] == "whole records, BM25 off"
+    assert current["source"] == f"eval/results/{'dev' if split_id == 'development' else 'test'}.json"
+    assert legacy["source"].startswith("eval/results/legacy/")
+
+
+def test_the_legacy_tables_say_they_are_not_the_current_numbers(committed):
+    for split_id in ("development (legacy)", "held-out (legacy)"):
+        note = _split(committed, "hash", split_id)["note"]
+        assert "before the default change" in note
+        assert "not the server's current numbers" in note
+
+
+def test_the_legacy_held_out_pair_this_file_quotes_is_still_drawn(committed):
+    """hit@5 0.750 and MRR@10 0.645: the pair hundreds of lines of docs/RESULTS.md end with."""
+    rows = _split(committed, "hash", "held-out (legacy)")["rows"]
+    overall = next(r for r in rows if r["scope"] == "overall")
+
+    assert (overall["hit@5"], overall["mrr@10"]) == (0.750, 0.645)
+
+
+def test_the_default_moved_for_hash_and_did_not_for_cloudflare(committed):
+    rows = committed["experiments"]["splits_compared"]["rows"]
+    default_rows = {r["embedder"]: r for r in rows if r["is_default"]}
+
+    assert default_rows["hash"]["change"] == "structured records, rrf+keyword"
+    assert default_rows["cloudflare"]["change"] == "whole records, current"
+    assert default_rows["hash"]["configuration"] == "the default"
+    assert next(r for r in rows if r["embedder"] == "hash" and not r["is_default"])["configuration"] == (
+        "the previous default"
+    )
+    assert next(r for r in rows if r["embedder"] == "cloudflare" and not r["is_default"])["configuration"] == (
+        "candidate, not adopted"
+    )
+
+
+def test_exactly_one_row_per_embedder_is_the_default(committed):
+    for block in (committed["experiments"]["rows"], committed["experiments"]["splits_compared"]["rows"]):
+        for embedder in ("hash", "cloudflare"):
+            marked = [r for r in block if r["embedder"] == embedder and r["is_default"]]
+            assert len(marked) == 1, (embedder, marked)
+
+
+def test_the_legacy_baseline_row_is_read_from_the_legacy_file(committed):
+    """It describes whole records, and eval/results/test.json no longer does."""
+    row = next(
+        r
+        for r in committed["experiments"]["splits_compared"]["rows"]
+        if r["embedder"] == "hash" and r["configuration"] == "the previous default"
+    )
+    legacy = json.loads((ROOT / "eval" / "results" / "legacy" / "test.json").read_text(encoding="utf-8"))
+
+    assert row["held_out_source"] == "eval/results/legacy/test.json"
+    assert row["held_out"] == legacy["overall"]["mrr@10"] == 0.645

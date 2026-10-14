@@ -64,13 +64,17 @@ def _args(**overrides) -> argparse.Namespace:
 
 
 def test_a_plain_run_still_describes_the_default() -> None:
-    """No environment setting: whole records, the window defaults, and an unwrapped signature."""
+    """No environment setting: the server's default, which is now structured records.
+
+    The pair is what matters and is what `mismatch` exists to check - the format the index would
+    be built as and the format the embedder signs itself with have to be the same one.
+    """
     settings, embedder = script._settings(_args())
 
-    assert settings.index.record_format == WHOLE
+    assert settings.index.record_format == STRUCTURED
     assert settings.index.window_chars == 2000
     assert settings.index.window_overlap == 200
-    assert script.signed_record_format(embedder) == WHOLE
+    assert script.signed_record_format(embedder) == STRUCTURED
     assert script.mismatch(embedder, settings) == ""
 
 

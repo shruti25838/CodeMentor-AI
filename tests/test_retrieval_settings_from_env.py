@@ -141,7 +141,7 @@ def test_a_provider_may_still_have_its_own_defaults(monkeypatch) -> None:
 
 
 BM25_SETTINGS = {
-    "CODEATLAS_BM25": ("bm25_enabled", False),
+    "CODEATLAS_BM25": ("bm25_enabled", True),
     "CODEATLAS_BM25_K1": ("bm25_k1", 1.2),
     "CODEATLAS_BM25_B": ("bm25_b", 0.75),
     "CODEATLAS_BM25_RRF_K": ("bm25_rrf_k", 60),
@@ -155,10 +155,17 @@ def _no_bm25_variables(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_bm25_is_off_by_default_so_the_recorded_numbers_still_describe_the_defaults() -> None:
+def test_bm25_is_on_by_default_and_off_for_cloudflare() -> None:
+    """The default change: fusion is worth +0.105 of MRR@10 to hash and cost cloudflare 0.031.
+
+    The parameters beside it did not move, so every recorded number that describes *them* still
+    does. What the recorded numbers under BM25 off describe is kept in eval/results/legacy/.
+    """
     config = load_config()
     for name, (field, default) in BM25_SETTINGS.items():
         assert getattr(config, field) == default, name
+    assert config.bm25_enabled_for("hash") is True
+    assert config.bm25_enabled_for("cloudflare") is False
 
 
 @pytest.mark.parametrize(
@@ -233,7 +240,7 @@ def test_the_bm25_settings_reach_the_retrieval_pipeline(monkeypatch) -> None:
 
 
 RECORD_SETTINGS = {
-    "CODEATLAS_RECORD_FORMAT": ("record_format", "whole"),
+    "CODEATLAS_RECORD_FORMAT": ("record_format", "structured"),
     "CODEATLAS_RECORD_WINDOW_CHARS": ("record_window_chars", 2000),
     "CODEATLAS_RECORD_WINDOW_OVERLAP": ("record_window_overlap", 200),
 }
@@ -246,7 +253,10 @@ def _no_record_variables(monkeypatch):
 
 
 def test_the_record_format_defaults_to_the_one_that_was_measured() -> None:
+    """Structured for hash, whole for cloudflare. Both were measured, once each, on holdout3."""
     config = load_config()
+    assert config.record_format_for("hash") == "structured"
+    assert config.record_format_for("cloudflare") == "whole"
     for name, (field, default) in RECORD_SETTINGS.items():
         assert getattr(config, field) == default, name
 
@@ -286,13 +296,18 @@ def test_an_invalid_record_value_stops_the_app(monkeypatch, name, value) -> None
     assert name in message or "record format" in message.lower()
 
 
-def test_the_default_format_does_not_change_the_embedder_signature(monkeypatch) -> None:
-    """An existing index must stay readable, which means its signature must not move."""
+def test_the_format_is_in_the_signature_so_a_stale_index_is_refused(monkeypatch) -> None:
+    """The default moved, so the signature moved with it, which is the guard working.
+
+    Every index built under the old default is refused rather than searched: `has_index` says
+    no, the index cache misses, and the repository is reindexed on its next analysis. `whole`
+    is still the unwrapped signature, so a server set back to it reads those indexes again.
+    """
     from codeatlas.app.di import build_embedder
 
+    assert build_embedder(load_config()).signature() == "hash:384:lowercase=0:subtokens=1|records=structured"
+    monkeypatch.setenv("CODEATLAS_RECORD_FORMAT", "whole")
     assert build_embedder(load_config()).signature() == "hash:384:lowercase=0:subtokens=1"
-    monkeypatch.setenv("CODEATLAS_RECORD_FORMAT", "structured")
-    assert build_embedder(load_config()).signature().endswith("|records=structured")
 
 
 # ---------------------------------------------------------------- how a repository question is answered

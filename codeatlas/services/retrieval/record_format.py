@@ -55,18 +55,24 @@ _IMPORT = re.compile(r"^\s*(?:import|from|#include|using|require|package|use|ext
 _DOCSTRING = re.compile(r'^\s*(?P<q>"""|\'\'\')')
 
 
-def unknown_record_format_message(value: str) -> str:
+def unknown_record_format_message(value: str, variable: str = "CODEATLAS_RECORD_FORMAT") -> str:
+    """Why this value is not a record format, naming the variable that actually carried it.
+
+    `variable` exists because the format can now be set per index kind as well as globally
+    (CODEATLAS_HASH_RECORD_FORMAT and CODEATLAS_CLOUDFLARE_RECORD_FORMAT), and a message that
+    always named the global one would send a reader to a variable they had not set.
+    """
     return (
-        f"Unknown record format {value!r}. Set CODEATLAS_RECORD_FORMAT to one of: "
+        f"Unknown record format {value!r}. Set {variable} to one of: "
         f"{', '.join(RECORD_FORMATS)}. '{WHOLE}' is the default and is what every number in "
         f"docs/RESULTS.md was measured with."
     )
 
 
-def validate_record_format(value: str) -> str:
+def validate_record_format(value: str, variable: str = "CODEATLAS_RECORD_FORMAT") -> str:
     normalized = value.strip().lower()
     if normalized not in RECORD_FORMATS:
-        raise ValueError(unknown_record_format_message(value))
+        raise ValueError(unknown_record_format_message(value, variable))
     return normalized
 
 

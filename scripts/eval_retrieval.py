@@ -21,7 +21,13 @@ so a question whose file is not in it cannot be answered well however the orderi
 Under each repository's line is what the per-document clip removed, per scope. A record over
 the clip is embedded by its opening only.
 
---min-hit-rate K=VALUE (repeatable) exits with status 1 if the overall hit rate at K is below VALUE.
+Three repeatable threshold flags, each exiting with status 1 when a number is below what it
+names. `--min-hit-rate K=VALUE` is on the overall hit rate at K. `--min-mrr SCOPE=VALUE` and
+`--min-recall SCOPE=VALUE` take a **repository name or `overall`**, because a gate on the
+average of two repositories can stay green while one of them falls and the other rises - and the
+two repositories here do not move together: see docs/RESULTS.md. A SCOPE this run did not score
+is a failure rather than a silent pass, so that a renamed question set cannot quietly disarm the
+gate it was named in.
 
 The tuning flags (--candidates and below) change one retrieval or indexing setting for this run
 only; without them the run uses the server's settings. They exist for the experiments in
@@ -54,6 +60,8 @@ def main() -> int:
     parser.add_argument("--cache-dir", type=Path, default=ROOT / ".codeatlas" / "eval-repos")
     parser.add_argument("--json", type=Path, help="also write the full results here")
     parser.add_argument("--min-hit-rate", action="append", default=[], metavar="K=VALUE")
+    parser.add_argument("--min-mrr", action="append", default=[], metavar="SCOPE=VALUE")
+    parser.add_argument("--min-recall", action="append", default=[], metavar="SCOPE=VALUE")
     tuning = parser.add_argument_group("tuning (one setting per experiment)")
     tuning.add_argument("--candidates", type=int, help="records taken from vector search before reranking")
     tuning.add_argument("--rerank-weight", type=float, help="1.0 keyword overlap only, 0.0 vector similarity only")
@@ -110,16 +118,50 @@ def main() -> int:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
 
-    failed = False
+    checks: list[bool] = []
     for spec in args.min_hit_rate:
         k, value = spec.split("=")
         actual = result["overall"]["hit_rate"][f"@{int(k)}"]
-        if actual < float(value):
-            print(f"FAIL: overall hit@{k} {actual:.4f} is below the minimum {float(value):.4f}")
-            failed = True
-        else:
-            print(f"ok: overall hit@{k} {actual:.4f} >= {float(value):.4f}")
-    return 1 if failed else 0
+        checks.append(_report("overall", f"hit@{int(k)}", actual, float(value)))
+    checks.extend(scoped(result, args.min_mrr, f"MRR@{RANKED_DEPTH}", lambda m: m[f"mrr@{RANKED_DEPTH}"]))
+    checks.extend(scoped(result, args.min_recall, f"recall@{RECALL_DEPTH}", lambda m: m[f"recall@{RECALL_DEPTH}"]))
+    return 0 if all(checks) else 1
+
+
+def scoped(result: dict, specs: list[str], label: str, read) -> list[bool]:
+    """One threshold per spec, each on a named repository or on `overall`.
+
+    A scope that was not scored fails rather than being skipped. The alternative is a gate that
+    is disarmed by a typo or by a question file being renamed, and which then reports nothing at
+    all - the failure mode a threshold exists to prevent.
+    """
+    results: list[bool] = []
+    for spec in specs:
+        scope, separator, value = spec.partition("=")
+        scope = scope.strip()
+        if not separator or not scope:
+            print(f"FAIL: a threshold is written SCOPE=VALUE, not {spec!r}")
+            results.append(False)
+            continue
+        metrics = result["overall"] if scope == "overall" else result["repos"].get(scope)
+        if metrics is None:
+            scored = ", ".join(sorted(result["repos"])) or "nothing"
+            print(
+                f"FAIL: {label} was required of {scope!r}, which this run did not score. "
+                f"It scored {scored} and overall."
+            )
+            results.append(False)
+            continue
+        results.append(_report(scope, label, read(metrics), float(value)))
+    return results
+
+
+def _report(scope: str, label: str, actual: float, minimum: float) -> bool:
+    if actual < minimum:
+        print(f"FAIL: {scope} {label} {actual:.4f} is below the minimum {minimum:.4f}")
+        return False
+    print(f"ok: {scope} {label} {actual:.4f} >= {minimum:.4f}")
+    return True
 
 
 def _settings(args) -> tuple[EvalSettings, object]:

@@ -174,6 +174,77 @@ def test_script_exit_code_follows_min_hit_rate(tmp_path):
     assert "FAIL: overall hit@5" in fail.stdout
 
 
+def _gate(tmp_path) -> tuple[list[str], str]:
+    """The script, pointed at a one-repository question set, and that repository's name."""
+    import sys
+
+    url = _make_source_repo(tmp_path / "src", SOURCE)
+    path = _question_file(tmp_path, url, _head(url))
+    script = Path(__file__).resolve().parent.parent / "scripts" / "eval_retrieval.py"
+    name = json.loads(path.read_text(encoding="utf-8"))["name"]
+    base = [sys.executable, str(script), "--set", str(path), "--split", "all", "--cache-dir", str(tmp_path / "c")]
+    return base, name
+
+
+def test_the_gate_can_be_set_per_repository_on_mrr_and_recall(tmp_path):
+    """A gate on the average of two repositories stays green while one falls and the other rises."""
+    base, name = _gate(tmp_path)
+
+    ok = subprocess.run(
+        [*base, "--min-mrr", f"{name}=0.0", "--min-recall", f"{name}=0.0"], capture_output=True, text=True
+    )
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    assert f"ok: {name} MRR@10" in ok.stdout
+    assert f"ok: {name} recall@20" in ok.stdout
+
+
+@pytest.mark.parametrize("flag", ["--min-mrr", "--min-recall"])
+def test_a_repository_below_its_own_threshold_fails_the_gate(tmp_path, flag):
+    base, name = _gate(tmp_path)
+
+    fail = subprocess.run([*base, flag, f"{name}=1.01"], capture_output=True, text=True)
+    assert fail.returncode == 1
+    assert f"FAIL: {name} " in fail.stdout
+
+
+def test_a_threshold_on_overall_is_still_available(tmp_path):
+    base, _ = _gate(tmp_path)
+
+    fail = subprocess.run([*base, "--min-mrr", "overall=1.01"], capture_output=True, text=True)
+    assert fail.returncode == 1
+    assert "FAIL: overall MRR@10" in fail.stdout
+
+
+def test_a_threshold_naming_a_repository_that_was_not_scored_fails(tmp_path):
+    """Otherwise a renamed question set silently disarms the gate that named it."""
+    base, name = _gate(tmp_path)
+
+    fail = subprocess.run([*base, "--min-mrr", "not-a-repo=0.0"], capture_output=True, text=True)
+    assert fail.returncode == 1
+    assert "which this run did not score" in fail.stdout
+    assert name in fail.stdout
+
+
+def test_a_threshold_that_is_not_scope_equals_value_fails(tmp_path):
+    base, _ = _gate(tmp_path)
+
+    fail = subprocess.run([*base, "--min-recall", "0.9"], capture_output=True, text=True)
+    assert fail.returncode == 1
+    assert "SCOPE=VALUE" in fail.stdout
+
+
+def test_every_threshold_is_reported_even_after_one_fails(tmp_path):
+    """A gate that stops at the first failure hides how far the others are from their line."""
+    base, name = _gate(tmp_path)
+
+    fail = subprocess.run(
+        [*base, "--min-mrr", f"{name}=1.01", "--min-recall", f"{name}=0.0"], capture_output=True, text=True
+    )
+    assert fail.returncode == 1
+    assert f"FAIL: {name} MRR@10" in fail.stdout
+    assert f"ok: {name} recall@20" in fail.stdout
+
+
 # --- recall@20, and what the clip removes ------------------------------------------------
 
 

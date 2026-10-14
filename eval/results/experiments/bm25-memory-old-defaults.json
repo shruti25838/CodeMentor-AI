@@ -1,0 +1,40 @@
+{
+  "codementor_commit": "87d8f57",
+  "platform": "win32",
+  "record_format": "whole",
+  "bm25_enabled": false,
+  "bm25_max_indexes": 4,
+  "bm25_own_bytes_total": 0,
+  "repos": [
+    {
+      "repo": "itsdangerous",
+      "commit": "672971d66a2e",
+      "files": 15,
+      "records": 159,
+      "repo_id": "eval-itsdangerous"
+    },
+    {
+      "repo": "flask",
+      "commit": "d73fa1cdcbd8",
+      "files": 83,
+      "records": 1705,
+      "repo_id": "eval-flask"
+    }
+  ],
+  "bm25_indexes": [],
+  "steps": [
+    {
+      "after": "imports and configuration",
+      "working_set_bytes": 141189120
+    },
+    {
+      "after": "both repositories indexed",
+      "working_set_bytes": 180916224
+    },
+    {
+      "after": "one question against each",
+      "working_set_bytes": 181284864
+    }
+  ],
+  "seconds": 3.2
+}

@@ -82,7 +82,30 @@ test("the held-out hash numbers are the ones in the committed summary", () => {
     const hash = view.providers.find((p) => p.id === "hash")!;
     const overall = hash.splits.find((s) => s.id === "held-out")!.rows.find((r) => r.scope === "overall")!;
 
+    assert.deepEqual(overall.cells, ["0.700", "0.850", "0.850", "0.650", "0.778", "1.000"]);
+});
+
+test("the legacy hash numbers are drawn too, in their own clearly labelled tables", () => {
+    const view = retrievalView(SUMMARY)!;
+    const hash = view.providers.find((p) => p.id === "hash")!;
+    const legacy = hash.splits.find((s) => s.id === "held-out (legacy)")!;
+    const overall = legacy.rows.find((r) => r.scope === "overall")!;
+
+    // hit@5 0.750 and MRR@10 0.645: the pair docs/RESULTS.md quotes in entry after entry.
     assert.deepEqual(overall.cells, ["0.600", "0.650", "0.750", "0.533", "0.645", "0.800"]);
+    assert.match(legacy.note, /before the default change/);
+    assert.match(legacy.note, /not the server's current numbers/);
+});
+
+test("every hash table says which configuration it was measured under", () => {
+    const view = retrievalView(SUMMARY)!;
+    const hash = view.providers.find((p) => p.id === "hash")!;
+
+    assert.equal(hash.configuration, "structured records, BM25 fusion on");
+    for (const split of hash.splits) {
+        const expected = split.id.includes("legacy") ? "whole records, BM25 off" : "structured records, BM25 on";
+        assert.equal(split.configuration, expected, split.id);
+    }
 });
 
 test("hash is the default panel and cloudflare is the opt-in one", () => {
@@ -435,7 +458,10 @@ test("holdout3 is drawn as its own block, labelled as scored once", () => {
     assert.equal(holdout3.questions, 20);
     assert.deepEqual(holdout3.metrics, ["hit@1", "hit@3", "hit@5", "mrr@10", "recall@20"]);
     assert.match(holdout3.rule, /before holdout3 was scored/);
-    assert.match(holdout3.note, /not applied|proposable/);
+    // Passing the rule and being adopted are two different things, and the block says which
+    // happened: hash became the default, cloudflare passed by 0.0071 of MRR@10 and did not.
+    assert.match(holdout3.note, /only the hash one was adopted/);
+    assert.match(holdout3.note, /cloudflare still runs whole records with BM25 off/);
     assert.ok(holdout3.recordedLabel.includes("recorded"));
     for (const row of holdout3.rows) {
         assert.equal(row.cells.length, holdout3.metrics.length, `${row.key} is missing a metric`);

@@ -100,6 +100,9 @@ function Retrieval({ view }: { view: RetrievalView }) {
                             {split.id}
                         </span>
                         <span className="text-[10px] mono text-muted">{split.questions} questions</span>
+                        {split.configuration && (
+                            <span className="text-[10px] mono text-muted/80">{split.configuration}</span>
+                        )}
                         {split.reused && (
                             <span className="px-2 py-0.5 rounded-full border border-amber-400/20 bg-amber-400/10 text-amber-300 text-[10px] font-bold">
                                 reused

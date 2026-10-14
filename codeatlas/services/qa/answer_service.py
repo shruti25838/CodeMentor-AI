@@ -1,6 +1,7 @@
 import logging
 import re
-from dataclasses import dataclass, field
+from collections import OrderedDict
+from dataclasses import dataclass, field, replace
 from math import sqrt
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from codeatlas.observability.agent_metrics import (
 from codeatlas.observability.metrics import RETRIEVAL_FALLBACK
 from codeatlas.observability.timing import stage
 from codeatlas.services.llm.quota import classify_quota, quota_answer
+from codeatlas.services.retrieval.bm25 import DEFAULT_MAX_INDEXES as DEFAULT_BM25_MAX_INDEXES
 from codeatlas.services.retrieval.bm25 import Bm25Index, Bm25Settings
 from codeatlas.services.retrieval.embedding import EmbeddingService, EmbeddingUnavailableError, fallback_note
 from codeatlas.services.retrieval.fusion import DEFAULT_RRF_K, reciprocal_rank_fusion
@@ -73,6 +75,21 @@ class RetrievalSettings:
     bm25_rrf_k: int = DEFAULT_RRF_K
     # How far down each list is read before fusing. 0 means "as deep as the vector pool".
     bm25_depth: int = 0
+    # How many lexical indexes may be held in memory at once, across every repository and every
+    # retriever this service searches. A lexical index is built on the first question about a
+    # repository and kept, so without a cap this grows with the number of repositories a visitor
+    # has analysed and nothing ever gives it back. Over the cap, the least recently *used* index
+    # is dropped and rebuilt the next time it is needed: rebuilding is local arithmetic over
+    # records that are already in memory, so the cost of being wrong about the cap is time, not
+    # a wrong answer. Not a per-index setting - the cache is one cache, so the cap is one number.
+    bm25_max_indexes: int = DEFAULT_BM25_MAX_INDEXES
+
+
+# The settings a second index is allowed to disagree with the first about. Everything outside
+# this list is either applied before the index is chosen (drop_stopwords, which also signs the
+# cloudflare embedder, so the two indexes could not differ on it even if the code let them) or
+# describes the candidate pool, which both indexes fill to the same depth.
+PER_INDEX_FIELDS = ("bm25_enabled", "bm25_k1", "bm25_b", "bm25_rrf_k", "bm25_depth")
 
 
 @dataclass(frozen=True)
@@ -99,6 +116,7 @@ class AnswerService:
         total_max_chars: int = DEFAULT_TOTAL_MAX_CHARS,
         fallback_retriever: CodeRetriever | None = None,
         fallback_embedder: EmbeddingService | None = None,
+        fallback_settings: RetrievalSettings | None = None,
     ) -> None:
         self._retriever = retriever
         self._embedder = embedder
@@ -109,13 +127,27 @@ class AnswerService:
         self._fallback_embedder = fallback_embedder
         self._llm = llm
         self._settings = settings or RetrievalSettings()
+        # How the fallback index is searched. It is the primary settings with only the fields in
+        # PER_INDEX_FIELDS taken from the caller, rather than the caller's object wholesale: a
+        # setting that is applied before the index is even chosen cannot be allowed to differ
+        # here, because by then it has already been applied.
+        self._fallback_settings = (
+            self._settings
+            if fallback_settings is None
+            else replace(self._settings, **{f: getattr(fallback_settings, f) for f in PER_INDEX_FIELDS})
+        )
         self._snippet_max_chars = snippet_max_chars
         self._total_max_chars = total_max_chars
-        # One BM25 index per repository, built on first use and rebuilt when the repository is
-        # indexed again. Keyed by repo and by the record list's identity, because reindexing
-        # replaces that list: an index built from the old records would answer about code that
-        # is no longer there.
-        self._bm25: dict[str, tuple[int, Bm25Index]] = {}
+        # One BM25 index per repository *per retriever*, built on first use and rebuilt when the
+        # repository is indexed again. Keyed by the retriever as well as the repo because under
+        # the cloudflare provider one repo_id has two indexes holding different records, and by
+        # the record list's identity because reindexing replaces that list: an index built from
+        # the old records would answer about code that is no longer there.
+        #
+        # An OrderedDict in least-recently-used order, newest last, capped at
+        # `settings.bm25_max_indexes`. The cap is read from the primary settings and not the
+        # fallback's: there is one cache, shared by both retrievers, so there is one cap.
+        self._bm25: OrderedDict[tuple[int, str], tuple[int, Bm25Index]] = OrderedDict()
         self._logger = logging.getLogger(__name__)
         self._prompt = ChatPromptTemplate.from_messages(
             [
@@ -147,6 +179,8 @@ class AnswerService:
         retriever, embedder, reason = self._choose(repo_id)
         if retriever is None:
             return [], ""
+        if retriever is self._fallback_retriever:
+            settings = self._fallback_settings
 
         try:
             with stage("embed_query"):
@@ -161,6 +195,7 @@ class AnswerService:
             if fallback is None:
                 return [], ""
             retriever, embedder = fallback
+            settings = self._fallback_settings
             reason = exc.reason
             with stage("embed_query"):
                 query_vector = embedder.embed_query(question)
@@ -173,7 +208,7 @@ class AnswerService:
         with stage("search"):
             records = retriever.search(repo_id, query_vector, depth)
             if settings.bm25_enabled:
-                records = self._fuse_lexical(retriever, repo_id, question, records, depth)
+                records = self._fuse_lexical(retriever, repo_id, question, records, depth, settings)
         if settings.skip_tests:
             records = [r for r in records if not _is_test_path(r.metadata.get("path", ""))]
         # Reranking reads each candidate's snippet from disk.
@@ -188,14 +223,17 @@ class AnswerService:
         question: str,
         vector_records: list[EmbeddingRecord],
         depth: int,
+        settings: RetrievalSettings,
     ) -> list[EmbeddingRecord]:
         """The vector candidates fused with BM25's, cut back to the same pool depth.
 
         The pool stays the same size, so nothing downstream sees a longer list than it used to:
         what changes is *which* records are in it. The fusion is symmetric, so a record both
         retrievers rank highly rises, and a record only BM25 found can still enter the pool.
+
+        `settings` is passed in rather than read from `self`, because which index is being
+        searched decides whether it is fused at all: see PER_INDEX_FIELDS.
         """
-        settings = self._settings
         index = self._bm25_index(retriever, repo_id, settings)
         if index is None or len(index) == 0:
             return vector_records
@@ -210,8 +248,13 @@ class AnswerService:
         records = retriever.records(repo_id)
         if not records:
             return None
-        cached = self._bm25.get(repo_id)
+        key = (id(retriever), repo_id)
+        cached = self._bm25.get(key)
         if cached is not None and cached[0] == id(records):
+            # Used, so it goes to the newest end: the cap evicts what has been unused longest,
+            # not what was built longest ago. A repository asked about every minute must not be
+            # thrown away because it was the first one analysed.
+            self._bm25.move_to_end(key)
             return cached[1]
         # The full text of each record, uncapped - the same text the rerank reads. BM25 is local
         # and free, so there is no reason to show it only the opening of a long file.
@@ -220,9 +263,28 @@ class AnswerService:
             texts=[_record_text(record) for record in records],
             settings=Bm25Settings(k1=settings.bm25_k1, b=settings.bm25_b),
         )
-        self._bm25[repo_id] = (id(records), index)
+        self._bm25[key] = (id(records), index)
+        self._bm25.move_to_end(key)
         self._logger.info("Built a BM25 index of %s records for repo %s", len(index), repo_id)
+        self._evict_lexical_indexes(self._settings.bm25_max_indexes)
         return index
+
+    def _evict_lexical_indexes(self, cap: int) -> None:
+        """Drop the least recently used lexical indexes until the cache is within the cap.
+
+        A whole index at a time, because half of one answers nothing. What is dropped is the
+        lexical index alone: the records it pointed at are the retriever's and stay exactly
+        where they were, so a visitor whose repository is evicted waits for a rebuild and is
+        never told anything different.
+        """
+        while len(self._bm25) > max(cap, 1):
+            evicted, _ = self._bm25.popitem(last=False)
+            self._logger.info(
+                "Evicted the BM25 index for repo %s; %s of %s kept. It is rebuilt on the next question.",
+                evicted[1],
+                len(self._bm25),
+                cap,
+            )
 
     def _choose(self, repo_id: str) -> tuple[CodeRetriever | None, EmbeddingService, str]:
         """Which index to search, decided before anything is called."""

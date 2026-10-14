@@ -30,6 +30,7 @@ from codeatlas.services.retrieval.embedding import REASONS, EmbeddingUnavailable
 from codeatlas.services.retrieval.faiss_retriever import FaissCodeRetriever
 from codeatlas.services.retrieval.hash_embedder import HashEmbeddingService
 from codeatlas.services.retrieval.indexing import CodeIndexService
+from codeatlas.services.retrieval.record_format import with_record_format
 from codeatlas.services.state.repo_state_store import RepoState, RepoStateStore
 from codeatlas.utils.config import load_config
 
@@ -324,18 +325,26 @@ def test_cloudflare_gets_two_indexes_in_two_folders(monkeypatch, tmp_path) -> No
     get_config.cache_clear()
     try:
         assert isinstance(get_index_service(), DualIndexService)
-        assert isinstance(get_fallback_embedder(), HashEmbeddingService)
+        # The hash fallback is structured by default while the cloudflare index beside it is
+        # whole, so the fallback embedder is the hash one inside a record-format wrapper.
+        fallback = get_fallback_embedder()
+        assert isinstance(getattr(fallback, "inner", fallback), HashEmbeddingService)
         assert (tmp_path / "hash").is_dir() and (tmp_path / "semantic").is_dir()
     finally:
         get_config.cache_clear()
 
 
 def test_the_fallback_embedder_is_the_one_the_hash_index_was_built_with() -> None:
+    """And it is built for the *hash* kind, which under the default is not the cloudflare one."""
     config = replace(load_config(), embedding_provider="cloudflare")
-    assert (
-        build_embedder(replace(config, embedding_provider="hash")).signature()
-        == HashEmbeddingService(lowercase=config.hash_lowercase, subtokens=config.hash_subtokens).signature()
+    fallback = build_embedder(replace(config, embedding_provider="hash"))
+    expected = with_record_format(
+        HashEmbeddingService(lowercase=config.hash_lowercase, subtokens=config.hash_subtokens),
+        config.record_format_for("hash"),
     )
+
+    assert fallback.signature() == expected.signature()
+    assert config.record_format_for("hash") != config.record_format_for("cloudflare")
 
 
 def test_the_answer_service_is_given_the_fallback_only_when_there_is_one(monkeypatch) -> None:

@@ -23,22 +23,27 @@ def _config(provider: str):
     return replace(load_config(), embedding_provider=provider)
 
 
+def _provider(embedder):
+    """The provider inside the record-format wrapper the default now puts around every embedder."""
+    return getattr(embedder, "inner", embedder)
+
+
 def test_hash_is_still_the_default(monkeypatch) -> None:
     monkeypatch.delenv("CODEATLAS_EMBEDDING_PROVIDER", raising=False)
     config = load_config()
     assert config.embedding_provider == "hash"
-    assert isinstance(build_embedder(config), HashEmbeddingService)
+    assert isinstance(_provider(build_embedder(config)), HashEmbeddingService)
 
 
 def test_fastembed_is_selected_by_name_without_loading_a_model() -> None:
-    embedder = build_embedder(_config("fastembed"))
+    embedder = _provider(build_embedder(_config("fastembed")))
     assert isinstance(embedder, FastEmbedEmbeddingService)
     assert embedder._model_name == DEFAULT_FASTEMBED_MODEL
 
 
 def test_fastembed_embeds_one_document_at_a_time() -> None:
     assert DEFAULT_FASTEMBED_BATCH_SIZE == 1
-    assert build_embedder(_config("fastembed"))._batch_size == 1
+    assert _provider(build_embedder(_config("fastembed")))._batch_size == 1
     assert index_options(_config("fastembed"))["batch_size"] == 1
 
 

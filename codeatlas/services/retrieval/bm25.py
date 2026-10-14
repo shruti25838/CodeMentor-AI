@@ -48,6 +48,12 @@ from codeatlas.services.retrieval.hash_embedder import STOPWORDS, split_identifi
 DEFAULT_K1 = 1.2
 DEFAULT_B = 0.75
 
+# How many of these an AnswerService may hold at once. Unlike k1 and b this one *was* measured
+# here: see docs/RESULTS.md for what an index of each of the two evaluation repositories weighs
+# and what the whole process weighs around it. Four is two repositories' worth of headroom under
+# the dual-index path, where one repository can have a lexical index per index kind.
+DEFAULT_MAX_INDEXES = 4
+
 _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
 
 

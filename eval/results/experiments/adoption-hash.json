@@ -1,25 +1,37 @@
 {
-  "codementor_commit": "909f98d",
+  "codementor_commit": "a0004b2-dirty",
   "embedder": "hash (HashEmbeddingService, 384 dims, subtokens, hashed bag of words, not semantic), records structured",
   "signature": "hash:384:lowercase=0:subtokens=1|records=structured",
   "environment": [
     {
       "name": "CODEATLAS_EMBEDDING_PROVIDER",
-      "set": "hash",
+      "set": null,
       "effective": "hash",
-      "from_default": false
+      "from_default": true
     },
     {
       "name": "CODEATLAS_RECORD_FORMAT",
-      "set": "structured",
+      "set": null,
       "effective": "structured",
-      "from_default": false
+      "from_default": true
+    },
+    {
+      "name": "CODEATLAS_HASH_RECORD_FORMAT",
+      "set": null,
+      "effective": "structured",
+      "from_default": true
     },
     {
       "name": "CODEATLAS_BM25",
-      "set": "true",
+      "set": null,
       "effective": "true",
-      "from_default": false
+      "from_default": true
+    },
+    {
+      "name": "CODEATLAS_HASH_BM25",
+      "set": null,
+      "effective": "true",
+      "from_default": true
     },
     {
       "name": "CODEATLAS_RECORD_WINDOW_CHARS",
@@ -98,7 +110,8 @@
     "bm25_k1": 1.2,
     "bm25_b": 0.75,
     "bm25_rrf_k": 60,
-    "bm25_depth": 0
+    "bm25_depth": 0,
+    "bm25_max_indexes": 4
   },
   "splits": [
     {
@@ -323,7 +336,7 @@
       "file_records": 15,
       "function_records": 144,
       "index_bytes": 829500,
-      "index_seconds": 0.231
+      "index_seconds": 0.302
     },
     {
       "repo": "itsdangerous",
@@ -335,7 +348,7 @@
       "file_records": 15,
       "function_records": 162,
       "index_bytes": 926012,
-      "index_seconds": 0.22
+      "index_seconds": 0.271
     },
     {
       "repo": "flask",
@@ -347,7 +360,7 @@
       "file_records": 83,
       "function_records": 1622,
       "index_bytes": 8889386,
-      "index_seconds": 2.736
+      "index_seconds": 3.262
     },
     {
       "repo": "flask",
@@ -359,7 +372,7 @@
       "file_records": 83,
       "function_records": 1779,
       "index_bytes": 9744779,
-      "index_seconds": 2.236
+      "index_seconds": 2.823
     }
   ],
   "index_guard": {
@@ -406,5 +419,5 @@
     "passes": true
   },
   "matches_experiments": true,
-  "seconds": 20.4
+  "seconds": 30.6
 }
