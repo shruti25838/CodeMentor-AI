@@ -2292,3 +2292,66 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **the cap is still not a hard ceiling in the strict sense**, and cannot be with this design. It now holds whenever a question costs no more than the most expensive one before it; a question that costs far more than any of its predecessors can still cross the line, by the amount it exceeds that estimate. A true ceiling would need the provider to price a request before running it, or a budget enforced provider-side.
   **The reserve makes the run end earlier and spend less than the cap allows.** That is the intended trade: the previous entry's run would have stopped a question sooner in each mode and recorded four and five questions instead of five and six.
   **The ledger is the only thing counted against**, so a model call this machine made outside the probe -- another server, a test that bypassed the temp-file fixture -- lands in the same day's file. The baseline subtraction handles spend from *before* the run; it cannot handle spend from *during* it
+### Check: the model call the default chat path spends on nothing, priced and traced (read-only)
+- Value: 36ae774 recorded in passing that `handle_question_fast` never reads `retrieved.answer` and guessed the cost at "roughly a third of the default path's tokens". **Measured, it is 48.5%.** Nothing in the repository was changed by this entry.
+
+  **Where the call is made.** `codeatlas/services/qa/answer_service.py:366-367` -- `chain.invoke({"question": ..., "context": render_snippets(snippets)})` inside `_format_answer`, reached from `AnswerService.answer` at `:341`. The model is there because `di.py:284` builds the orchestrator's `AnswerService` with `llm=get_llm_provider().get_chat_model()`; with `llm=None` the same method returns a list of file locations instead (`:361-362`), which is what grounded mode's service does.
+
+  **What it receives.** The template at `answer_service.py:152-161`: a one-line system prompt (*"You are a senior engineer. Use provided code snippets to answer. Cite file paths and line ranges from the snippets."*) and a human message of the question followed by every retrieved snippet. For *"How does Signer create a signature?"* against itsdangerous, built offline with no model call, that prompt is **5,622 characters**. It is given **no conversation history** -- which is what made the history measurement in the previous entry possible.
+
+  **Where its output goes.** Into `GroundedAnswer.answer` (`answer_service.py:346-352`), bound to `retrieved` at `orchestration.py:155`. The rest of `handle_question_fast` reads `retrieved.citations` (`:156`), `retrieved.snippets` (`:163`, `:170`) and `retrieved.note` (`:181`). **`retrieved.answer` is never read**, and the local goes out of scope when the function returns at `:172`.
+
+  **Does anything downstream read it?** No. Two places in the whole repository read `GroundedAnswer.answer`, and neither is on this path: `orchestration.py:335`, the deep-mode `_retrieval_node`, which renders it into the step transcript; and `retrieval_agent.py:32`, the text `Agent.run` contract used by the planned graph and by `handle_generation`. Checked at runtime as well as by reading: with a fake model answering the first call with a sentinel string, the sentinel appears in **neither** the streamed answer, nor anywhere in the `done` event, nor in the mentor's prompt, while the second call's sentinel is the answer verbatim.
+
+  **The prompts of the final answer call, with and without it.** Built offline from the real index for one question, no model call made:
+
+  | | with the retrieval summary call | without it |
+  |---|---|---|
+  | system | the mentor's, unchanged | identical |
+  | human | `Code snippets:` + five numbered snippets + `Question: ...` | identical |
+  | characters | 6,110 | 6,110 |
+
+  **They are byte-identical**, because `handle_question_fast` passes the mentor `retrieved.snippets` and never the summary. The summary is not an input to anything; removing the call removes a 5,622-character prompt and deletes its reply unread.
+
+  **What removing it would change**, from the eleven-question run in the entry before last:
+
+  | | now | without the call |
+  |---|---|---|
+  | model calls per question | 2 (3 with a rewrite) | 1 (2 with a rewrite) |
+  | tokens, 5-question session | 26,927 | 13,857 -- **48.5% less** |
+  | model time, same session | 14,556 ms | 5,457 ms -- **62.5% less** |
+  | share of total request time | -- | the call was **56%** of all time spent in those five requests |
+  | `agents_used` | `["retrieval", "mentor"]` | **unchanged** |
+  | citations | from the snippets | **unchanged** |
+  | the final prompt | 6,110 chars | **unchanged** |
+  | answer content | the mentor's | same prompt, so same distribution; not bit-identical, because the model is not deterministic |
+
+  Per-call figures, from `in_tokens_each`, `out_tokens_each` and `llm_each`:
+
+  | q | wasted in | wasted out | wasted ms | mentor in | mentor out | mentor ms |
+  |---|---|---|---|---|---|---|
+  | 1 | 1,385 | 1,190 | 1,863 | 1,497 | 330 | 980 |
+  | 2 | 1,465 | 1,485 | 1,821 | 1,678 | 331 | 768 |
+  | 3 | 1,115 | 953 | 1,473 | 1,427 | 1,369 | 1,813 |
+  | 4 | 1,439 | **2,048** | 2,558 | 2,399 | 346 | 752 |
+  | 5 | 1,203 | 787 | 1,384 | 2,262 | 586 | 1,144 |
+
+  On question 4 the discarded reply used **exactly 2,048 output tokens** -- the whole of `CODEATLAS_LLM_MAX_TOKENS` -- and was then thrown away.
+
+  **Metrics that would move**: `codeatlas_agent_model_calls_total{agent="retrieval"}` would fall to zero; `codeatlas_agent_tokens_total{agent="retrieval", ...}` likewise; `codeatlas_stage_duration_seconds{endpoint="ask_stream", stage="model"}` would roughly halve; `codeatlas_agent_failures_total{agent="retrieval", reason="fallback_to_location_list"}` and the quota reasons recorded at `answer_service.py:375-377` would stop being reachable from this path. The on-disk token ledger would count about half as much per question. In the timing line, `llm_calls` and `llm_each` would disappear from a question with no rewrite, because one call needs no per-call list.
+
+  **`agents_used` would not change**, which corrects the note at 36ae774. `agents_ran.append("retrieval")` happens at `orchestration.py:154`, before the call, and retrieval would still run -- it would still embed the query, search, fuse and rerank. It is the *summarising* that is spent on nothing, not the retrieval. The claim in that note belongs to the other option it describes, moving the search out of the graph into the controller, which would stop retrieval being an agent that ran.
+
+  **Tests that would need changing**, four assertions in two files: `tests/test_timing.py:170` and `:218` (`llm_calls == 2`), `tests/test_conversation_memory.py:231` (the same), and `tests/test_conversation_memory.py:225`, which checks that the rewritten question reached the search by looking for it in the retrieval summary's prompt -- with no such prompt it would need another anchor. `tests/test_agents_used.py:63` and `:126` assert `["retrieval", "mentor"]` and would still pass.
+
+  **The early file list would not change today**, and would become possible tomorrow. `retrieved_event` (`grounded_chat.py:135`) is sent only by the grounded path (`ask_controller.py:277` onward); the legacy path sends the bare stage name at `ask_controller.py:201`. Removing this call does not add the event. What it removes is the reason 36ae774 gave for legacy not having one -- "there is no point in that path that is both after retrieval and before a model call" -- because with the summary gone, that point is exactly where `_retrieve` returns, about 1.8 s earlier than the first token.
+
+  **One thing removal would improve that is not on the list**: it halves the tokens a question puts into the provider's per-minute window, which makes the 8,000-token-per-minute limit roughly half as likely to bite -- candidate 3 of the latency diagnosis
+- Command: read-only. The prompts were built with a scratch script that constructs `AnswerService(..., llm=None)` over the index already on disk and renders both templates with `format_messages`; the sentinel check ran the real `/ask/stream` against a two-file temporary index with `FakeListChatModel`. The per-call figures are the `in_tokens_each`, `out_tokens_each` and `llm_each` fields of the five `timing ask_stream` lines from the legacy run recorded two entries above. **Nothing in the repository was changed, and no provider was called**
+- Dataset/repo: pallets/itsdangerous for the prompts; the five-question legacy session of 2026-10-14 for the token and timing figures
+- Date: 2026-10-14
+- Commit: none -- this entry changes no code
+- Notes: **the 48.5% and 62.5% are one session of five questions**, and the discarded reply's length is the model's choice, so they will not hold to the decimal on another run. What does not depend on the sample is that the reply is read by nothing and that the final prompt does not contain it.
+  **"Same distribution, not identical answers."** The mentor's prompt is unchanged, so nothing about what it is asked changes; but the two calls share a per-minute budget, so removing the first one also changes *when* the second is served, and the model is sampled at the configured temperature either way.
+  **One behaviour would genuinely be lost.** `_format_answer` catches a provider refusal and turns it into the quota sentence with the locations beneath it (`answer_service.py:369-383`). On this path that handler is redundant -- the mentor has its own at `orchestration.py:164-170` -- but it is also the only thing that records `fallback_to_location_list` for the retrieval agent, so that metric would go quiet rather than go to zero for a good reason.
+  **This entry does not recommend the removal.** It prices it. The change touches the default chat path, four test assertions and five metric series, and belongs in its own entry with its own before-and-after measurement
