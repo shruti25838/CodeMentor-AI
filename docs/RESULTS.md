@@ -2393,3 +2393,32 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **the identical call is still made in one place off this path, and is left alone.** `CodingMentorAgent.run` calls `self._answer_service.answer(...)` and then reads only `retrieved.snippets` -- the same waste, the same shape. It is the mentor's text `Agent` contract, reached from `handle_generation` and from a planned step, not from the default chat path, and changing it would move an admin endpoint's model-call count that nothing here measures. Recorded rather than quietly fixed or quietly left.
   **`locate`'s `answer` field is not empty, and that is a choice.** Filling it with the locations keeps every reader of `GroundedAnswer` working and makes the field mean the same thing it means with no model configured. An empty string would have been a second way for a reader to be surprised.
   **The duck-typing fallback hides a mistake.** `_retrieve` falls back from `locate` to `retrieve`, so an agent that forgets `locate` silently goes on paying for the summary rather than failing. The alternative -- requiring `locate` -- would break any stand-in written against the older contract, and several tests use one. The real `RetrievalAgent` has both, and the call-counting test is what would catch a regression
+### Feature: the default chat mode names the files it found, before the model is asked
+- Value: 36ae774 gave the early file list to grounded mode and said plainly why the default mode could not have one: *"there is no point in that path that is both after retrieval and before a model call"*, because the path summarised its own search through the model first. The previous entry removed that call. The point now exists, and the event goes out there.
+
+  **The rule is unchanged, and is what decides this.** The early list is sent only where it is **guaranteed** to equal the final citation list. On this path it is, by construction rather than by argument: the controller holds the `GroundedAnswer` that `AgentOrchestrator.search` returned, sends `retrieved.snippets` as the event, and the `done` event's citations are `retrieved.citations` -- the same object, built from the same list, by the same search. A test asserts the two are equal.
+
+  | path | what it sends early | why |
+  |---|---|---|
+  | grounded | stage, count and every location | `grounded_context` builds the snippets once; event, prompt and citations all read from that list |
+  | **default (legacy)** | **the same** | `search` returns one `GroundedAnswer`; the controller sends its snippets and returns its citations |
+  | deep | the stage name alone | retrieval happens inside the graph, behind a planner and whatever steps it chooses; at this point the citations do not exist |
+  | general (no repository) | the stage name alone | there is no retrieval to report |
+
+  **`retrieved_event` now takes the snippet list, not a `GroundedContext`.** It only ever read `.snippets`, and taking the list puts the promise where it belongs: a caller may send this event only while holding the list the citations are built from. The docstring says which two callers are, and why.
+
+  **Order on the default path** is now `retrieving` -> `retrieved` -> `answering` -> tokens -> `done`, asserted as a list rather than as a set of pairwise comparisons.
+
+  **The 404 for an unknown repository still comes before any event.** The guard runs before the stream opens, so an unknown repository is a real 404 and not a 200 with an error inside it. Asserted on this path as *the response carries no events at all*, plus the model was never asked -- an event added earlier in the path is exactly the kind of change that could have moved it.
+
+  **No question text goes into the event**, asserted here as it was for grounded: a marker planted in the question reaches no status event, and each file entry carries `path`, `start_line` and `end_line` and nothing else.
+
+  **No frontend change.** `codementor-ui/lib/streamStatus.ts` already renders this event and already said it arrives "only on a path where the server can promise they are the citations" -- which is still true, now of two paths instead of one
+- Command: `python -m pytest tests/ -q` -> **1328 passed**, 1 skipped (was 1323; `tests/test_early_status_event.py` gains 6 and rewrites 1, and its `retrieved_event` unit tests take a list now); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (198 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none. Every test uses a fake model over the real two-file index the grounded tests build in a temporary directory. **No provider was called**
+- Date: 2026-10-14
+- Commit: 9690592
+- Notes: **the page was not opened in a browser.** The event is asserted at the endpoint and the renderer was already tested, but nothing here has seen the default mode draw a file list on a screen.
+  **A defect found on this path and deliberately left.** `_answer_from` rebuilds the result without `note`, so the semantic-fallback sentence has never reached the browser in the default mode -- it predates this split, which only moved the code around it. It is visible only under the cloudflare provider, which the default is not, and fixing it is a behaviour change with its own before-and-after. There is a comment at the drop saying so.
+  **Three orchestrator stand-ins in the tests had to learn `search` and `answer_from`**, because the controller now calls those. `handle_question_fast` remains the combined entry point and is still tested; it is no longer called from the controller, so a stand-in that implements only it would silently never be exercised by an endpoint test.
+  **What is still not checked**: that the early list equals the citations is asserted per path, not enforced by a type. A third path could send the event while holding a different list, and only a test of that path would catch it
