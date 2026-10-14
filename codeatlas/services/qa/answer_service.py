@@ -331,6 +331,24 @@ class AnswerService:
         return fit_snippets([self._snippet_for(record) for record in records], budget)
 
     def answer(self, repo_id: str, question: str, top_k: int = 5) -> GroundedAnswer:
+        """The search, with the snippets summarised through the model into `answer`.
+
+        Only a caller that reads that text should ask for it: it is a whole model call, with
+        every snippet in its prompt. A caller that wants the code itself wants `locate`.
+        """
+        return self._grounded(repo_id, question, top_k, summarise=True)
+
+    def locate(self, repo_id: str, question: str, top_k: int = 5) -> GroundedAnswer:
+        """The same search, with **no model call**: snippets, citations and the fallback note.
+
+        `answer` is this plus a summary of what was found. Where that summary is not read, the
+        call that writes it is spent on nothing, so this exists to be asked for instead.
+        `answer` keeps its shape: the `answer` field here holds the locations, which is exactly
+        what `answer` returns when no model is attached to the service at all.
+        """
+        return self._grounded(repo_id, question, top_k, summarise=False)
+
+    def _grounded(self, repo_id: str, question: str, top_k: int, summarise: bool) -> GroundedAnswer:
         self._logger.info("Answering question for repo %s", repo_id)
         records, note = self.retrieve_with_note(repo_id, question, top_k)
         self._logger.info("Retrieved %s records for repo %s", len(records), repo_id)
@@ -338,7 +356,7 @@ class AnswerService:
         # Citations describe exactly these snippets, so the answer and the citations agree.
         snippets = self.snippets_for(records)
         citations = [citation_text(snippet) for snippet in snippets]
-        answer_lines = self._format_answer(question, snippets)
+        answer_lines = self._format_answer(question, snippets) if summarise else _locations_only(snippets)
         reasoning = [
             f"Embedded query for repo_id={repo_id}.",
             f"Retrieved {len(records)} records, kept {len(snippets)} snippets within the context budget.",
@@ -352,14 +370,10 @@ class AnswerService:
         )
 
     def _format_answer(self, question: str, snippets: list[Snippet]) -> list[str]:
-        if not snippets:
-            return [
-                "No relevant code locations found.",
-                "Try a different query or re-run analysis.",
-            ]
-
-        if self._llm is None:
-            return _location_list(snippets)
+        # No snippets, or no model to summarise them with: the locations are all there is to
+        # say, and they are still true. The same two lines `locate` returns.
+        if not snippets or self._llm is None:
+            return _locations_only(snippets)
 
         try:
             chain = self._prompt | self._llm
@@ -445,6 +459,13 @@ def _dedupe_windows(records: list[EmbeddingRecord]) -> list[EmbeddingRecord]:
 def _location_list(snippets: list[Snippet]) -> list[str]:
     """What the caller gets when there is no model: the locations, which are still true."""
     return ["Top relevant locations:"] + [f"- {snippet.location}" for snippet in snippets]
+
+
+def _locations_only(snippets: list[Snippet]) -> list[str]:
+    """The answer when the model is not asked: the locations, or why there are none."""
+    if not snippets:
+        return ["No relevant code locations found.", "Try a different query or re-run analysis."]
+    return _location_list(snippets)
 
 
 def citation_text(snippet: Snippet) -> str:

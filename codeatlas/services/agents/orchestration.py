@@ -145,19 +145,36 @@ class AgentOrchestrator:
 
         history: earlier turns of this conversation, shown to the mentor. search_question: a
         standalone version of a follow-up, used for retrieval instead of the question as asked.
-        """
-        # Appended as each agent is actually invoked, so a path that stops early reports
-        # only what it reached.
-        agents_ran: list[str] = []
 
-        # 1. Retrieve — the only search this path makes.
-        agents_ran.append("retrieval")
-        retrieved = self._retrieve(search_question or question, repo_id)
+        The two halves are also callable separately, so a streaming caller can send what the
+        search found while the model is still writing; see `search` and `answer_from`.
+        """
+        retrieved = self.search(search_question or question, repo_id)
+        return self.answer_from(question, retrieved, repo_id, history=history)
+
+    def search(self, question: str, repo_id: str) -> GroundedAnswer:
+        """The fast path's one search, and the only thing it does before the model is asked.
+
+        **No model call.** What the mentor is given is the snippets, so the prose summary
+        `retrieve` would write is read by nothing on this path - it was a whole model call,
+        with every snippet in its prompt, whose reply went straight into a local that fell out
+        of scope. Deep mode still asks for it, because it renders that text into the step
+        transcript a later agent reads.
+        """
+        return self._retrieve(question, repo_id, summarise=False)
+
+    def answer_from(self, question: str, retrieved: GroundedAnswer, repo_id: str, history: str = "") -> AnswerResult:
+        """The fast path's answer, over snippets `search` has already found.
+
+        `agents_used` names retrieval as well as the mentor because this is only ever called
+        after `search`, which is the retrieval agent's turn; it no longer costs that agent a
+        model call, but it still ran.
+        """
+        agents_ran = ["retrieval", "mentor"]
         citations = retrieved.citations
 
-        # 2. The mentor answers from exactly those snippets, so the answer and the citations
-        #    describe the same code.
-        agents_ran.append("mentor")
+        # The mentor answers from exactly those snippets, so the answer and the citations
+        # describe the same code.
         try:
             with agent_run("mentor"):
                 answer = self._mentor_answer(question, retrieved.snippets, repo_id, history=history)
@@ -348,9 +365,20 @@ class AgentOrchestrator:
             "agents_ran": [*state["agents_ran"], "retrieval"],
         }
 
-    def _retrieve(self, question: str, repo_id: str) -> GroundedAnswer:
-        """Snippets for a question, or an empty result if retrieval fails."""
-        retrieve = getattr(self._retrieval_agent, "retrieve", None)
+    def _retrieve(self, question: str, repo_id: str, summarise: bool = True) -> GroundedAnswer:
+        """Snippets for a question, or an empty result if retrieval fails.
+
+        `summarise` asks the retrieval agent for its prose summary of what it found, which is a
+        model call with every snippet in its prompt. Deep mode wants it - `_retrieval_node`
+        renders it into the step transcript. The fast path does not, so it asks for `locate`
+        instead and the search costs nothing but the search.
+
+        An agent with no `locate` falls back to `retrieve`, which summarises: this duck-types
+        over the Agent contract, and a stand-in that implements only the older method must keep
+        working rather than quietly returning nothing.
+        """
+        preferred = "retrieve" if summarise else "locate"
+        retrieve = getattr(self._retrieval_agent, preferred, None) or getattr(self._retrieval_agent, "retrieve", None)
         try:
             with agent_run("retrieval"):
                 if retrieve is not None:

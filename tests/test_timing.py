@@ -158,16 +158,18 @@ def _events(resp) -> list[dict]:
 
 
 def test_ask_stream_reports_chat_stages_without_question_text(tmp_path, caplog):
-    env = _chat_env(tmp_path, ["retrieval summary", "mentor reasoning", "final answer"])
+    env = _chat_env(tmp_path, ["the mentor's answer"])
     repo_id = env.analyze().json()["repository_id"]
     with caplog.at_level(logging.INFO):
         resp = env.client.post("/ask/stream", json={"question": QUESTION, "repo_id": repo_id})
     done = _events(resp)[-1]
     assert done["type"] == "done"
     timings = done["timings_ms"]
-    # The fast path asks the model twice: the retrieval summary, then the mentor's answer.
-    # It was three until the mentor stopped running its own second search.
-    assert timings["llm_calls"] == 2
+    # One model call per question: the mentor's. It was three until the mentor stopped running
+    # its own second search, and two until the retrieval summary - whose reply nothing read -
+    # was removed. `llm_calls` is absent because a count appears only for a stage that ran more
+    # than once, so `llm` is that one call's duration and needs no breakdown beside it.
+    assert "llm_calls" not in timings and "llm_each" not in timings
     assert "embed_query_calls" not in timings, "one search per question, so no repeat count"
     assert timings["search"] >= 0
     for name in ("embed_query", "search", "rerank", "llm", "first_token_sent", "total"):
@@ -191,7 +193,7 @@ def test_ask_sets_server_timing(tmp_path):
 
 def test_history_turns_and_rewrite_ran_are_on_every_chat_line(tmp_path):
     """Two of the four candidates for a chat that slows down are not durations at all."""
-    env = _chat_env(tmp_path, ["retrieval summary", "mentor answer"] * 4)
+    env = _chat_env(tmp_path, ["mentor answer"] * 4)
     llm = FakeListChatModel(responses=["what does add do?"] * 4)
     env.client.app.dependency_overrides[get_llm_provider] = lambda: type(
         "P", (), {"get_chat_model": lambda self: llm}
@@ -213,9 +215,10 @@ def test_history_turns_and_rewrite_ran_are_on_every_chat_line(tmp_path):
     # "it" points back at the conversation, so this question paid for an extra model call.
     assert second["timings_ms"]["rewrite_ran"] == 1
     assert second["timings_ms"]["rewrite"] >= 0
-    # The rewrite is a third model call but has its own stage, so `llm_calls` is still the two
-    # calls of the answer itself. Reading the extra one off the durations means knowing that.
-    assert second["timings_ms"]["llm_calls"] == 2
+    # Two model calls on a follow-up: the rewrite and the mentor. They are separate stages, so
+    # neither repeats and `llm_calls` stays absent; the second call is visible as `rewrite`
+    # having a duration at all. Before the retrieval summary was removed this was three.
+    assert "llm_calls" not in second["timings_ms"]
 
 
 def test_a_provider_retry_backoff_lands_on_the_waiting_request():
