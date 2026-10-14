@@ -2071,3 +2071,36 @@ Every number or claim here comes from a command that can be re-run.
   **The per-arm answer files are missing, and that is the second half of the same mistake.** The script wrote the result file after every run and the answers only at the end, so stopping the run by hand kept all 21 rows and lost every answer text. It now writes both after every run. Reproducing the answers means running the arms again at roughly **53,000 more tokens**, which is over the cap for this session, so it was not done — the command above writes them to `.codeatlas/reasoning-effort-answers/` (gitignored) on any later run.
   **What the comparison is not.** Five questions, one run per arm, one machine, one model, one afternoon. No repeats, so nothing here separates an arm from the variance between two runs of the same arm — and the 30.65s outlier is a direct demonstration that the variance is large. The timings are wall clock against a local server, so they include this machine's load. Both token figures are the ledger's own count of input plus output, which is a lower bound on what the account was billed.
   **What the setting does not do.** It is ignored for every model except the two Groq names above, and on the OpenAI provider, silently rather than by failing — a server that sets it with another model gets the behaviour it had before, not an error. Nothing warns about that, which is a deliberate choice (the alternative is a warning on every boot of a perfectly normal configuration) and a real sharp edge
+### Feature: the chat stream names the files it found before the model has said anything
+- Value: the wait a visitor sits through on a repository question is mostly the model. Until now the only thing on screen during it was `"Retrieving context..."` — a sentence written **before** the search started, still showing while the search was long finished and the model was thinking. The stream now sends a status event the moment retrieval ends and before the model is asked anything:
+
+  ```
+  {"type": "status", "stage": "retrieved", "content": "Found 2 files", "count": 2,
+   "files": [{"path": "src/itsdangerous/signer.py", "start_line": 10, "end_line": 42},
+             {"path": "src/itsdangerous/timed.py",  "start_line": 1,  "end_line": 30}]}
+  ```
+
+  The page draws *Found 2 files*, the file names, and a spinner, and keeps them until the first answer token lands; from then on it renders exactly as it did before.
+
+  **The early list is sent only where it is guaranteed to equal the final one, and that is one mode of three.**
+
+  | path | what it sends early | why |
+  |---|---|---|
+  | **grounded** | stage, count and every location | `grounded_context` builds the snippets **once**; the event, the prompt and the `done` citations are all read from that one list. A test asserts the early files equal the `done` citations and appear in the prompt, rather than trusting the sentence above |
+  | legacy (the default) | the stage name alone | retrieval happens **inside** the agent graph, behind model calls of its own, so at the point this event would go out the citations do not exist yet |
+  | deep | the stage name alone | the same, plus a planner ahead of it |
+  | general (no repository) | the stage name alone | there is no retrieval to report |
+
+  **So on the shipped default the browser gets a stage name and no file list.** That is the rule working, not a gap in it: a file list the answer then contradicts is worse than a spinner, and the spec this was built to says as much. What it would take to change is in the notes below.
+
+  **Every status event now carries a stable `stage`** — `thinking`, `planning`, `retrieving`, `retrieved`, `answering` — beside its sentence, so the browser keys off a name and the prose stays free to be reworded. An older server that sends no stage still renders its sentence; a test covers that.
+
+  **`count` is distinct files, not locations.** The structured record format can put two windows of one module into the same answer, and counting locations would quietly turn one file into two under a heading that says *files*. The tooltip still carries every line range
+- Command: `python -m pytest tests/ -q` -> **1270 passed**, 1 skipped (`tests/test_early_status_event.py` is new and adds 20); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (195 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (**91 passed**, `lib/streamStatus.test.ts` is new and adds 10), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none — nothing here is a measurement. Every test uses a fake model over a real two-file index built in a temporary directory. **No provider was called**
+- Date: 2026-10-14
+- Commit: 36ae774
+- Notes: **no question text goes into the event, and a test enforces it.** A status event is written into a response body, which is something a proxy or an access log may keep, and the question is the visitor's. A marker planted in the question is asserted to reach no status event, and `retrieved_event` is asserted to emit nothing per file but `path`, `start_line` and `end_line`. Nothing in the logging changed, because nothing in it ever carried the question: the only two lines that mention one say *"Answering question for repo %s"* and name the exception type.
+  **What still works, tested after the early event has already gone out.** The quota refusal (both kinds), the truncation note, the empty-reply sentence and the semantic-fallback note all behave exactly as before; the fallback note is the same retrieval call the event is built from. The unknown-repository **404 still happens before the stream opens**, so it comes before any event at all — asserted as "the response carries no events", because the failure to guard against is a 200 with a status event and an error inside it.
+  **What it would take to give the default path its file list.** Legacy's citations come from `AnswerService.answer` inside `_retrieve`, and that call summarises the snippets through the model, so there is no point in that path that is both after retrieval and before a model call. Two ways out, neither taken here: hand the controller's model-free `AnswerService` the search first and pass the result into the orchestrator, which removes a model call from the default path and so changes `agents_used`, the token spend and the metrics; or search twice, once for the event and once in the graph, which is honest only while nothing can change the index between the two. Both are behaviour changes to the default and belong in their own entry with their own measurement.
+  **One thing found while reading that path and deliberately left alone.** In fast mode `handle_question_fast` uses `retrieved.snippets`, `retrieved.citations` and `retrieved.note` and **never reads `retrieved.answer`** — which is the text the retrieval agent spent a model call producing. On the fifteen-question comparison recorded at 2a66017 legacy made 30 model calls to grounded's 15, and this is one of the two. Removing it would cut roughly a third of the default path's tokens, and it would change the default, the metrics and `agents_used`, so it is recorded here rather than done
