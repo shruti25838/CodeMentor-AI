@@ -73,13 +73,13 @@
       "id": 5,
       "type": "timeseries",
       "title": "Agent failures per minute, by reason",
-      "description": "rate_limited is the provider's 429, payload_too_large its 413, and fallback_to_location_list means the visitor got the degraded answer.",
+      "description": "rate_limited is the provider's 429, payload_too_large its 413, and fallback_to_location_list means the visitor got the degraded answer. Per minute, as the title says: rate() is per second, so the query multiplies by 60 and the axis reads counts/min. It used to show a per-second rate under a per-minute title with a req/s axis, so every value on it read 60 times too small.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "cpm" }, "overrides": [] },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (agent, reason) (rate(codeatlas_agent_failures_total[5m]))",
+          "expr": "sum by (agent, reason) (rate(codeatlas_agent_failures_total[5m])) * 60",
           "legendFormat": "{{agent}} {{reason}}"
         }
       ]
@@ -88,13 +88,13 @@
       "id": 6,
       "type": "timeseries",
       "title": "Planner routes per minute",
-      "description": "Which agent the planner routed a step to.",
+      "description": "Which agent the planner routed a step to. Per minute, as the title says: rate() is per second, so the query multiplies by 60 and the axis reads counts/min. It used to show a per-second rate under a per-minute title with a req/s axis, so every value on it read 60 times too small.",
       "gridPos": { "h": 8, "w": 6, "x": 12, "y": 16 },
-      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "fieldConfig": { "defaults": { "unit": "cpm" }, "overrides": [] },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (route) (rate(codeatlas_planner_routes_total[5m]))",
+          "expr": "sum by (route) (rate(codeatlas_planner_routes_total[5m])) * 60",
           "legendFormat": "{{route}}"
         }
       ]
