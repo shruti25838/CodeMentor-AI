@@ -23,7 +23,18 @@ from codeatlas.services.llm.provider import LlmProvider
 from codeatlas.services.memory.conversation import ConversationStore, Turn, format_history
 from codeatlas.services.qa.answer_service import AnswerService
 from codeatlas.services.qa.followup import needs_rewrite, rewrite_question
-from codeatlas.services.qa.grounded_chat import GROUNDED, build_messages, grounded_context, stream_tokens
+from codeatlas.services.qa.grounded_chat import (
+    GROUNDED,
+    STAGE_ANSWERING,
+    STAGE_PLANNING,
+    STAGE_RETRIEVING,
+    STAGE_THINKING,
+    build_messages,
+    grounded_context,
+    retrieved_event,
+    stage_event,
+    stream_tokens,
+)
 from codeatlas.services.state.repo_state_store import RepoStateStore
 
 router = APIRouter(prefix="/ask", tags=["qa"])
@@ -121,7 +132,7 @@ async def ask_stream(
         try:
             if not request.repo_id:
                 # ---- General mode: true LLM token streaming ----
-                yield _sse({"type": "status", "content": "Thinking..."})
+                yield _sse(stage_event(STAGE_THINKING, "Thinking..."))
                 llm = llm_provider.get_chat_model()
                 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
@@ -174,7 +185,7 @@ async def ask_stream(
                 if request.mode == "deep":
                     # The planned five-agent pipeline. Each agent's step is sent as it
                     # finishes, so the wait is visible rather than silent.
-                    yield _sse({"type": "status", "content": "Planning..."})
+                    yield _sse(stage_event(STAGE_PLANNING, "Planning..."))
                     result = None
                     async for event in _run_deep(orchestrator, llm_provider, request, history, timer):
                         if event["type"] == "result":
@@ -184,7 +195,7 @@ async def ask_stream(
                     if result is None:  # pragma: no cover - the generator always ends with one
                         raise RuntimeError("deep mode produced no answer")
                 else:
-                    yield _sse({"type": "status", "content": "Retrieving context..."})
+                    yield _sse(stage_event(STAGE_RETRIEVING, "Retrieving context..."))
                     loop = asyncio.get_event_loop()
                     result = await loop.run_in_executor(
                         None,
@@ -193,7 +204,7 @@ async def ask_stream(
                         lambda: _answer_with_history(orchestrator, llm_provider, request, history),
                     )
 
-                yield _sse({"type": "status", "content": "Streaming answer..."})
+                yield _sse(stage_event(STAGE_ANSWERING, "Streaming answer..."))
 
                 # Stream answer in small chunks for natural feel
                 answer = result.answer
@@ -260,7 +271,7 @@ async def _run_grounded(answers, llm_provider, request: AskRequest, history, tim
     event, and a provider refusal becomes the same plain sentence with the files beneath it.
     """
     loop = asyncio.get_event_loop()
-    yield {"type": "status", "content": "Retrieving context..."}
+    yield stage_event(STAGE_RETRIEVING, "Retrieving context...")
 
     search_question = request.question
     if needs_rewrite(request.question, history):
@@ -278,9 +289,13 @@ async def _run_grounded(answers, llm_provider, request: AskRequest, history, tim
         lambda: grounded_context(answers, request.repo_id, search_question, top_k=5, total_max_chars=6000),
     )
 
-    # A reasoning model spends its first seconds on tokens nobody sees, so the visitor is told
-    # the wait has started rather than watching a retrieval message that is already finished.
-    yield {"type": "status", "content": "Reading the code..."}
+    # The search is finished and the model has not been asked anything yet, so this is the one
+    # moment at which the files that will be cited are known and nothing has been spent. A
+    # reasoning model then spends its first seconds on tokens nobody sees; rather than leaving
+    # the visitor with a retrieval message that is already stale, they get the file list they
+    # are about to be shown underneath the answer. It is the same list, by construction - see
+    # retrieved_event - and no question text goes into it.
+    yield retrieved_event(context)
 
     llm = llm_provider.get_chat_model()
     messages = build_messages(request.question, context, history)
