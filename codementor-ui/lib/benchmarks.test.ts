@@ -18,6 +18,7 @@ import {
     formatCount,
     formatMetric,
     formatShare,
+    headlineView,
     limitationsView,
     recordedLabel,
     retrievalView,
@@ -25,6 +26,9 @@ import {
     systemView,
     timingView,
 } from "./benchmarks.ts";
+
+/** The page source, for the few claims that are about layout rather than about a number. */
+const SECTION = readFileSync(new URL("../components/BenchmarksSection.tsx", import.meta.url), "utf8");
 
 /** The committed summary itself, so these tests move when the real data moves. */
 const SUMMARY: Summary = JSON.parse(readFileSync(new URL("../../eval/benchmarks.json", import.meta.url), "utf8"));
@@ -588,4 +592,149 @@ test("every experiment row carries the number of questions it was scored on", ()
     for (const row of view.rows) {
         assert.equal(row.questions, 20, `${row.key} should say how many questions it scored`);
     }
+});
+
+
+/* ---- the headline block ---- */
+//
+// The first thing on the page, and for most readers the only thing. What it has to get right
+// is that every figure in it comes from the committed summary, that the two configurations it
+// names are the ones the server actually ships, and that it carries the three pieces of
+// wording without which the numbers would be read as something they are not.
+
+test("the headline shows both embedders at their shipped configuration", () => {
+    const view = headlineView(SUMMARY)!;
+
+    assert.deepEqual(
+        view.rows.map((r) => r.key),
+        ["hash", "cloudflare"],
+    );
+    assert.match(view.rows[0].configuration, /structured records, BM25 fusion on/);
+    assert.match(view.rows[1].configuration, /whole records, no fusion/);
+});
+
+test("exactly one headline row is the default, and it is hash", () => {
+    const view = headlineView(SUMMARY)!;
+    const defaults = view.rows.filter((r) => r.isDefault);
+
+    assert.equal(defaults.length, 1);
+    assert.equal(defaults[0].key, "hash");
+});
+
+test("the headline reports MRR@10 and hit@5 on holdout2 and holdout3, with the counts", () => {
+    const view = headlineView(SUMMARY)!;
+
+    assert.deepEqual(view.metrics, ["mrr@10", "hit@5"]);
+    for (const row of view.rows) {
+        assert.deepEqual(
+            row.splits.map((s) => s.id),
+            ["holdout2", "holdout3"],
+            row.key,
+        );
+        for (const split of row.splits) {
+            assert.equal(split.questions, "20", `${row.key} ${split.id}`);
+            assert.equal(split.cells.length, 2);
+            for (const cell of split.cells) assert.match(cell, /^\d\.\d{3}$/, `${row.key} ${split.id}`);
+        }
+    }
+});
+
+test("the headline figures are the ones the Experiments table shows", () => {
+    // The whole point of deriving the block from the built summary: a headline that disagrees
+    // with the table it summarises is worse than no headline at all. Matched on is_default,
+    // which is also the claim that the headline shows the row the server actually runs - for
+    // hash that row is the chosen one and for cloudflare it is the baseline.
+    const headline = headlineView(SUMMARY)!;
+
+    for (const row of headline.rows) {
+        const full = (SUMMARY.experiments?.rows ?? []).find((r) => r.embedder === row.key && r.is_default);
+        assert.ok(full, `${row.key} has no default row in the experiments table`);
+        for (const split of row.splits) {
+            const scores = split.id === "holdout2" ? full!.holdout2 : full!.holdout3;
+            assert.equal(split.cells[0], formatMetric(scores?.["mrr@10"]), `${row.key} ${split.id} mrr@10`);
+            assert.equal(split.cells[1], formatMetric(scores?.["hit@5"]), `${row.key} ${split.id} hit@5`);
+            assert.equal(split.questions, formatCount(scores?.questions), `${row.key} ${split.id} questions`);
+        }
+    }
+});
+
+test("the headline carries the structural precision and recall against ast", () => {
+    const view = headlineView(SUMMARY)!;
+
+    assert.match(view.structural!.title, /ast/);
+    assert.equal(view.structural!.precision, "1.000");
+    assert.equal(view.structural!.recall, "0.967");
+    assert.equal(view.structural!.questions, 49);
+});
+
+test("the headline timing says the model is not in it", () => {
+    const view = headlineView(SUMMARY)!;
+
+    assert.equal(view.timing!.label, "excludes the language model");
+    assert.equal(view.timing!.total, "45 ms");
+    assert.equal(view.timing!.rerank, "19 ms");
+    assert.match(view.timing!.note, /End-to-end latency is not shown/);
+});
+
+test("the headline repeats that these are recorded results, not live accuracy", () => {
+    assert.equal(headlineView(SUMMARY)!.note, "Recorded results on small fixed question sets, not live accuracy.");
+});
+
+test("the headline says why these two sets and not the reused one", () => {
+    assert.match(headlineView(SUMMARY)!.splitsNote, /scored once each/);
+    assert.match(headlineView(SUMMARY)!.splitsNote, /reused/);
+});
+
+test("a metric a headline row never scored is a dash, not 0.000", () => {
+    const view = headlineView({
+        headline: {
+            metrics: ["mrr@10", "hit@5"],
+            retrieval: [{ embedder: "hash", holdout3: { questions: 20, "mrr@10": null } }],
+        },
+    })!;
+
+    assert.deepEqual(view.rows[0].splits[0].cells, [NOT_MEASURED, NOT_MEASURED]);
+});
+
+test("a summary with no headline loses the block rather than breaking the page", () => {
+    assert.equal(headlineView({}), null);
+    assert.equal(headlineView({ headline: { retrieval: [] } }), null);
+    assert.equal(benchmarksView({ available: false, heading_note: "x" }).headline, null);
+});
+
+test("a headline with no structural or timing data draws neither", () => {
+    const view = headlineView({ headline: { retrieval: [{ embedder: "hash" }] } })!;
+
+    assert.equal(view.structural, null);
+    assert.equal(view.timing, null);
+    assert.equal(view.rows[0].splits.length, 0);
+});
+
+test("the whole section has a headline when the summary does", () => {
+    assert.notEqual(benchmarksView(RESPONSE).headline, null);
+});
+
+/* ---- everything else is behind one closed disclosure ---- */
+
+test("the section renders the headline and nothing else at the top level", () => {
+    // The six detail panels are collected into one list and handed to Details; only the
+    // headline is drawn beside it.
+    assert.match(SECTION, /\{view\.headline && <Headline view=\{view\.headline\} \/>\}/);
+    assert.match(SECTION, /\{details\.length > 0 && <Details count=\{details\.length\}>\{details\}<\/Details>\}/);
+});
+
+test("every panel that is not the headline is inside the details list", () => {
+    const list = SECTION.slice(SECTION.indexOf("const details = ["), SECTION.indexOf("].filter(Boolean)"));
+    for (const panel of ["Retrieval", "Structural", "System", "Timing", "Experiments", "Limitations"]) {
+        assert.ok(list.includes(`<${panel} key=`), `${panel} should be behind Details`);
+    }
+});
+
+test("the disclosure is a native details element with no open attribute", () => {
+    // Closed by default, closed on first paint, and opened by find-in-page without any
+    // JavaScript. An `open` or a useState here would undo all three.
+    const details = SECTION.slice(SECTION.indexOf("function Details("), SECTION.indexOf("/* ---- The section ---- */"));
+    assert.match(details, /<details className=/);
+    assert.ok(!details.includes("open="), "the panel must be closed by default");
+    assert.ok(!details.includes("useState"), "no state: the browser owns whether it is open");
 });
