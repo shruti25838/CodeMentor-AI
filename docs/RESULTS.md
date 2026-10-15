@@ -2786,3 +2786,29 @@ Every number or claim here comes from a command that can be re-run.
   **`poll_seconds` is new and is the old hard-coded `1.0`.** It exists so the waiting test can state the number it expects rather than hard-coding the pacer's constant; no caller sets it.
   **`_over_the_limit` short-circuits on an empty window**, which the old loop condition did too -- `and self.spends` -- but *after* calling `in_window()`. Pruning an empty list is a no-op, so this is the same behaviour reached more cheaply, and the guard is still load-bearing: without it a `first_estimate` larger than `limit` would spin for ever rather than let through the one question that cannot fit.
   **61 polls, not 60.** The window keeps a spend while `at >= clock() - window_seconds`, so a spend leaves only once it is strictly more than 60 seconds old. The waiting test pins 61 deliberately; if that boundary ever changes the test should change with it rather than be widened
+### Fix: the Cloudflare embedder times an attempt on the clock it was handed
+- Value: **found by sweeping the suite for the same fault as the pacer's**: `CloudflareEmbeddingService` takes a `clock` and dates its circuit breaker against it, but `_call_with_retries` read `time.monotonic` directly. The seconds it reported came from a different clock than the one a caller injected.
+
+  The cost was in the test. `test_the_provider_counts_its_own_calls_and_seconds` could not hand the service a fake, so it replaced `time.monotonic` **on the module** for the duration of the call and put it back in a `finally`, and then asserted only:
+
+  ```python
+  assert usage.seconds > 0
+  ```
+
+  `> 0` is the strongest claim a real clock supports, and it is **not true on every clock**: two fast local calls through a fake `post` can both land inside one tick of a counter that resolves 15 ms, and the answer is exactly 0.0. The patch was what kept that from happening, so the test depended on a global monkeypatch for its correctness and not just its convenience -- and the patch was invisible from the assertion.
+
+  Both reads go through `self._clock` now. The fake goes in through the constructor, the module-level patch and its `finally` are gone, and the assertion is exact:
+
+  ```python
+  # Two batches, and each one reads the clock twice: 0.5 of fake time apiece.
+  assert usage.seconds == 1.0
+  ```
+
+  **No default changes.** `self._clock` is `time.monotonic` unless a caller passes something else, and nothing in the app does.
+- Command: `python -m pytest -q` -> **1395 passed**, 1 skipped, unchanged; `python -m pytest tests/test_semantic_observability.py tests/test_cloudflare_provider.py tests/test_cloudflare_probe.py tests/test_dual_index.py -q` -> 162 passed; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (203 files), clean; `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before). Run with `OPENAI_API_KEY`, `GROQ_API_KEY`, `ANTHROPIC_API_KEY` and every `CLOUDFLARE_*` variable removed from the environment
+- Dataset/repo: none. No Cloudflare call was made; the embedder is driven by the fake `post` the tests already use
+- Date: 2026-10-15
+- Commit: f45bffc
+- Notes: **this one fails on a coarser clock, not a faster one** -- the opposite direction from the pacer, and worth saying because the sweep was looking for the pacer's shape. A measured duration compared against a constant is fragile at both ends: `== 0.0` breaks when the clock gets finer, `> 0` breaks when it gets coarser. Neither is a tolerance problem; both are a test measuring the host instead of the code
+  **It was never wrong in a run.** `usage.seconds` is reported in the observability line and nothing branches on it, so an attempt timed against the global clock produced the same number a real run would want. What it broke was the ability to test it without reaching into the module
+  **`time` is still imported** in `cloudflare_embedder.py`: it supplies the defaults for `clock` and `sleep`. The change is which clock the call path reads, not whether the module has one
