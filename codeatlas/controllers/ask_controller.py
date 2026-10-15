@@ -2,6 +2,7 @@ import asyncio
 import json
 import queue
 import time
+from dataclasses import replace
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse
@@ -430,10 +431,12 @@ def _answer_from(orchestrator, request: AskRequest, retrieved, history: list[Tur
     The two halves are run separately so the file list can go out between them; this is the
     second. It adds the same conversation notes the combined call used to add.
 
-    **Every field of the result is carried, `note` included.** That sentence is the only thing
-    that tells a visitor their answer came from keyword search rather than from semantic
-    search, and rebuilding the result without it dropped it silently - on the live server,
-    which runs the cloudflare provider, that is exactly the case it exists for.
+    **The result is copied, not rebuilt.** `replace` carries every field whether or not anyone
+    here remembers the field exists; only `reasoning_steps` is given a new value. The
+    field-by-field rebuild this replaces named four of the five and dropped `note`, which is
+    the one sentence telling a visitor their answer came from keyword search rather than from
+    semantic search - and on the live server, which runs the cloudflare provider, that is
+    exactly the case it exists for. A field added to the result type later arrives carried.
     """
     result = orchestrator.answer_from(
         request.question,
@@ -446,13 +449,7 @@ def _answer_from(orchestrator, request: AskRequest, retrieved, history: list[Tur
         steps.append(f"Used {len(history)} earlier turn(s) of this conversation.")
     if search_question is not None:
         steps.append(f"Searched with the follow-up rewritten as: {search_question}")
-    return type(result)(
-        answer=result.answer,
-        citations=result.citations,
-        reasoning_steps=steps,
-        agents_used=result.agents_used,
-        note=result.note,
-    )
+    return replace(result, reasoning_steps=steps)
 
 
 def _as_messages(history: list[Turn]) -> list:

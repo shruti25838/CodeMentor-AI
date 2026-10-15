@@ -7,7 +7,7 @@ visitor as a sentence rather than as an exception or an empty bubble.
 """
 
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -104,13 +104,15 @@ class _FakeOrchestrator:
         yield {"type": "result", "result": _Result("deep answer", [], ["deep"], ["planner"])}
 
 
+@dataclass(frozen=True)
 class _Result:
-    def __init__(self, answer, citations, reasoning_steps, agents_used, note=""):
-        self.answer = answer
-        self.citations = citations
-        self.reasoning_steps = reasoning_steps
-        self.agents_used = agents_used
-        self.note = note
+    """The shape the orchestrator really returns, so the controller may copy it with `replace`."""
+
+    answer: str
+    citations: list
+    reasoning_steps: list
+    agents_used: list
+    note: str = ""
 
 
 class FakeProvider:
