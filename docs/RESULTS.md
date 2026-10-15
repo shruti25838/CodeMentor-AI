@@ -2590,3 +2590,53 @@ Every number or claim here comes from a command that can be re-run.
   **The guard covers one path.** `_answer_from` is the default mode's; grounded mode and deep mode never rebuilt their results and are untouched, so the enumeration test exercises the default path only. A future rebuild introduced on either of the other two paths would not be caught by this file.
   **`AnswerResult` is the only result type guarded.** `GroundedAnswer`, `GenerateResult` and the explain result have no equivalent test. `GroundedAnswer` is the nearer risk: it is constructed in four places in `codeatlas/`, and `codeatlas/services/agents/orchestration.py:396` builds an empty one on a retrieval failure without naming `note` -- which is correct there, since a search that failed has nothing to report, but it is the same construction shape.
   **Nothing here was seen in a browser.** What is asserted is the content of the SSE events; `codementor-ui` is unchanged and its tests are unchanged
+### Canary: a real 429, from a local server, must still reach `retry_wait`
+- Value: **`retry_wait` is read out of another library's log line, and nothing was watching whether that line still exists.** `codeatlas/observability/timing.py` attaches a handler to the `openai` logger and reads the number of seconds out of `Retrying request to %s in %f seconds`, which the OpenAI-compatible client logs just before it sleeps through a 429. The sleep happens *inside* the model call, so without this there is nothing to see: the call is simply slow.
+
+  **That line is a log message in a dependency, not an API.** It can be reworded, moved to another logger or dropped in a patch release. If it is, `retry_wait` becomes zero on every request for ever, and the only symptom is a model call that looks slow for no reason -- which is the question `retry_wait` exists to answer.
+
+  **The two tests that already covered it could not catch this.** `tests/test_timing.py` logs the line *itself*:
+
+  ```python
+  sdk_logger.info("Retrying request to %s in %f seconds", "/chat/completions", 8.0)
+  ```
+
+  so what it proves is that the handler matches a string this repository wrote down. It would keep passing, unchanged and green, on a machine where the installed client had stopped emitting anything of the sort. The gap is not in the handler; it is that nothing compared the handler against the library.
+
+  **So the new test drives the real client.** `tests/test_retry_wait_canary.py` starts a `ThreadingHTTPServer` on 127.0.0.1 on a port the OS picks, answers the first `POST /v1/chat/completions` with `429` and `Retry-After: 1` and the second with an ordinary completion body, and points the app's own client at it by setting `OPENAI_API_BASE` -- the variable the installed `langchain-openai` reads, which `LlmProvider` leaves alone. The model is built by `LlmProvider(...).get_chat_model()`, so it is the shipped path with the endpoint moved, not a client assembled in the test with different arguments. The retry is a real socket, the sleep is a real second, and the line being matched is the line the installed version logged.
+
+  **The client honours `Retry-After` exactly** when it is between 0 and 60 -- `_calculate_retry_timeout` returns the header's value and skips its own jittered backoff -- so the figure is deterministic rather than approximate. Versions: `openai 1.109.1`, `langchain-openai 0.1.22`.
+
+  **What was recorded, for one call:**
+
+  | | |
+  |---|---|
+  | requests the local server received | `['/v1/chat/completions', '/v1/chat/completions']` |
+  | the line the client logged | `openai._base_client` INFO `Retrying request to /chat/completions in 1.000000 seconds` |
+  | `retry_wait` in the timings | `1000.0` |
+
+  `llm >= retry_wait` is asserted too: the wait is inside the model call, which is why it has to be recorded separately to be visible at all.
+
+  **Confirmed to bite, for each way the coupling can break.** Both experiments change the watcher's half of the coupling, which fails in exactly the way the library's half changing would:
+
+  | what was changed in `_RetryWaitHandler` / `watch_provider_retries` | result of `pytest tests/test_retry_wait_canary.py -q` |
+  |---|---|
+  | the matched phrase, to `Retrying the request` (a reword upstream) | **4 failed, 2 passed** |
+  | the watched logger, to `openai_client` (a moved logger upstream) | **5 failed, 1 passed** |
+
+  Both were reverted before the commit; `git diff` on `codeatlas/observability/timing.py` is empty and no file outside `tests/` changed in this commit.
+
+  The moved-logger case fails one test more than the reword, and the extra one is informative: `watch_provider_retries` is also what raises the provider logger to INFO. Point it at the wrong name and the record is never emitted at all, so the test that asserts on the client's real record has no record to assert on.
+
+  **Two of the six say what a failure would mean** rather than only detecting it. They take the line the client really logged -- `record.getMessage()`, never a string written here -- and break it the ways a dependency can: a different verb, one extra word, a shortened unit, the number removed, and the same text under `openai_client._base_client`, `httpx` and `langchain_openai.chat_models.base`. None records a wait. The same line under `openai._base_client` still does, so the loop proves the logger name and not something incidental about running the line a second time.
+
+  **No key, no network, nothing from the environment printed.** The key is the fixed string `canary-not-a-real-key`, present only because the client refuses to be constructed without one; the tests carry `@pytest.mark.builds_model_client`, the suite's existing opt-in for constructing a provider client. `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and their lowercase spellings are cleared and `NO_PROXY` is set to `127.0.0.1,localhost`, so nothing can be routed off the machine. The assertion on the timing line never holds a value: it splits the line into `name=value` fields and calls `float()` on each value, which rules out any text at all -- the client's line names the URL it is retrying, and that must not cross over
+- Command: `python -m pytest tests/ -q` -> **1368 passed**, 1 skipped (was 1362; `tests/test_retry_wait_canary.py` is new and adds 6); `python -m pytest tests/test_retry_wait_canary.py -q` -> 6 passed in 8.3s; the two experiments above; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (201 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none. The provider is a `ThreadingHTTPServer` in the test process answering two requests. **No provider was called** - no Groq, no Cloudflare, and nothing left 127.0.0.1
+- Date: 2026-10-15
+- Commit: 8416a02
+- Notes: **this costs about a second of wall clock on every run.** `Retry-After: 1` is the smallest value that is both a plausible header and honoured exactly, and three of the six tests make the call, so the file takes about 8 seconds. `retry-after-ms` would make it instant and is read by this client version, but it is a vendor header rather than the standard one, and a canary that stops exercising the standard path to run faster is worth less than the second it saves.
+  **It pins one client, on one machine.** What it proves is that *the installed* `openai` logs what the watcher reads. A different version in CI or in the image is a different answer, and this test is the thing that would say so -- which is the intent, but it does mean an upgrade can turn it red without anything in this repository having changed. That is a true report, not a flake.
+  **The groq branch is not what is exercised.** `LlmProvider._build` hard-codes Groq's base URL, so it cannot be pointed at a local server without changing shipped code. The test uses the `openai` branch, which reads `OPENAI_API_BASE`. Both branches construct the same `ChatOpenAI` over the same `openai` client, and the retry and its log line live in that client, so the coupling under test is shared -- but the literal branch exercised is the openai one.
+  **Nothing here measures how often retries actually happen.** Every recorded run of `chat_latency_probe.py` so far has had the pacer hold the window under the provider's limit, so `retry_wait` was 0 in all of them. This is the first time the field has been seen non-zero end to end, and it was made to happen rather than observed.
+  **`watch_provider_retries` leaves its handler on the global `openai` logger** for the rest of the session, as it already did for `tests/test_timing.py`. The tests here add and remove their own recording handler, but the watcher's own is not removed, so the order tests run in could in principle matter. It did not: the file passes alone and in the full suite
