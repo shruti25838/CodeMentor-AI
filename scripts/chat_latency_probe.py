@@ -40,6 +40,7 @@ import json
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -102,32 +103,57 @@ class Pacer:
     time it finished, everything older than the window dropped. Before the next question it
     waits until the window has room for a question as expensive as the worst one so far, which
     is the only estimate available that cannot be optimistic about what has already happened.
+
+    The clock and the sleep are injected so a test can drive the waiting without waiting, and
+    so neither the answers nor the decisions depend on how finely the host's clock resolves.
     """
 
     limit: int
     window_seconds: float = 60.0
     first_estimate: int = 5_000
     spends: list[tuple[float, int]] = field(default_factory=list)
+    poll_seconds: float = 1.0
+    clock: Callable[[], float] = time.monotonic
+    sleeper: Callable[[float], object] = time.sleep
 
     def record(self, tokens: int) -> None:
-        self.spends.append((time.monotonic(), tokens))
+        self.spends.append((self.clock(), tokens))
 
     def estimate(self) -> int:
         return max((tokens for _, tokens in self.spends), default=self.first_estimate)
 
     def in_window(self) -> int:
-        cutoff = time.monotonic() - self.window_seconds
+        cutoff = self.clock() - self.window_seconds
         self.spends = [(at, tokens) for at, tokens in self.spends if at >= cutoff]
         return sum(tokens for _, tokens in self.spends)
 
+    def _over_the_limit(self) -> bool:
+        """Whether a question as expensive as the worst so far would not fit right now.
+
+        The window has to hold something for this to be true: with nothing recorded there is
+        nothing that can age out, so a standing estimate larger than the limit would otherwise
+        spin for ever rather than let the one question that cannot fit through.
+        """
+        return bool(self.spends) and self.in_window() + self.estimate() > self.limit
+
     def wait(self) -> float:
-        """Block until there is room, and return how long that took."""
-        if self.limit <= 0:
+        """Block until there is room, and return how long that took.
+
+        **Exactly 0.0 when the next question already fits**, by returning the constant rather
+        than a measurement. Returning `monotonic() - started` unconditionally made the no-wait
+        answer the cost of reading the clock twice: 0.0 on Windows, where the counter is too
+        coarse to resolve two adjacent readings, and a few microseconds on CI, where it is not.
+        `wait() == 0.0` is the honest assertion -- five microseconds is not a wait -- so the
+        difference is computed only once something has actually been slept through. Deciding
+        whether there is room still reads the clock, to date the window against; what it never
+        does on this path is subtract one reading from another.
+        """
+        if self.limit <= 0 or not self._over_the_limit():
             return 0.0
-        started = time.monotonic()
-        while self.in_window() + self.estimate() > self.limit and self.spends:
-            time.sleep(1.0)
-        return time.monotonic() - started
+        started = self.clock()
+        while self._over_the_limit():
+            self.sleeper(self.poll_seconds)
+        return self.clock() - started
 
 
 def budget_guard(cap: int, baseline: int, ledger: Path | None, reserve: int = 0) -> tuple[bool, int, int]:

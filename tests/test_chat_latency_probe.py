@@ -81,10 +81,42 @@ def test_a_missing_ledger_reads_as_nothing_spent(tmp_path):
 
 
 # ---------- the pacer ----------
+#
+# The pacer is driven by a fake clock rather than the machine's. Its own answers are times, so
+# against the real clock a test can only assert what that clock happens to resolve: two of
+# these passed on Windows, where adjacent readings of `time.monotonic()` are the same number,
+# and failed on CI, where they are microseconds apart. With the clock injected the arithmetic
+# is the test's and every number below is exact -- including the one test that makes the pacer
+# actually wait, which covers the waiting path without anything sleeping.
+
+
+class FakeClock:
+    """A clock that stands still unless something moves it, and resolves as finely as asked.
+
+    `resolution` is how much a single *reading* advances it. Zero is a clock that cannot tell
+    two readings apart, which is Windows; a positive value is one that can, which is CI. It is
+    the second that catches a time computed from two readings taken back to back.
+    """
+
+    def __init__(self, resolution: float = 0.0) -> None:
+        self.now = 1_000.0
+        self.resolution = resolution
+
+    def __call__(self) -> float:
+        self.now += self.resolution
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _pacer(clock: FakeClock | None = None, **kwargs) -> Pacer:
+    clock = clock or FakeClock()
+    return Pacer(clock=clock, sleeper=clock.sleep, **kwargs)
 
 
 def test_the_pacer_waits_only_when_the_window_is_full():
-    pacer = Pacer(limit=8_000)
+    pacer = _pacer(limit=8_000)
     assert pacer.wait() == 0.0  # nothing spent yet, nothing to wait for
 
     pacer.record(3_000)
@@ -95,26 +127,65 @@ def test_the_pacer_waits_only_when_the_window_is_full():
 
 
 def test_the_pacer_estimates_the_next_question_from_the_worst_one_so_far():
-    pacer = Pacer(limit=8_000)
+    pacer = _pacer(limit=8_000)
     pacer.record(2_000)
     pacer.record(5_000)
     assert pacer.estimate() == 5_000
 
 
 def test_the_pacer_forgets_spend_older_than_the_window():
-    pacer = Pacer(limit=8_000, window_seconds=60.0)
+    clock = FakeClock()
+    pacer = _pacer(clock, limit=8_000, window_seconds=60.0)
     pacer.record(7_000)
-    # Age that entry out by hand rather than by sleeping for a minute.
-    at, tokens = pacer.spends[0]
-    pacer.spends[0] = (at - 61.0, tokens)
+    # Age that entry out by letting the clock run, rather than by sleeping for a minute.
+    clock.now += 61.0
     assert pacer.in_window() == 0
     assert pacer.wait() == 0.0
 
 
 def test_a_limit_of_zero_turns_the_pacer_off():
-    pacer = Pacer(limit=0)
+    pacer = _pacer(limit=0)
     pacer.record(1_000_000)
     assert pacer.wait() == 0.0
+
+
+def test_the_pacer_sleeps_until_the_spend_that_filled_the_window_ages_out():
+    """The waiting path, which nothing covered: a full window is what `wait()` is *for*.
+
+    7,000 is in the window and the worst question so far cost 7,000, so 14,000 is projected
+    against a limit of 8,000 and the pacer has to wait. It polls once a second, and the spend
+    leaves the window the moment it is more than 60 seconds old -- so 61 polls, and a reported
+    wait of exactly 61 seconds, none of it spent sleeping.
+    """
+    clock = FakeClock()
+    pacer = _pacer(clock, limit=8_000, window_seconds=60.0)
+    pacer.record(7_000)
+
+    assert pacer.wait() == 61.0
+    assert clock.now == 1_061.0
+    assert pacer.in_window() == 0
+
+
+def test_a_clock_fine_enough_to_time_its_own_readings_still_gives_exactly_zero():
+    """The CI failure, reproduced on any machine by making the clock resolve a microsecond.
+
+    `wait()` used to return `monotonic() - started` however little had happened in between, so
+    with nothing to wait for it returned the cost of reading the clock twice. Windows resolves
+    `time.monotonic()` too coarsely for that to be anything but 0.0; CI resolves nanoseconds
+    and got 5.07e-06 and 3.06e-06. A clock that advances a microsecond per reading is the
+    smallest version of CI's, and it must still answer 0.0 -- not almost zero.
+    """
+    clock = FakeClock(resolution=1e-06)
+    pacer = _pacer(clock, limit=8_000)
+
+    assert pacer.wait() == 0.0
+    pacer.record(3_000)
+    assert pacer.wait() == 0.0
+    # Pruning the window does read the clock, and on this one every reading lands on a later
+    # number than the last. The answer stays exactly 0.0 across however many of those the
+    # pacer takes, because on this path it is the constant and not a difference of two of them.
+    assert clock.now > 1_000.0
+    assert [pacer.wait() for _ in range(5)] == [0.0] * 5
 
 
 # ---------- recognising a refusal ----------
