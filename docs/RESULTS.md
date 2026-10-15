@@ -2468,3 +2468,64 @@ Every number or claim here comes from a command that can be re-run.
   **History is not comparable turn for turn** with the earlier run: the answers differ, so what the history occupies in the prompt differs. `history_turns` ran 0, 1, 2, 3 in both.
   **The per-minute limit is still unpriced.** Halving the tokens per question should make an 8,000-per-minute limit bite about half as often, and this run cannot show that, because the pacer again held the window under it - which is why there were no retries to count.
   **Nothing here looked at a browser.** That the file list arrives at 13-731 ms is read off the server's own stage durations; whether a visitor notices it is not measured
+### Fix: the keyword-search note reaches the browser in the default chat mode
+- Value: **this retracts a caveat recorded at 9690592.** That entry noted that `_answer_from` rebuilds its result without `note`, called it a defect that predated the split, and left it. It is fixed here. The old entry is not edited; this one supersedes it.
+
+  **What was wrong.** `_answer_from` builds a new `AnswerResult` to add the conversation notes to `reasoning_steps`, and listed four of the five fields. `note` was the fifth, so `retrieval_note` in the `done` event was **always empty** in the default mode. Grounded mode and deep mode were never affected: neither rebuilds the result.
+
+  **Why it matters here and not in a test.** When the semantic index cannot answer - the day's allowance is gone, the provider is in a cooldown, the API did not respond, or this repository has no semantic index - the question is answered from the hash index instead and the answer looks exactly like any other. One sentence distinguishes them. **The live server runs the cloudflare provider**, which is the only provider that can fall back at all, so the default mode is precisely where the sentence was needed and precisely where it was lost.
+
+  **The fix is one field.** The comment describing the drop is gone.
+
+  **The test gap this sat in.** The note was already tested at `AnswerService.retrieve_with_note`, and the endpoint was already tested with an index that cannot fail. Nothing covered the stretch between them, which is where it went missing. `tests/test_fallback_note.py` covers it: a real dual index over a real file, fake embedders, the semantic half unavailable in each documented way, and the note read out of the JSON the browser receives.
+
+  | what | how many |
+  |---|---|
+  | every reason (`api`, `budget`, `cap`, `circuit`, `unindexed`) x three paths (default, grounded, deep) | 15 |
+  | no note when the semantic index answered, on each path | 3 |
+  | the reason's private detail and the provider's name reach neither | 5 |
+  | a follow-up whose rewrite call runs before the search, with and without a fallback | 2 |
+  | no question text in a fallback answer's event; default and deep agree | 2 |
+
+  **Confirmed to bite.** With the field removed again, **13 of the 27 fail**, and they are the default-mode ones; grounded and deep keep passing, which is the right shape for a defect only one path had.
+
+  **The exact `done` event, same question, same repository, two cases.** Fallback, with reason `budget`:
+
+  ```json
+  {"type": "done",
+   "agents_used": ["retrieval", "mentor"],
+   "citations": ["<tmp>/mod.py (lines 1-2) | def sign(value):     return value"],
+   "reasoning_steps": ["Fast mode: retrieval + mentor (skipped the planner).",
+                       "Retrieved 1 code snippet(s), cited as 1 citation(s).",
+                       "Agents that ran: retrieval -> mentor."],
+   "retrieval_note": "Today's semantic search allowance is used up, so this answer used keyword search.",
+   "timings_ms": {"embed_query": 0.4, "embed_query_calls": 2, "embed_query_each": [0.0, 0.4],
+                  "first_token_sent": 35.5, "history_turns": 0, "llm": 19.5, "rerank": 0.5,
+                  "rewrite_ran": 0, "search": 8.9, "total": 49.5}}
+  ```
+
+  And the ordinary case, where the semantic index answered:
+
+  ```json
+  {"type": "done",
+   "agents_used": ["retrieval", "mentor"],
+   "citations": ["<tmp>/mod.py (lines 1-2) | def sign(value):     return value"],
+   "reasoning_steps": ["Fast mode: retrieval + mentor (skipped the planner).",
+                       "Retrieved 1 code snippet(s), cited as 1 citation(s).",
+                       "Agents that ran: retrieval -> mentor."],
+   "retrieval_note": "",
+   "timings_ms": {"embed_query": 0.0, "first_token_sent": 8.6, "history_turns": 0,
+                  "llm": 2.8, "rerank": 0.9, "rewrite_ran": 0, "search": 0.4, "total": 30.5}}
+  ```
+
+  **The two differ in `retrieval_note` and in one timing**: `embed_query_calls: 2`. The fallback case embeds the question twice - once with the embedder that then declared itself unavailable, once with the hash embedder that answered - so the repeat count is independent evidence that the fallback really happened, recorded without anyone having added a field for it.
+
+  **No question text appears in either**, which is the reason they can be printed here at all
+- Command: `python -m pytest tests/ -q` -> **1355 passed**, 1 skipped (was 1328; `tests/test_fallback_note.py` is new and adds 27); `python -m pytest tests/test_fallback_note.py -q` with `note=result.note` removed again -> **13 failed, 14 passed**; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (199 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none. Both embedders are fakes, the model is a fake, and the index is one file in a temporary directory. **No provider was called** - no Groq, no Cloudflare
+- Date: 2026-10-14
+- Commit: 54dcea1
+- Notes: **`cap` is reachable in these tests but not from the search path today.** `REASONS` carries five keys; `retrieve_with_note` produces `budget`, `circuit` and `api` from an embedder that raises, and `unindexed` from there being no usable semantic index - including a repository over the document cap, which `_choose` reports as `unindexed` rather than as `cap`. The `cap` case here is driven by an embedder raising it, so what is proved is that *if* an embedder reports `cap`, its sentence reaches the browser. `cap` and `unindexed` share the same sentence, so a visitor could not tell them apart either way.
+  **The citations in the printed events carry an absolute temporary path.** `_clean_display_path` strips only a `.codeatlas/repos/<uuid>/` prefix, and the test index is not under one. That is a property of the fixture, not of the server.
+  **Nothing here was seen in a browser.** `codementor-ui` already renders `retrieval_note` and its tests are unchanged; what is asserted is that the field arrives populated, not that the page shows it.
+  **The deeper shape is still unguarded.** The defect was a field-by-field rebuild that forgot one field, and nothing stops the next one. `dataclasses.replace` would have been immune, and is the obvious follow-up; it is not done here because this entry is the fix and its test, and changing how the result is rebuilt is a separate change
