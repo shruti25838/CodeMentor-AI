@@ -2812,3 +2812,27 @@ Every number or claim here comes from a command that can be re-run.
 - Notes: **this one fails on a coarser clock, not a faster one** -- the opposite direction from the pacer, and worth saying because the sweep was looking for the pacer's shape. A measured duration compared against a constant is fragile at both ends: `== 0.0` breaks when the clock gets finer, `> 0` breaks when it gets coarser. Neither is a tolerance problem; both are a test measuring the host instead of the code
   **It was never wrong in a run.** `usage.seconds` is reported in the observability line and nothing branches on it, so an attempt timed against the global clock produced the same number a real run would want. What it broke was the ability to test it without reaching into the module
   **`time` is still imported** in `cloudflare_embedder.py`: it supplies the defaults for `clock` and `sleep`. The change is which clock the call path reads, not whether the module has one
+### Change: the other pacer gets the same injectable clock, and its waiting path a first test
+- Value: `scripts/answer_smoke.py` holds a second `Pacer`, the one `chat_mode_compare` and `reasoning_effort_compare` import. The sweep that followed the CI failure had to say whether it has the same fault. **It does not**, and the reason is worth writing down because it is the whole distinction:
+
+  ```python
+  def wait_for(self, estimate: int) -> float:
+      waited = 0.0
+      while self.window and self.spent_recently() + estimate > self.budget:
+          ...
+          waited += sleep_for
+      return waited
+  ```
+
+  `waited` starts at the constant 0.0 and accumulates **the sleeps it asked for**, not a difference of two clock readings. Nothing on the no-wait path is measured, so `wait_for(...) == 0.0` is exact on a clock of any resolution and its four tests were right for the right reason. The probe's `wait()` returned `monotonic() - started` and was right only on a clock too coarse to disagree.
+
+  **What the two did share was a waiting path no test reached.** For this one, reaching it meant sleeping for a real minute, so nothing did. With `clock` and `sleeper` injected -- defaults `time.monotonic` and `time.sleep`, and both callers construct `Pacer()` with no arguments -- it gets one: 6,000 in the window and 6,000 expected against a budget of 7,000 is a single sleep of 61 seconds, after which the window is empty and the question fits.
+
+  **That test found dead code.** The sleep is `max(0.5, 61 - (clock() - oldest))`, and the floor is **unreachable**: `spent_recently` prunes an entry once it is 60 seconds old, so while there is anything left in the window to wait for, `61 - elapsed` is still above 1.0. It is noted in place and left alone. Dead is not wrong, and removing it would be a change to the pacer rather than to a test -- the sort of change that belongs in its own entry with its own reason.
+- Command: `python -m pytest -q` -> **1396 passed**, 1 skipped (was 1395; one new test); `python -m pytest tests/test_answer_smoke.py tests/test_reasoning_effort_compare.py -q` -> 53 passed; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (203 files), clean; `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before). Run with `OPENAI_API_KEY`, `GROQ_API_KEY`, `ANTHROPIC_API_KEY` and every `CLOUDFLARE_*` variable removed from the environment
+- Dataset/repo: none. No provider, no server; the pacer is driven entirely by a fake clock
+- Date: 2026-10-15
+- Commit: b0241ee
+- Notes: **nothing here was failing.** This is consistency and coverage, not a fix, and it is recorded separately from the two fixes for that reason
+  **Two tests stopped reaching into the object.** `pacer.window = [(time.monotonic() - 120, 6000)]` built the window by hand against the real clock; they call `record` and move the fake clock instead, which exercises `record` as well and states the ageing in seconds the test owns
+  **The two pacers are still two pacers.** They have different fields (`budget`/`window` against `limit`/`spends`), different estimate rules and different waiting strategies -- one sleeps out the oldest entry, the other polls once a second. This change makes them consistent about the clock and nothing else; merging them is a bigger change than either of these entries, and the two scripts that would have to agree on an estimate rule have not been shown to want the same one
