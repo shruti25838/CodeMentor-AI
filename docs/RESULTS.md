@@ -2640,3 +2640,92 @@ Every number or claim here comes from a command that can be re-run.
   **The groq branch is not what is exercised.** `LlmProvider._build` hard-codes Groq's base URL, so it cannot be pointed at a local server without changing shipped code. The test uses the `openai` branch, which reads `OPENAI_API_BASE`. Both branches construct the same `ChatOpenAI` over the same `openai` client, and the retry and its log line live in that client, so the coupling under test is shared -- but the literal branch exercised is the openai one.
   **Nothing here measures how often retries actually happen.** Every recorded run of `chat_latency_probe.py` so far has had the pacer hold the window under the provider's limit, so `retry_wait` was 0 in all of them. This is the first time the field has been seen non-zero end to end, and it was made to happen rather than observed.
   **`watch_provider_retries` leaves its handler on the global `openai` logger** for the rest of the session, as it already did for `tests/test_timing.py`. The tests here add and remove their own recording handler, but the watcher's own is not removed, so the order tests run in could in principle matter. It did not: the file passes alone and in the full suite
+### New: a blind comparison harness, so a person can score answers without knowing the arm
+- Value: **nothing in this repository measures whether an answer is correct, and this does not either -- it lets a person do it without being told which setting wrote what.** `scripts/answer_smoke.py` asks two string questions per answer, is the expected file cited and does one hand-written word appear, and says in its own docstring that it does not measure quality. Every recorded comparison since has carried the same caveat: *"a difference of one or two passes between arms is not a finding"*. A person can judge an explanation. A person who knows which arm produced it is not judging the explanation.
+
+  **Two modes with a person in between.**
+
+  ```
+  python scripts/blind_compare.py run --repo itsdangerous --limit 5
+  # read sheet.md, fill in sheet.csv
+  python scripts/blind_compare.py score --run-id default
+  ```
+
+  **An arm is a set of environment overrides**, the same variables a server would be started with. Only `CODEATLAS_CHAT_MODE` and `CODEATLAS_REASONING_EFFORT` are accepted, and anything else is refused by name rather than ignored -- *an override that is not applied is worse than one that is rejected*, because two arms that differ only in a setting nobody applies are one arm, and the run would report a dead heat it had never measured. The three default arms:
+
+  | arm | overrides |
+  |---|---|
+  | `legacy` | `CODEATLAS_CHAT_MODE=legacy` |
+  | `grounded` | `CODEATLAS_CHAT_MODE=grounded` |
+  | `grounded-low` | `CODEATLAS_CHAT_MODE=grounded CODEATLAS_REASONING_EFFORT=low` |
+
+  Each override is validated through the shipped validator -- `validate_chat_mode`, `validate_reasoning_effort` -- so an arm cannot describe a server that would refuse to start.
+
+  **One real local uvicorn server per distinct chat mode, asked over a real socket**, as `chat_latency_probe` does and for the same reason: an in-process client hides the event loop, the executor and the connection. Two arms differing only in reasoning effort share a server, because that setting is fixed when the model client is built, not per request; the model is swapped per question through `reasoning_effort_compare.swap_model`, imported rather than written again.
+
+  **The masking.** Per question, the arms are shuffled into A, B and C by `random.Random` seeded from `sha256(f"{seed}:{question_id}")` -- hashed with `hashlib` rather than by seeding `Random` with the string itself, so the order does not depend on how a Python version happens to hash one. **The seed is mixed with the question id**, so A is a different arm from one question to the next: a grader who worked out that A was always the same arm would have stopped being blind after the first look. Over 400 question ids the six orders of three arms came out 73/71/66/65/64/61, which is the flat distribution it should be.
+
+  **The key is a different file in a different folder**, and no arm name appears in anything the grader opens:
+
+  ```
+  .codeatlas/blind-compare/<run-id>/
+    raw/runs.json     every answer, with its arm, its cited files and its timings
+    raw/key.json      which arm each of A, B, C is, per question
+    sheet/sheet.md    the answers to read, under their labels
+    sheet/sheet.csv   question_id, question, label, cited_files, correctness, cited_support, note
+    summary.json      written by `score`
+  ```
+
+  **The scoring sheet is a CSV because a person fills it in.** Two columns of 0 to 2 -- correctness (*0 wrong or evasive, 1 partly right, 2 right*) and cited_support (*0 the cited files do not support it, 1 partly, 2 they do*) -- and a free-text note. The cited files are on the sheet itself, since one of the two scores is about them; the answers are in `sheet.md`, so scoring means reading the answer rather than a preview.
+
+  **`score` prints the averages, the wins and the warning.** A question is won by the arm with the highest total of the two scores; **a draw at the top is a tie and is counted as one, not shared out**. Only questions scored under every arm count at all. The real output, from a hand-filled sheet over two questions:
+
+  ```
+  arm                  n  correctness_mean cited_support_mean  total_mean  wins
+  legacy               2               1.5                1.5         3.0     1
+  grounded             2               1.5                2.0         3.5     0
+  grounded-low         2               1.0                1.5         2.5     0
+
+  ties (no single highest total): 1
+  ```
+
+  That example is worth keeping for what it shows: **the arm with the best average won nothing.** `grounded` leads on `total_mean` and has zero wins, because its one strong question was a tie. Two summaries of the same six scores disagree about which arm is ahead, which is the whole reason the note below is printed every time.
+
+  **The note is not optional and not a footnote.** `score` always prints, with the real n substituted:
+
+  > *N question(s) scored by one person. A sample this size cannot separate small differences between arms: a gap of a few tenths of a point, or one or two wins, is what the same arms would produce twice in a row by chance. Treat anything short of a clear, repeated gap as no result, and read the notes rather than the averages.*
+
+  It is also written into `summary.json`, so a figure copied out of that file carries it.
+
+  **Spending is bounded by the guard that already exists.** `budget_guard` is imported from `chat_latency_probe` rather than written again, so the cap carries **the reservation fix** recorded at 2280: the run stops while there is still room for the next question rather than discovering its cost after paying it. The reserve is the pacer's own estimate, the most expensive question so far. The pacer keeps a trailing minute under the provider's allowance.
+
+  **Any refusal ends the run**, which covers every way a 429 arrives: the app's own limiter answers with the status, and the provider's reaches the script as the sentence the app shows a visitor rather than as an exception. Carrying on would spend the cap on questions the provider is about to refuse too. A refused run is **not** kept as finished work -- it measured the provider's mood -- so a resume does it again rather than putting it on the sheet to be scored.
+
+  **Resuming is the default, not a flag.** The run folder is keyed by `--run-id`, `raw/runs.json` is rewritten **after every single question**, and a second invocation with the same id skips what is already answered. A different id starts fresh. The index and state directories live inside the run folder, so a resumed run finds a warm index.
+
+  **Nothing is written outside `.codeatlas/`.** `inside_writable_root` resolves the path first, so `--run-id ../../somewhere` is refused rather than taken literally. Nothing reads a credential: the key is checked for by name only and no value from the environment reaches a file, a log line or the terminal.
+
+  **The tests drive it against a fake server.** `tests/test_blind_compare.py` is 25 tests over a `ThreadingHTTPServer` on 127.0.0.1 that speaks the app's SSE and bumps a token ledger of its own, so the cap is exercised through the real `budget_guard` and the real ledger rather than through a stub. **No model, no provider, no credential, and nothing off 127.0.0.1.**
+
+  | what is proved | how |
+  |---|---|
+  | the shuffle is seeded and reproducible | two calls agree; a different seed gives a different set of orders; the order depends on the question as well as the seed |
+  | the key never appears in the sheet | every arm name absent from `sheet.md` and `sheet.csv`, present in `key.json`, and the two in different folders |
+  | resume skips finished runs | the fake server's call count does not move on a second `collect` |
+  | the cap stops it | 8,000 spent under a 10,000 cap stops the run, because a third 4,000 would not have fit |
+  | writing is after **every** run | the server records how many runs were on disk as each request arrived: `[0, 1, 2, 3, 4, 5]` |
+  | a 429 ends it cleanly | the run stops, the rows already paid for are on disk, and the refused one is redone on resume |
+  | a half-answered question is left off the sheet | an arm scored on a question the others never saw is not a comparison |
+  | a tie is a tie | two arms at the top score no win between them |
+  | a bad score is refused by name | `itsdangerous-1/B: correctness is 5; it must be 0, 1 or 2` |
+- Command: `python -m pytest tests/ -q` -> **1393 passed**, 1 skipped (was 1368; `tests/test_blind_compare.py` is new and adds 25); `python scripts/blind_compare.py score --run-id cli-check` against a hand-filled sheet, which produced the table above, after which that run folder was deleted; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (203 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none. **`scripts/blind_compare.py` has not been run against a provider.** Everything recorded here is from the fake server in the tests and from a hand-written sheet; no arm has been compared, no question has been asked of a model, and there is no result
+- Date: 2026-10-15
+- Commit: 717b1ca
+- Notes: **there is no finding here, only an instrument.** The table above is made up. Nothing has been measured, and the first real run will need its own entry.
+  **The cap is per invocation, not per run id.** `budget_guard` measures this process's spend as a delta on the ledger from the moment it started, which is what `chat_latency_probe` does. Resume three times with a 40,000 cap and 120,000 may be spent. The per-run-id total is in `raw/runs.json` to be read, but nothing enforces it.
+  **One grader, one pass, no second opinion.** There is no way to measure whether the scoring itself is consistent -- the same person scoring the same sheet twice is not compared, and a second grader has nowhere to put their scores. That is the obvious next thing and is not done.
+  **The blind is only as good as the answers.** If one arm's answers are recognisable by their shape -- much shorter, or always opening the same way -- the grader will learn which letter is which within a few questions and the masking will not stop them. Nothing detects that, and `grounded-low` is exactly the arm most likely to be recognisable.
+  **A question's labels are stable across runs with the same seed**, which is deliberate for resuming and is a weakness for anyone scoring two runs of the same seed: A is the same arm in both. A second run meant to be scored independently should use a different `--seed`.
+  **`raw/runs.json` is the key material**, not just the resume file: it carries every answer with its arm. Nothing stops a grader opening it. The separation is a folder and a sentence in `sheet.md`, not a lock.
+  **The two scores are summed to decide a win**, which weights correctness and citation support equally. That is a choice, not a measurement, and a different weighting would move the wins column
