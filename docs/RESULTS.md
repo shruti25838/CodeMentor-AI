@@ -2529,3 +2529,64 @@ Every number or claim here comes from a command that can be re-run.
   **The citations in the printed events carry an absolute temporary path.** `_clean_display_path` strips only a `.codeatlas/repos/<uuid>/` prefix, and the test index is not under one. That is a property of the fixture, not of the server.
   **Nothing here was seen in a browser.** `codementor-ui` already renders `retrieval_note` and its tests are unchanged; what is asserted is that the field arrives populated, not that the page shows it.
   **The deeper shape is still unguarded.** The defect was a field-by-field rebuild that forgot one field, and nothing stops the next one. `dataclasses.replace` would have been immune, and is the obvious follow-up; it is not done here because this entry is the fix and its test, and changing how the result is rebuilt is a separate change
+### Fix: the answer result is copied, so a field cannot be dropped by forgetting to name it
+- Value: **this closes the follow-up the entry at 54dcea1 left open.** That entry fixed the dropped `note` by naming the fifth field, and said so plainly: "the defect was a field-by-field rebuild that forgot one field, and nothing stops the next one. `dataclasses.replace` would have been immune, and is the obvious follow-up". This is that follow-up. The earlier entries are not edited.
+
+  **The change is one return statement.** `_answer_from` built a fresh result to add this conversation's notes to `reasoning_steps`:
+
+  ```python
+  return type(result)(
+      answer=result.answer,
+      citations=result.citations,
+      reasoning_steps=steps,
+      agents_used=result.agents_used,
+      note=result.note,
+  )
+  ```
+
+  and now copies it instead:
+
+  ```python
+  return replace(result, reasoning_steps=steps)
+  ```
+
+  `replace` is already this repository's idiom for the same job -- `app/di.py` and `services/eval/arrangements.py` both use it on `AppConfig` -- so nothing new is introduced. `AnswerResult` is a frozen dataclass, which is what makes the copy exact and what made the rebuild necessary in the first place.
+
+  **Where else this type is rebuilt: nowhere.** The grep, run after the change:
+
+  ```
+  > git grep -n "type(result)(\|type(res" -- "*.py"
+  (no matches)
+  > git grep -n "AnswerResult(" -- "*.py"
+  codeatlas/services/agents/orchestration.py:133:        return AnswerResult(
+  codeatlas/services/agents/orchestration.py:189:        return AnswerResult(
+  tests/test_result_fields_carried.py:59:    return AnswerResult(**MARKERS)
+  tests/test_unknown_repo.py:50:        return AnswerResult(answer="ok", citations=[], reasoning_steps=[])
+  tests/test_unknown_repo.py:54:        return AnswerResult(answer="ok", citations=[], reasoning_steps=[])
+  tests/test_unknown_repo.py:64:        return AnswerResult(answer="ok", citations=[], reasoning_steps=[])
+  ```
+
+  The two in `orchestration.py` are **original constructions, not rebuilds**: line 133 builds the result from the graph's final state (`_result_from`) and line 189 from the fast path's own retrieval and mentor output (`answer_from`). Neither is handed an existing result and asked to reproduce it, so neither can lose a field by omission -- the omission would be a missing value, not a dropped one, and the dataclass's defaults are the specification for that. The three in `test_unknown_repo.py` are stubs. `type(result)(` was the only rebuild in the repository, and it is gone.
+
+  **The test is about the shape, not about `note`.** `tests/test_result_fields_carried.py` names no field in its assertions. It enumerates `dataclasses.fields(AnswerResult)`, gives each a distinctive non-empty marker, drives the default path through `/ask/stream` with a fake orchestrator whose `search` and `answer_from` carry those markers, and checks each field arrived -- four of them in the `done` event, `answer` in the `token` events that preceded it. Every marker is non-empty on purpose: a field marked with its own default (`note=""`) is one a drop cannot be seen through, which is how the last one went missing.
+
+  **It also fails for a field that does not exist yet.** `test_every_field_of_the_result_type_is_accounted_for` asserts the declared fields, the markers and the done-event keys are the same set, so a sixth field added to `AnswerResult` with no decision made about where the browser receives it fails before any of the behavioural tests run.
+
+  **Confirmed to bite, both ways.**
+
+  | what was put back | result of `pytest tests/test_result_fields_carried.py -q` |
+  |---|---|
+  | the field-by-field rebuild, with `note=` left off | **4 failed, 3 passed** |
+  | a sixth field `sixth: str = ""` on `AnswerResult` | **1 failed** (the enumeration test, run alone) |
+
+  The four are `test_no_field_is_lost_between_the_search_and_the_done_event`, `test_the_done_event_carries_no_field_under_its_own_name_by_accident`, `test_the_controller_changes_reasoning_steps_and_copies_the_rest` and `test_every_other_field_is_identical_to_what_the_orchestrator_returned`. Both experiments were reverted before the commit.
+
+  **One test fake had to change with it.** `_Result` in `tests/test_grounded_chat.py` was a plain class with five attributes, which `replace` cannot copy. It is now a frozen dataclass with the same five fields in the same order, which is also what the controller's contract actually says the orchestrator returns -- the fake was looser than the thing it stood in for
+- Command: `python -m pytest tests/ -q` -> **1362 passed**, 1 skipped (was 1355; `tests/test_result_fields_carried.py` is new and adds 7); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (200 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none. The repository under test is three files written into a temporary directory by `tests/test_analyze_indexing.py`'s fake loader, the orchestrator is a stub and no model is built -- the provider handed to the app raises if asked for one. **No provider was called** - no Groq, no Cloudflare
+- Date: 2026-10-15
+- Commit: e201644
+- Notes: **this is a guard, not a measurement.** Nothing here was timed, nothing was spent, and no behaviour changed for any question that was already answered correctly: with every field present, `replace` and the five-field rebuild produce equal objects. The value is entirely in what the next change cannot do.
+  **The guard covers one path.** `_answer_from` is the default mode's; grounded mode and deep mode never rebuilt their results and are untouched, so the enumeration test exercises the default path only. A future rebuild introduced on either of the other two paths would not be caught by this file.
+  **`AnswerResult` is the only result type guarded.** `GroundedAnswer`, `GenerateResult` and the explain result have no equivalent test. `GroundedAnswer` is the nearer risk: it is constructed in four places in `codeatlas/`, and `codeatlas/services/agents/orchestration.py:396` builds an empty one on a retrieval failure without naming `note` -- which is correct there, since a search that failed has nothing to report, but it is the same construction shape.
+  **Nothing here was seen in a browser.** What is asserted is the content of the SSE events; `codementor-ui` is unchanged and its tests are unchanged
