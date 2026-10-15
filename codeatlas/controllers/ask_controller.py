@@ -429,6 +429,11 @@ def _answer_from(orchestrator, request: AskRequest, retrieved, history: list[Tur
 
     The two halves are run separately so the file list can go out between them; this is the
     second. It adds the same conversation notes the combined call used to add.
+
+    **Every field of the result is carried, `note` included.** That sentence is the only thing
+    that tells a visitor their answer came from keyword search rather than from semantic
+    search, and rebuilding the result without it dropped it silently - on the live server,
+    which runs the cloudflare provider, that is exactly the case it exists for.
     """
     result = orchestrator.answer_from(
         request.question,
@@ -441,15 +446,12 @@ def _answer_from(orchestrator, request: AskRequest, retrieved, history: list[Tur
         steps.append(f"Used {len(history)} earlier turn(s) of this conversation.")
     if search_question is not None:
         steps.append(f"Searched with the follow-up rewritten as: {search_question}")
-    # `note` is deliberately not carried across, which is what this path has always done: the
-    # semantic-fallback sentence has never reached the browser in the default mode. It is a
-    # defect, it predates this split, and fixing it is a behaviour change of its own - see the
-    # notes on the RESULTS entry for this change.
     return type(result)(
         answer=result.answer,
         citations=result.citations,
         reasoning_steps=steps,
         agents_used=result.agents_used,
+        note=result.note,
     )
 
 
