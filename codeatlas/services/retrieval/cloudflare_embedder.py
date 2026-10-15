@@ -240,7 +240,10 @@ class CloudflareEmbeddingService(EmbeddingService):
     def _call_with_retries(self, batch: list[str]) -> JsonResponse:
         last = ""
         for attempt in range(self._settings.retries + 1):
-            started = time.monotonic()
+            # `self._clock`, not `time.monotonic` directly: the breaker below already dates
+            # itself against the injected clock, and an attempt timed against a different one
+            # cannot be driven by a test without reaching into the module to replace a global.
+            started = self._clock()
             try:
                 response = self._call(batch)
             except JsonClientError as exc:
@@ -249,12 +252,12 @@ class CloudflareEmbeddingService(EmbeddingService):
             else:
                 if response.ok:
                     self._succeeded()
-                    self._add_usage(calls=1, seconds=time.monotonic() - started)
+                    self._add_usage(calls=1, seconds=self._clock() - started)
                     return response
                 last = f"HTTP {response.status}"
                 retryable = response.status in RETRYABLE_STATUSES
             # A failed attempt still cost time and still counts as a call.
-            self._add_usage(calls=1, seconds=time.monotonic() - started)
+            self._add_usage(calls=1, seconds=self._clock() - started)
             self._logger.warning(
                 "Cloudflare embedding call failed (%s) for a batch of %d documents, attempt %d of %d",
                 last,
