@@ -86,33 +86,79 @@ def test_both_tests_must_pass() -> None:
 
 
 # ---------- the pacer ----------
+#
+# On a fake clock, for the reasons `tests/test_chat_latency_probe.py` sets out. This pacer was
+# never the one CI caught: `wait_for` adds up the sleeps it asked for rather than subtracting
+# two clock readings, so not having waited is exactly 0.0 on any clock. What it did share with
+# the other one was an untested waiting path -- the only way to reach it was to sleep for a
+# real minute -- which is what the injected sleep is for here.
+
+
+class FakeClock:
+    """Stands still unless something moves it; `sleep` is the only thing that does."""
+
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _pacer(clock: FakeClock, **kwargs) -> Pacer:
+    return Pacer(clock=clock, sleeper=clock.sleep, **kwargs)
 
 
 def test_the_pacer_does_not_wait_when_nothing_has_been_spent() -> None:
-    assert Pacer().wait_for(7000) == 0.0
+    clock = FakeClock()
+    assert _pacer(clock).wait_for(7000) == 0.0
+    assert clock.now == 1_000.0, "nothing was slept through, so nothing moved the clock"
 
 
 def test_the_pacer_forgets_spending_older_than_a_minute() -> None:
-    import time
-
-    pacer = Pacer(budget=7000)
-    pacer.window = [(time.monotonic() - 120, 6000)]
+    clock = FakeClock()
+    pacer = _pacer(clock, budget=7000)
+    pacer.record(6000)
+    clock.now += 120
     assert pacer.spent_recently() == 0
     assert pacer.wait_for(6000) == 0.0
 
 
 def test_the_pacer_counts_recent_spending() -> None:
-    import time
-
-    pacer = Pacer(budget=7000)
-    pacer.window = [(time.monotonic(), 4000)]
+    clock = FakeClock()
+    pacer = _pacer(clock, budget=7000)
+    pacer.record(4000)
     assert pacer.spent_recently() == 4000
 
 
 def test_recording_adds_to_the_window() -> None:
-    pacer = Pacer()
+    clock = FakeClock()
+    pacer = _pacer(clock)
     pacer.record(1234)
     assert pacer.spent_recently() == 1234
+
+
+def test_the_pacer_sleeps_until_the_oldest_spend_leaves_the_minute() -> None:
+    """The waiting path, which nothing reached before: it needed a real minute to get to.
+
+    6,000 is in the window and the next question is expected to cost 6,000 too, against a
+    budget of 7,000. The pacer waits out the oldest entry rather than polling: one sleep of
+    61 seconds -- a minute plus the second that puts the entry past the cutoff -- after which
+    the window is empty and 6,000 fits.
+    """
+    clock = FakeClock()
+    pacer = _pacer(clock, budget=7000)
+    pacer.record(6000)
+
+    assert pacer.wait_for(6000) == 61.0
+    assert clock.now == 1_061.0
+    assert pacer.spent_recently() == 0
+    # The `max(0.5, ...)` floor in `wait_for` is unreachable, and the fake clock is what makes
+    # that checkable: an entry is pruned once it is 60 seconds old, so `61 - elapsed` is still
+    # above 1.0 whenever there is anything left in the window to wait for. The floor is dead,
+    # not wrong, and is left alone here -- removing it is a change to the pacer, not to a test.
 
 
 # ---------- the question set ----------
