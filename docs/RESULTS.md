@@ -2729,3 +2729,60 @@ Every number or claim here comes from a command that can be re-run.
   **A question's labels are stable across runs with the same seed**, which is deliberate for resuming and is a weakness for anyone scoring two runs of the same seed: A is the same arm in both. A second run meant to be scored independently should use a different `--seed`.
   **`raw/runs.json` is the key material**, not just the resume file: it carries every answer with its arm. Nothing stops a grader opening it. The separation is a folder and a sentence in `sheet.md`, not a lock.
   **The two scores are summed to decide a win**, which weights correctness and citation support equally. That is a choice, not a measurement, and a different weighting would move the wins column
+### Fix: a wait of nothing is exactly 0.0, on a clock the pacer's tests own
+- Value: **two tests that pass on every machine here fail on CI, and the difference is the resolution of the clock, not the code being wrong anywhere a run would notice.** `tests/test_chat_latency_probe.py::test_the_pacer_waits_only_when_the_window_is_full` and `::test_the_pacer_forgets_spend_older_than_the_window` each assert `pacer.wait() == 0.0` with nothing spent. CI (Linux, Python 3.11) returned **5.07e-06** and **3.06e-06**.
+
+  **Where it was.** `Pacer` lives in `scripts/chat_latency_probe.py` and nowhere else; `scripts/blind_compare.py` imports it from there. It is a measurement script's spending guard. **Nothing under `codeatlas/` imports it** -- no live chat path, no app module, no server route -- so the tiny positive number was never a production bug, only a test that could not be true on both machines.
+
+  **What it was.**
+
+  ```python
+  def wait(self) -> float:
+      if self.limit <= 0:
+          return 0.0
+      started = time.monotonic()
+      while self.in_window() + self.estimate() > self.limit and self.spends:
+          time.sleep(1.0)
+      return time.monotonic() - started
+  ```
+
+  When the loop body never runs, the return value is still a subtraction of two clock readings a few instructions apart -- *the cost of reading the clock twice*. Windows backs `time.monotonic()` with a counter too coarse to resolve that, so the two readings are the same number and the subtraction lands on exactly 0.0. Linux resolves nanoseconds, so it does not. **The test was never passing for the right reason here; it was passing because this machine cannot measure that interval.**
+
+  **The fix is to stop measuring an interval that did not happen.** The fitting path returns the constant, and the subtraction is reached only after something has really been slept through:
+
+  ```python
+  def _over_the_limit(self) -> bool:
+      return bool(self.spends) and self.in_window() + self.estimate() > self.limit
+
+
+  def wait(self) -> float:
+      if self.limit <= 0 or not self._over_the_limit():
+          return 0.0
+      started = self.clock()
+      while self._over_the_limit():
+          self.sleeper(self.poll_seconds)
+      return self.clock() - started
+  ```
+
+  Deciding *whether* there is room still reads the clock -- a sliding window has to be dated against something -- but on the fitting path it never subtracts one reading from another, which is the only operation whose answer depended on the host.
+
+  **`clock` and `sleeper` are injectable**, defaulting to `time.monotonic` and `time.sleep`, matching the `clock=` convention already used by `ConversationStore`, `SlidingWindowLimiter` and the indexing timeout. Nothing at any call site changes: `chat_latency_probe` and `blind_compare` both construct `Pacer` by keyword and pass neither.
+
+  **Loosening the assertion to a tolerance was the obvious fix and is the wrong one.** `assert pacer.wait() < 0.001` would be green on both machines and would have stopped saying anything: the claim worth making is *the pacer did not wait*, not *the pacer waited very little*. A tolerance also hides the real failure it would next be asked to catch -- a pacer that waits a millisecond when it should wait a minute.
+
+  | test | what it now pins |
+  |---|---|
+  | `test_the_pacer_waits_only_when_the_window_is_full` | 0.0 with nothing spent, and 0.0 with 3,000 spent against a limit of 8,000 -- exact, not lucky |
+  | `test_the_pacer_forgets_spend_older_than_the_window` | the entry ages out by **the clock running**, not by reaching into `pacer.spends` and rewriting a timestamp |
+  | `test_the_pacer_sleeps_until_the_spend_that_filled_the_window_ages_out` | **new, and the waiting path had no test at all**: 7,000 in a 60-second window against a limit of 8,000 takes 61 one-second polls and reports exactly `61.0`, with nothing sleeping |
+  | `test_a_clock_fine_enough_to_time_its_own_readings_still_gives_exactly_zero` | **new**: a clock that advances 1us per *reading* is the smallest version of CI's, and `wait()` answers 0.0 across five consecutive calls while that clock keeps moving |
+
+  **The CI failure reproduces on this machine.** A throwaway file that gives the module a 1-microsecond clock and runs the two tests' bodies fails against the old `Pacer` with `assert 1.9999999949504854e-06 == 0.0` -- the same shape of number CI reported -- and passes against the new one.
+- Command: `python -m pytest -q` -> **1395 passed**, 1 skipped (was 1393; the two new pacer tests); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (203 files), clean; `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before). Run with `OPENAI_API_KEY`, `GROQ_API_KEY`, `ANTHROPIC_API_KEY` and every `CLOUDFLARE_*` variable removed from the environment
+- Dataset/repo: none. No provider was called and no server was started; the pacer is driven entirely by a fake clock
+- Date: 2026-10-15
+- Commit: e2cd720
+- Notes: **this was a test bug, not a pacer bug.** No run of `chat_latency_probe` or `blind_compare` ever behaved differently because of the microseconds; the return value is printed as `f"{waited:.0f}s"` and used in a truthiness check, both of which a value of 5e-06 passes through harmlessly as a tiny nonzero. What it cost was a red CI.
+  **`poll_seconds` is new and is the old hard-coded `1.0`.** It exists so the waiting test can state the number it expects rather than hard-coding the pacer's constant; no caller sets it.
+  **`_over_the_limit` short-circuits on an empty window**, which the old loop condition did too -- `and self.spends` -- but *after* calling `in_window()`. Pruning an empty list is a no-op, so this is the same behaviour reached more cheaply, and the guard is still load-bearing: without it a `first_estimate` larger than `limit` would spin for ever rather than let through the one question that cannot fit.
+  **61 polls, not 60.** The window keeps a spend while `at >= clock() - window_seconds`, so a spend leaves only once it is strictly more than 60 seconds old. The waiting test pins 61 deliberately; if that boundary ever changes the test should change with it rather than be widened
