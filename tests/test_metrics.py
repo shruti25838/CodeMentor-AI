@@ -75,6 +75,9 @@ class FailingSpy(ModelSpy):
     def handle_question_fast(self, question, repo_id, **kwargs):
         raise RuntimeError("boom")
 
+    def search(self, question, repo_id, **kwargs):
+        raise RuntimeError("boom")
+
 
 def test_unhandled_exception_and_stream_error_are_counted():
     client = _client(FailingSpy())
@@ -125,19 +128,153 @@ def test_checked_in_eval_results_reach_metrics_with_the_key():
         assert name in body
 
 
+def _dashboard() -> dict:
+    return json.loads((ROOT / "ops" / "grafana" / "dashboards" / "codementor.json").read_text())
+
+
+def _panels(dashboard: dict) -> list[dict]:
+    """Every panel, including the ones nested inside a row."""
+    out = []
+    for panel in dashboard["panels"]:
+        out.append(panel)
+        out.extend(panel.get("panels", []))
+    return out
+
+
+def _targets(dashboard: dict) -> list[dict]:
+    return [target for panel in _panels(dashboard) for target in panel.get("targets", [])]
+
+
+def _panel(dashboard: dict, title: str) -> dict:
+    return next(p for p in _panels(dashboard) if p["title"] == title)
+
+
 def test_dashboard_only_queries_metrics_that_exist():
-    dashboard = json.loads((ROOT / "ops" / "grafana" / "dashboards" / "codementor.json").read_text())
+    dashboard = _dashboard()
     known = {
         m._name
         for m in vars(metrics).values()
         if hasattr(m, "_name") and getattr(m, "_name", "").startswith("codeatlas_")
     }
-    exprs = [t["expr"] for p in dashboard["panels"] for t in p["targets"]]
+    exprs = [t["expr"] for t in _targets(dashboard)]
     assert exprs
     for expr in exprs:
         for name in re.findall(r"codeatlas_[a-z_]+", expr):
             base = re.sub(r"_(bucket|sum|count|total)$", "", name)
             assert name in known or base in known, f"{name} in {expr}"
+
+
+# ---------- Prometheus's own scrapes are not traffic ----------
+
+# The three panels /metrics would otherwise dominate. Prometheus scrapes every 15 s whether
+# anyone is using the site or not, which is 0.067 req/s of requests nobody made; on a quiet
+# server that is most of the request graph, all of the status graph, and a latency line for
+# the one route whose behaviour says nothing about the service.
+SCRAPE_FREE_PANELS = (
+    "Requests per second by route",
+    "Response start latency p95 by route",
+    "Responses by status",
+)
+
+
+def test_the_scrape_endpoint_is_left_out_of_the_traffic_panels():
+    dashboard = _dashboard()
+    for title in SCRAPE_FREE_PANELS:
+        panel = _panel(dashboard, title)
+        for target in panel["targets"]:
+            assert 'path!="/metrics"' in target["expr"], title
+
+
+def test_the_excluded_panels_still_ask_for_every_other_route():
+    """The filter must be a negative match, not a list of routes that will go stale."""
+    dashboard = _dashboard()
+    for title in SCRAPE_FREE_PANELS:
+        for target in _panel(dashboard, title)["targets"]:
+            assert 'path="' not in target["expr"].replace('path!="', ""), title
+
+
+def test_each_excluded_panel_says_so_in_its_description():
+    dashboard = _dashboard()
+    for title in SCRAPE_FREE_PANELS:
+        assert "/metrics" in _panel(dashboard, title).get("description", ""), title
+
+
+def test_the_errors_panel_still_counts_every_route():
+    """Deliberately not filtered: a 5xx on /metrics is a real failure worth seeing."""
+    panel = _panel(_dashboard(), "Errors per second")
+    assert 'path!="/metrics"' not in panel["targets"][0]["expr"]
+
+
+# ---------- the Semantic search row ----------
+
+SEMANTIC_PANELS = {
+    "Semantic index attempts per minute, by outcome": "codeatlas_semantic_index_total",
+    "Estimated neurons spent per minute": "codeatlas_semantic_index_estimated_neurons_total",
+    "Questions answered from the fallback index per minute, by reason": "codeatlas_retrieval_fallback_total",
+}
+
+
+def test_the_semantic_search_row_exists():
+    dashboard = _dashboard()
+    rows = [p for p in dashboard["panels"] if p["type"] == "row"]
+    assert [r["title"] for r in rows] == ["Semantic search"]
+
+
+def test_each_semantic_panel_queries_its_own_metric():
+    dashboard = _dashboard()
+    for title, metric in SEMANTIC_PANELS.items():
+        panel = _panel(dashboard, title)
+        expr = panel["targets"][0]["expr"]
+        assert metric in expr, title
+
+
+def test_the_semantic_panels_use_the_metrics_the_app_already_records():
+    """No new metric was added for this row; all three were being recorded and never drawn.
+
+    A Counter's `_name` has no `_total`, which prometheus_client appends when it renders the
+    sample - so the dashboard's name is stripped before the comparison, as the check above
+    does for `_bucket` and the rest.
+    """
+    known = {getattr(m, "_name", "") for m in vars(metrics).values()}
+    for metric in SEMANTIC_PANELS.values():
+        assert re.sub(r"_total$", "", metric) in known, metric
+
+
+def test_the_semantic_panels_sit_below_everything_else_and_do_not_overlap():
+    dashboard = _dashboard()
+    row = _panel(dashboard, "Semantic search")
+    others = [p for p in _panels(dashboard) if p["id"] < row["id"]]
+    assert row["gridPos"]["y"] >= max(p["gridPos"]["y"] + p["gridPos"]["h"] for p in others)
+    below = [_panel(dashboard, title) for title in SEMANTIC_PANELS]
+    assert all(p["gridPos"]["y"] == row["gridPos"]["y"] + row["gridPos"]["h"] for p in below)
+    assert sum(p["gridPos"]["w"] for p in below) == 24
+
+
+def test_every_semantic_panel_explains_what_it_shows():
+    dashboard = _dashboard()
+    for title in SEMANTIC_PANELS:
+        assert len(_panel(dashboard, title).get("description", "")) > 40, title
+
+
+# ---------- a per-minute title means a per-minute axis ----------
+
+
+def test_a_panel_titled_per_minute_multiplies_by_sixty_and_says_counts_per_minute():
+    """rate() is per second. A per-second value under a per-minute title with a req/s axis
+    reads 60 times too small, which is what these two panels used to do."""
+    agents = json.loads((ROOT / "ops" / "grafana" / "dashboards" / "codeatlas-agents.json").read_text())
+    for title in ("Agent runs per minute", "Model calls per minute, by agent"):
+        panel = next(p for p in agents["panels"] if p["title"] == title)
+        assert panel["targets"][0]["expr"].endswith("* 60"), title
+        assert panel["fieldConfig"]["defaults"]["unit"] == "cpm", title
+
+
+def test_no_semantic_panel_claims_a_unit_its_query_does_not_produce():
+    dashboard = _dashboard()
+    for title in SEMANTIC_PANELS:
+        panel = _panel(dashboard, title)
+        assert panel["targets"][0]["expr"].endswith("* 60"), title
+        assert panel["fieldConfig"]["defaults"]["unit"] == "cpm", title
 
 
 def test_compose_gives_prometheus_the_key_file_it_reads():

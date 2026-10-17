@@ -221,14 +221,18 @@ def test_follow_up_is_rewritten_once_and_used_for_search(tmp_path):
     chat.llm.prompts.clear()
     done = chat.ask("what about negative numbers?")
     assert len(chat.llm.prompts_containing("Rewrite the user's last question")) == 1
-    # The retrieval summary searched with the rewritten question...
-    assert any(REWRITTEN in p for p in chat.llm.prompts_containing(ANSWER_SYSTEM))
-    # ...while the mentor still answers the question as asked, with the history.
+    # The search used the rewritten question, which the server reports having done. It used to
+    # be checked by finding the rewrite inside the retrieval summary's prompt; that prompt no
+    # longer exists, because the search no longer asks the model anything.
+    assert f"Searched with the follow-up rewritten as: {REWRITTEN}" in done["reasoning_steps"]
+    assert chat.llm.prompts_containing(ANSWER_SYSTEM) == [], "the retrieval summary call is gone"
+    # The mentor still answers the question as asked, with the history.
     [mentor_prompt] = chat.llm.prompts_containing(MENTOR_HISTORY)
     assert "Question: what about negative numbers?" in mentor_prompt
-    # Two `llm` calls now, not three: the retrieval summary and the mentor's answer. The
-    # mentor no longer runs a search of its own. The rewrite is counted as its own stage.
-    assert done["timings_ms"]["llm_calls"] == 2
+    # Two `llm` calls now, not three: the rewrite and the mentor's answer. The mentor no longer
+    # runs a search of its own, and the search no longer summarises what it found. Each is its
+    # own stage, so neither repeats and there is no `llm_calls` count.
+    assert "llm_calls" not in done["timings_ms"]
     assert "rewrite" in done["timings_ms"]
 
 

@@ -929,18 +929,118 @@ def limitations() -> dict:
 # ---------------------------------------------------------------- the summary
 
 
+# ---------------------------------------------------------------- headline
+
+
+# What each embedder's shipped configuration is called at the top of the page. These are the
+# two rows a reader who scrolls no further will see, so they name the setting rather than
+# implying it: hash moved to structured records with BM25 fusion, cloudflare did not move.
+HEADLINE_LABELS = {
+    "hash": ("hash — the default", "structured records, BM25 fusion on"),
+    "cloudflare": ("cloudflare — opt-in", "whole records, no fusion"),
+}
+# The two sets a headline figure may come from. Both were written after the configurations
+# were chosen and scored once each, which is the whole reason they are the ones shown: the
+# original held-out split was reused for run after run and flatters everything on it.
+HEADLINE_SPLITS = ("holdout2", "holdout3")
+HEADLINE_METRICS = ("mrr@10", "hit@5")
+
+
+def headline(experiments_block: dict, structural_block: dict, timing_block: dict) -> dict:
+    """The four or five numbers a reader should leave with, taken from the blocks below it.
+
+    Derived from the built blocks rather than from the result files a second time, so a
+    headline figure cannot disagree with the table it is a summary of - there is only one
+    read of each file, and `test_build_benchmarks.py` asserts the two agree.
+
+    Only the **shipped** configuration of each embedder appears. The experiments table has
+    twenty rows including four that were scored and rejected; putting a rejected row next to
+    an adopted one with no verdict beside it is how a summary misleads.
+    """
+    rows = []
+    for embedder, (label, configuration) in HEADLINE_LABELS.items():
+        source = next(
+            (r for r in experiments_block["rows"] if r["embedder"] == embedder and r["is_default"]),
+            None,
+        )
+        if source is None:  # pragma: no cover - DEFAULT always names a row this file builds
+            continue
+        scores = {}
+        for split in HEADLINE_SPLITS:
+            measured = source.get(split)
+            scores[split] = (
+                {
+                    "questions": measured.get("questions"),
+                    **{metric: measured.get(metric) for metric in HEADLINE_METRICS},
+                }
+                if measured
+                else None
+            )
+        rows.append(
+            {
+                "embedder": embedder,
+                "label": label,
+                "configuration": configuration,
+                "is_default": embedder == "hash",
+                **scores,
+            }
+        )
+
+    overall = structural_block.get("overall") or {}
+    current = timing_block.get("current") or {}
+    return {
+        "title": "At a glance",
+        # Required wording, repeated here rather than only at the top of the section: this
+        # block is the part a reader stops at, so the caveat has to be in it.
+        "note": HEADING_NOTE,
+        "splits": {
+            "holdout2": experiments_block["splits"]["holdout2"],
+            "holdout3": experiments_block["splits"]["holdout3"],
+        },
+        "splits_note": (
+            "Both sets were written after the configurations were chosen and scored once each. "
+            "The original held-out split is not shown here, because it was reused run after run."
+        ),
+        "metrics": list(HEADLINE_METRICS),
+        "retrieval": rows,
+        "structural": {
+            "title": structural_block.get("title", ""),
+            "questions": overall.get("questions"),
+            "precision": overall.get("precision"),
+            "recall": overall.get("recall"),
+            "note": "Call targets the graph resolved, against Python's own ast on the same code.",
+        },
+        "timing": {
+            "title": timing_block.get("title", ""),
+            # Required wording. The figure is meaningless without it.
+            "label": timing_block.get("label", ""),
+            "warm_total_ms": current.get("warm_total_ms"),
+            "rerank_ms": current.get("rerank_ms"),
+            "repo": current.get("repo"),
+            "note": timing_block.get("end_to_end_note", ""),
+        },
+    }
+
+
 def build() -> dict:
+    # Built once each and passed to `headline`, which summarises them. Calling the builders a
+    # second time there would read every result file twice and let a headline figure drift
+    # from the table beneath it.
+    structural_block = structural()
+    timing_block = timing()
+    experiments_block = experiments()
     return {
         "schema": SCHEMA,
         "generated_by": "scripts/build_benchmarks.py",
         "heading_note": HEADING_NOTE,
         "end_to_end_note": END_TO_END_NOTE,
         "repos": REPOS,
+        "headline": headline(experiments_block, structural_block, timing_block),
         "retrieval": retrieval(),
-        "structural": structural(),
+        "structural": structural_block,
         "system": system(),
-        "timing": timing(),
-        "experiments": experiments(),
+        "timing": timing_block,
+        "experiments": experiments_block,
         "limitations": limitations(),
     }
 

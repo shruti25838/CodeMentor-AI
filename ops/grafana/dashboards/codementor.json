@@ -156,7 +156,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (path) (rate(codeatlas_request_total[5m]))",
+          "expr": "sum by (path) (rate(codeatlas_request_total{path!=\"/metrics\"}[5m]))",
           "legendFormat": "{{path}}"
         }
       ],
@@ -166,7 +166,8 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {},
+      "description": "Excludes /metrics. Prometheus scrapes this app every 15 s whether anyone is using it or not, which is 0.067 req/s of traffic nobody asked for - on a quiet site that is most of the graph, and it is the one route whose behaviour tells you nothing about the service."
     },
     {
       "id": 5,
@@ -324,7 +325,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, path) (rate(codeatlas_request_latency_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, path) (rate(codeatlas_request_latency_seconds_bucket{path!=\"/metrics\"}[5m])))",
           "legendFormat": "{{path}}"
         }
       ],
@@ -335,7 +336,7 @@
         "overrides": []
       },
       "options": {},
-      "description": "Until the response started; for /ask/stream that is when the stream opened, not when it closed."
+      "description": "Until the response started; for /ask/stream that is when the stream opened, not when it closed. Excludes /metrics. Prometheus scrapes this app every 15 s whether anyone is using it or not, which is 0.067 req/s of traffic nobody asked for - on a quiet site that is most of the graph, and it is the one route whose behaviour tells you nothing about the service."
     },
     {
       "id": 10,
@@ -358,7 +359,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (status) (rate(codeatlas_request_total[5m]))",
+          "expr": "sum by (status) (rate(codeatlas_request_total{path!=\"/metrics\"}[5m]))",
           "legendFormat": "{{status}}"
         }
       ],
@@ -368,7 +369,123 @@
         },
         "overrides": []
       },
-      "options": {}
+      "options": {},
+      "description": "Excludes /metrics. Prometheus scrapes this app every 15 s whether anyone is using it or not, which is 0.067 req/s of traffic nobody asked for - on a quiet site that is most of the graph, and it is the one route whose behaviour tells you nothing about the service."
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "Semantic search",
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Semantic index attempts per minute, by outcome",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 37,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (outcome) (rate(codeatlas_semantic_index_total[5m])) * 60",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "description": "Attempts to build a semantic index and how each one ended. Only the cloudflare provider builds one, so on a server running the hash default this panel is empty - which is itself the answer to 'is semantic search on here'."
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Estimated neurons spent per minute",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 37,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(codeatlas_semantic_index_estimated_neurons_total[5m]) * 60",
+          "legendFormat": "estimated neurons"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "description": "This app's own estimate of what indexing cost, not the provider's figure: measured against the account dashboard it has run from about 8% high to about 1.5% low. The free allowance is 10,000 neurons a day and resets at 00:00 UTC; the provider stops calling at CODEATLAS_CLOUDFLARE_DAILY_NEURONS, which defaults to 2,500."
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Questions answered from the fallback index per minute, by reason",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 37,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (reason) (rate(codeatlas_retrieval_fallback_total[5m])) * 60",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cpm"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "description": "A question the semantic index could not answer, so the hash index answered it and the visitor was told so. The reason says whether there was no semantic index for that repository, the budget was gone, or the call itself failed."
     }
   ],
   "templating": {

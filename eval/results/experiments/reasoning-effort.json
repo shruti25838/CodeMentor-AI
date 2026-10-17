@@ -1,0 +1,488 @@
+{
+  "recorded": "2026-10-14",
+  "model": "groq / openai/gpt-oss-20b",
+  "llm_max_tokens": 2048,
+  "questions": 8,
+  "arms": [
+    "legacy-unset",
+    "legacy-low",
+    "grounded-unset",
+    "grounded-low"
+  ],
+  "session_token_cap": 60000,
+  "weak_check": "Two string tests per answer: is the expected file cited, and is one hand-written word present. No judge model, and nothing reads whether the explanation is correct. Runs vary a lot: the same legacy path scored 8/15 on one day and 12/15 on another.",
+  "stopped_early": "stopped by hand once the day's ledger passed the 60,000-token cap: the four warm-up calls were charged before the cap's starting point was read, so the run had already spent 65,202 tokens when 60,000 was the limit. The script now reads the ledger before the warm-ups, so a later run cannot do this.",
+  "summary": {
+    "legacy-unset": {
+      "runs": 5,
+      "answered": 5,
+      "passed": 5,
+      "expected_file_cited": 5,
+      "fact_present": 5,
+      "no_answer": 0,
+      "first_token_seconds_median": 2.38,
+      "first_token_seconds_min": 1.33,
+      "first_token_seconds_max": 30.65,
+      "total_seconds_median": 2.39,
+      "total_seconds_min": 1.34,
+      "total_seconds_max": 30.68,
+      "model_calls_total": 10,
+      "tokens_total": 17492,
+      "questions": [
+        "flask-9",
+        "itsdangerous-1",
+        "itsdangerous-2",
+        "itsdangerous-3",
+        "itsdangerous-4"
+      ]
+    },
+    "legacy-low": {
+      "runs": 5,
+      "answered": 5,
+      "passed": 5,
+      "expected_file_cited": 5,
+      "fact_present": 5,
+      "no_answer": 0,
+      "first_token_seconds_median": 1.31,
+      "first_token_seconds_min": 1.21,
+      "first_token_seconds_max": 1.79,
+      "total_seconds_median": 1.33,
+      "total_seconds_min": 1.24,
+      "total_seconds_max": 1.82,
+      "model_calls_total": 10,
+      "tokens_total": 15506,
+      "questions": [
+        "flask-9",
+        "itsdangerous-1",
+        "itsdangerous-2",
+        "itsdangerous-3",
+        "itsdangerous-4"
+      ]
+    },
+    "grounded-unset": {
+      "runs": 5,
+      "answered": 5,
+      "passed": 5,
+      "expected_file_cited": 5,
+      "fact_present": 5,
+      "no_answer": 0,
+      "first_token_seconds_median": 0.72,
+      "first_token_seconds_min": 0.37,
+      "first_token_seconds_max": 1.73,
+      "total_seconds_median": 1.06,
+      "total_seconds_min": 0.54,
+      "total_seconds_max": 1.83,
+      "model_calls_total": 5,
+      "tokens_total": 8597,
+      "questions": [
+        "flask-9",
+        "itsdangerous-1",
+        "itsdangerous-2",
+        "itsdangerous-3",
+        "itsdangerous-4"
+      ]
+    },
+    "grounded-low": {
+      "runs": 5,
+      "answered": 5,
+      "passed": 5,
+      "expected_file_cited": 5,
+      "fact_present": 5,
+      "no_answer": 0,
+      "first_token_seconds_median": 0.35,
+      "first_token_seconds_min": 0.22,
+      "first_token_seconds_max": 0.56,
+      "total_seconds_median": 0.68,
+      "total_seconds_min": 0.37,
+      "total_seconds_max": 0.85,
+      "model_calls_total": 5,
+      "tokens_total": 7632,
+      "questions": [
+        "flask-9",
+        "itsdangerous-1",
+        "itsdangerous-2",
+        "itsdangerous-3",
+        "itsdangerous-4"
+      ]
+    }
+  },
+  "rows": [
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-1",
+      "chat_mode": "legacy",
+      "effort": "unset",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 30.651,
+      "total_seconds": 30.68,
+      "model_calls": 2,
+      "tokens": 4206,
+      "no_answer": false,
+      "agents_used": [
+        "retrieval",
+        "mentor"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-1",
+      "chat_mode": "legacy",
+      "effort": "low",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 1.222,
+      "total_seconds": 1.241,
+      "model_calls": 2,
+      "tokens": 3722,
+      "no_answer": false,
+      "agents_used": [
+        "retrieval",
+        "mentor"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-1",
+      "chat_mode": "grounded",
+      "effort": "unset",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 0.664,
+      "total_seconds": 0.973,
+      "model_calls": 1,
+      "tokens": 2001,
+      "no_answer": false,
+      "agents_used": [
+        "grounded"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-1",
+      "chat_mode": "grounded",
+      "effort": "low",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 0.555,
+      "total_seconds": 0.853,
+      "model_calls": 1,
+      "tokens": 1885,
+      "no_answer": false,
+      "agents_used": [
+        "grounded"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-2",
+      "chat_mode": "legacy",
+      "effort": "unset",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 1.328,
+      "total_seconds": 1.341,
+      "model_calls": 2,
+      "tokens": 3229,
+      "no_answer": false,
+      "agents_used": [
+        "retrieval",
+        "mentor"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-2",
+      "chat_mode": "legacy",
+      "effort": "low",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 1.795,
+      "total_seconds": 1.825,
+      "model_calls": 2,
+      "tokens": 2998,
+      "no_answer": false,
+      "agents_used": [
+        "retrieval",
+        "mentor"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-2",
+      "chat_mode": "grounded",
+      "effort": "unset",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 0.374,
+      "total_seconds": 0.535,
+      "model_calls": 1,
+      "tokens": 1582,
+      "no_answer": false,
+      "agents_used": [
+        "grounded"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-2",
+      "chat_mode": "grounded",
+      "effort": "low",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 0.222,
+      "total_seconds": 0.374,
+      "model_calls": 1,
+      "tokens": 1489,
+      "no_answer": false,
+      "agents_used": [
+        "grounded"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-3",
+      "chat_mode": "legacy",
+      "effort": "unset",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 1.439,
+      "total_seconds": 1.451,
+      "model_calls": 2,
+      "tokens": 3413,
+      "no_answer": false,
+      "agents_used": [
+        "retrieval",
+        "mentor"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-3",
+      "chat_mode": "legacy",
+      "effort": "low",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 1.348,
+      "total_seconds": 1.365,
+      "model_calls": 2,
+      "tokens": 3225,
+      "no_answer": false,
+      "agents_used": [
+        "retrieval",
+        "mentor"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-3",
+      "chat_mode": "grounded",
+      "effort": "unset",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 0.722,
+      "total_seconds": 1.062,
+      "model_calls": 1,
+      "tokens": 1574,
+      "no_answer": false,
+      "agents_used": [
+        "grounded"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-3",
+      "chat_mode": "grounded",
+      "effort": "low",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 0.355,
+      "total_seconds": 0.694,
+      "model_calls": 1,
+      "tokens": 1494,
+      "no_answer": false,
+      "agents_used": [
+        "grounded"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-4",
+      "chat_mode": "legacy",
+      "effort": "unset",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 2.519,
+      "total_seconds": 2.541,
+      "model_calls": 2,
+      "tokens": 3945,
+      "no_answer": false,
+      "agents_used": [
+        "retrieval",
+        "mentor"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-4",
+      "chat_mode": "legacy",
+      "effort": "low",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 1.209,
+      "total_seconds": 1.236,
+      "model_calls": 2,
+      "tokens": 3007,
+      "no_answer": false,
+      "agents_used": [
+        "retrieval",
+        "mentor"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-4",
+      "chat_mode": "grounded",
+      "effort": "unset",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 1.044,
+      "total_seconds": 1.434,
+      "model_calls": 1,
+      "tokens": 2142,
+      "no_answer": false,
+      "agents_used": [
+        "grounded"
+      ]
+    },
+    {
+      "repo": "itsdangerous",
+      "question_id": "itsdangerous-4",
+      "chat_mode": "grounded",
+      "effort": "low",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 0.353,
+      "total_seconds": 0.677,
+      "model_calls": 1,
+      "tokens": 1500,
+      "no_answer": false,
+      "agents_used": [
+        "grounded"
+      ]
+    },
+    {
+      "repo": "flask",
+      "question_id": "flask-9",
+      "chat_mode": "legacy",
+      "effort": "unset",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 2.383,
+      "total_seconds": 2.394,
+      "model_calls": 2,
+      "tokens": 2699,
+      "no_answer": false,
+      "agents_used": [
+        "retrieval",
+        "mentor"
+      ]
+    },
+    {
+      "repo": "flask",
+      "question_id": "flask-9",
+      "chat_mode": "legacy",
+      "effort": "low",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 1.312,
+      "total_seconds": 1.333,
+      "model_calls": 2,
+      "tokens": 2554,
+      "no_answer": false,
+      "agents_used": [
+        "retrieval",
+        "mentor"
+      ]
+    },
+    {
+      "repo": "flask",
+      "question_id": "flask-9",
+      "chat_mode": "grounded",
+      "effort": "unset",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 1.726,
+      "total_seconds": 1.828,
+      "model_calls": 1,
+      "tokens": 1298,
+      "no_answer": false,
+      "agents_used": [
+        "grounded"
+      ]
+    },
+    {
+      "repo": "flask",
+      "question_id": "flask-9",
+      "chat_mode": "grounded",
+      "effort": "low",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 0.317,
+      "total_seconds": 0.442,
+      "model_calls": 1,
+      "tokens": 1264,
+      "no_answer": false,
+      "agents_used": [
+        "grounded"
+      ]
+    },
+    {
+      "repo": "flask",
+      "question_id": "flask-10",
+      "chat_mode": "legacy",
+      "effort": "unset",
+      "passed": true,
+      "file_ok": true,
+      "fact_ok": true,
+      "first_token_seconds": 2.391,
+      "total_seconds": 2.426,
+      "model_calls": 2,
+      "tokens": 3969,
+      "no_answer": false,
+      "agents_used": [
+        "retrieval",
+        "mentor"
+      ]
+    }
+  ],
+  "tokens_spent_today": {
+    "input": 51727,
+    "output": 13475,
+    "calls": 38
+  },
+  "seconds": 701.0,
+  "warm_up_tokens": 12006,
+  "session_tokens_spent": 65202,
+  "summary_note": "Each arm is summarised over the questions EVERY arm completed, so the arms are compared on the same questions. A question the cap cut short is still in rows."
+}

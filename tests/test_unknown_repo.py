@@ -12,6 +12,7 @@ from codeatlas.app.di import (
 from codeatlas.app.main import create_app
 from codeatlas.controllers.repo_guard import REPO_NOT_FOUND
 from codeatlas.services.agents.types import AnswerResult, GenerateResult
+from codeatlas.services.qa.answer_service import GroundedAnswer
 from codeatlas.utils.config import AppConfig
 
 CONFIG = AppConfig(
@@ -50,6 +51,16 @@ class ModelSpy:
 
     def handle_question_fast(self, question, repo_id, **kwargs):
         self.calls.append("handle_question_fast")
+        return AnswerResult(answer="ok", citations=[], reasoning_steps=[])
+
+    # The default path runs the two halves separately, so the controller can send the file
+    # list between them. Both are recorded; either one reaching the model is the failure.
+    def search(self, question, repo_id, **kwargs):
+        self.calls.append("search")
+        return GroundedAnswer(answer="", citations=[], reasoning_steps=[], snippets=[])
+
+    def answer_from(self, question, retrieved, repo_id, **kwargs):
+        self.calls.append("answer_from")
         return AnswerResult(answer="ok", citations=[], reasoning_steps=[])
 
     def handle_generation(self, prompt, repo_id):

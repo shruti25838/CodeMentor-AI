@@ -13,6 +13,68 @@
       "commit": "d73fa1cdcbd8"
     }
   },
+  "headline": {
+    "title": "At a glance",
+    "note": "Recorded results on small fixed question sets, not live accuracy.",
+    "splits": {
+      "holdout2": "fresh - written later, scored once",
+      "holdout3": "never used - written after holdout2 was scored, scored once here"
+    },
+    "splits_note": "Both sets were written after the configurations were chosen and scored once each. The original held-out split is not shown here, because it was reused run after run.",
+    "metrics": [
+      "mrr@10",
+      "hit@5"
+    ],
+    "retrieval": [
+      {
+        "embedder": "hash",
+        "label": "hash \u2014 the default",
+        "configuration": "structured records, BM25 fusion on",
+        "is_default": true,
+        "holdout2": {
+          "questions": 20,
+          "mrr@10": 0.5763,
+          "hit@5": 0.75
+        },
+        "holdout3": {
+          "questions": 20,
+          "mrr@10": 0.69,
+          "hit@5": 0.8
+        }
+      },
+      {
+        "embedder": "cloudflare",
+        "label": "cloudflare \u2014 opt-in",
+        "configuration": "whole records, no fusion",
+        "is_default": false,
+        "holdout2": {
+          "questions": 20,
+          "mrr@10": 0.5867,
+          "hit@5": 0.8
+        },
+        "holdout3": {
+          "questions": 20,
+          "mrr@10": 0.8042,
+          "hit@5": 0.95
+        }
+      }
+    ],
+    "structural": {
+      "title": "Structural analysis against Python's ast",
+      "questions": 49,
+      "precision": 1.0,
+      "recall": 0.9673,
+      "note": "Call targets the graph resolved, against Python's own ast on the same code."
+    },
+    "timing": {
+      "title": "Model-free chat timing",
+      "label": "excludes the language model",
+      "warm_total_ms": 45.0,
+      "rerank_ms": 19.0,
+      "repo": "itsdangerous",
+      "note": "End-to-end latency is not shown. It depends on the model provider and is not benchmarked here."
+    }
+  },
   "retrieval": {
     "title": "Retrieval",
     "question_set": "eval/questions/*.json \u2014 40 questions, 20 per repository, fixed into two splits before any run",

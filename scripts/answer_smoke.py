@@ -24,6 +24,7 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -101,13 +102,24 @@ def load_done(path: Path) -> list[dict]:
 
 @dataclass
 class Pacer:
-    """Waits only as long as the provider's per-minute token allowance requires."""
+    """Waits only as long as the provider's per-minute token allowance requires.
+
+    `wait_for` returns the sleeps it asked for added up, never a difference of two clock
+    readings taken next to each other, so **having waited for nothing is exactly 0.0** however
+    finely the host's clock resolves. That is the fault `chat_latency_probe.Pacer.wait` had and
+    this one did not, which is why only the other one's tests could tell Windows from CI.
+
+    The clock and the sleep are injected all the same, because the waiting path could not be
+    tested without a minute of real sleeping and so was not tested at all.
+    """
 
     budget: int = TOKEN_BUDGET_PER_MINUTE
     window: list[tuple[float, int]] = field(default_factory=list)
+    clock: Callable[[], float] = time.monotonic
+    sleeper: Callable[[float], object] = time.sleep
 
     def spent_recently(self) -> int:
-        cutoff = time.monotonic() - 60
+        cutoff = self.clock() - 60
         self.window = [(t, n) for t, n in self.window if t > cutoff]
         return sum(n for _, n in self.window)
 
@@ -115,13 +127,13 @@ class Pacer:
         waited = 0.0
         while self.window and self.spent_recently() + estimate > self.budget:
             oldest = self.window[0][0]
-            sleep_for = max(0.5, 61 - (time.monotonic() - oldest))
-            time.sleep(sleep_for)
+            sleep_for = max(0.5, 61 - (self.clock() - oldest))
+            self.sleeper(sleep_for)
             waited += sleep_for
         return waited
 
     def record(self, tokens: int) -> None:
-        self.window.append((time.monotonic(), tokens))
+        self.window.append((self.clock(), tokens))
 
 
 def failure_counts() -> dict[str, int]:

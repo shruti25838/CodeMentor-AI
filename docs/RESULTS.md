@@ -2026,3 +2026,813 @@ Every number or claim here comes from a command that can be re-run.
   **The `/metrics` gauges moved with the files.** `codeatlas_retrieval_hit_rate{split="test",k="5"}` is 0.750 → 0.850 and `codeatlas_retrieval_mrr{split="test"}` is 0.645 → 0.7785, because `load_eval_results` reads `eval/results/*.json` at startup. It globs the top level only, so the legacy pair in the subfolder does not reach the gauges and cannot be mistaken for a second split.
   **What was deliberately left alone.** `eval/results/fastembed/` and `eval/results/cloudflare/` are untouched: they record provider comparisons made under whole records with BM25 off, and that is what they still say they are. The `sentence` and `fastembed` providers now inherit structured records and BM25, because they follow the global settings and have no measurement of their own either way — stated here rather than hidden, and anyone who wants the old behaviour from them sets the two global variables.
   **Limits, and they are the same ones as before.** Four twenty-question sets, two Python libraries, two pinned commits, file-level retrieval only. No model, no prompt, no citation, and nothing in this entry says a visitor's answer is better — only that the file they need is found more often and ranked higher. The inconsistency recorded at fce9e2a still stands: under `structured` the embedder sees a file's header while the keyword rerank and BM25 read the file's whole text. And the gate's four thresholds have zero margin, so the first change that moves retrieval at all will turn CI red and will have to record new numbers here
+### Change: every setting the config reads is documented, and a test keeps it that way
+- Value: fifteen of the sixty-eight environment variables `codeatlas/utils/config.py` reads had no line in `.env.example`, so the only way to discover them was to read the loader. All fifteen are now documented with their defaults and a line each. They are, in the order they appear in the file: `CODEATLAS_BM25`, `CODEATLAS_BM25_K1`, `CODEATLAS_BM25_B`, `CODEATLAS_BM25_RRF_K`, `CODEATLAS_BM25_DEPTH`, `CODEATLAS_BM25_MAX_INDEXES`, `CODEATLAS_RECORD_FORMAT`, `CODEATLAS_RECORD_WINDOW_CHARS`, `CODEATLAS_RECORD_WINDOW_OVERLAP`, `CODEATLAS_HASH_RECORD_FORMAT`, `CODEATLAS_HASH_BM25`, `CODEATLAS_CLOUDFLARE_RECORD_FORMAT`, `CODEATLAS_CLOUDFLARE_BM25`, `CODEATLAS_CHAT_MODE` and `CODEATLAS_BENCHMARKS_FILE`.
+
+  **Every one of them is a setting this repository added in the last two batches**, which is the shape of the drift: a variable is added to the loader with a careful comment beside it, and nothing makes the example file follow.
+
+  **The four per-index-kind overrides get the longest note**, because they are the ones a reader is most likely to set wrongly. The hash pair is written empty, which the loader reads as "use the global setting" and which is what a server configured before they existed already does; the comment beneath gives the two lines — `CODEATLAS_HASH_RECORD_FORMAT=whole` and `CODEATLAS_HASH_BM25=false` — that reproduce the legacy baseline. The cloudflare pair is written at its pinned values with the 0.0071-of-MRR@10 margin that is the reason it does not fall back to the globals.
+
+  **The test compares behaviour, not text.** `tests/test_env_example.py` stands in for `os.getenv` while `load_config()` and `load_cloudflare_credentials()` run, collects every name they ask for, and asserts each one appears as a `NAME=` line in `.env.example` — commented or not, because several lines there are examples to set rather than defaults to keep. A regex over the source would have passed on a name built by string concatenation and failed on a docstring that happened to mention one; recording the reads does neither. Two further tests keep the guard honest: one asserts the recorder really sees settings that are read (including one reached through a helper and one credential), and one asserts an undocumented name is reported rather than passed over
+- Command: `python -m pytest tests/ -q` -> **1202 passed**, 1 skipped (`tests/test_env_example.py` is new and adds 3); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (191 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; the same command under `$env:CODEATLAS_HASH_RECORD_FORMAT = "whole"` and `$env:CODEATLAS_HASH_BM25 = "false"` -> overall hit@5 **0.750**, MRR@10 **0.645**, the legacy pair, unchanged; in `codementor-ui`: `npm test` (81 passed), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none — nothing here is a measurement. The two retrieval runs quoted are the guard, re-run to show the defaults did not move; both are the hash embedder on `eval/questions/{itsdangerous,flask}.json` at the pinned commits. **No provider was called**
+- Date: 2026-10-14
+- Commit: 81d6c30
+- Notes: **no behaviour changed.** `.env.example` is read by nothing at runtime; `load_dotenv()` reads `.env`, which is gitignored. Writing `CODEATLAS_HASH_RECORD_FORMAT=` with an empty value is exactly equivalent to not setting it, because `_optional_record_format` and `_optional_flag` both treat an empty or whitespace string as unset — which is why the hash pair can be shown in the file at its real default rather than only in a comment.
+  **What the test does not cover.** Variables read outside `codeatlas/utils/config.py` are not in its scope: `CODEATLAS_ALLOWED_ORIGINS` (read in `app/main.py`), `CODEATLAS_TOKEN_LEDGER` and `CODEATLAS_NEURON_LEDGER` (read by the two ledgers), and `NEXT_PUBLIC_API_URL` (the frontend's). Three of those four are mentioned somewhere — `CODEATLAS_ALLOWED_ORIGINS` has its own line in `.env.example`, `CODEATLAS_NEURON_LEDGER` is named in the cloudflare comment there, and `NEXT_PUBLIC_API_URL` is in the frontend README — but nothing asserts it, and `CODEATLAS_TOKEN_LEDGER` is documented nowhere at all. It is deliberately left that way here: it is a test and script setting, not a deployment one, and inventing a line for it in a file about deploying the server would be the wrong fix. Widening the test to the whole package would mean importing every module and guessing which reads are configuration, which is a different and much less reliable check.
+  **It also does not check that a documented default matches the code's.** The file says `CODEATLAS_BM25_K1=1.2` and `bm25.py` says `DEFAULT_K1 = 1.2`, and if one moved the test would still pass. That is a real gap and a harder one to close, because several of these lines are deliberately not the default (`CODEATLAS_API_KEY=` is empty, `CODEATLAS_ALLOWED_ORIGINS` names localhost). Presence is the weaker claim and the one that is actually made
+### Feature: CODEATLAS_REASONING_EFFORT, sent only to the two Groq models that document it
+- Value: `low`, `medium`, `high`, or unset. **Unset is the default and is not a fourth level**: the parameter is not sent at all, so the request body is exactly the one this app has always built and every figure in this file still describes it. An unrecognised value stops the app starting, for the reason every other retrieval setting does and one more — a typo would otherwise reach the provider inside the request body, and a 400 there reads on the site as every answer being an error.
+
+  **The mechanism, since the question is reasonable.** The Groq client here is `ChatOpenAI` pointed at Groq's OpenAI-compatible endpoint, and the installed langchain-openai is **0.1.22**, which predates the parameter and has no `reasoning_effort` field (`ChatOpenAI.__fields__` does not contain one). The parameter therefore travels in **`model_kwargs`**, that class's own mechanism for a body parameter it does not model: its contents are merged into the request body alongside `model`, `temperature` and `max_tokens`. `reasoning_effort_kwargs` returns a **dict**, not a field assignment, so `**{}` adds nothing at all to the constructor call and "unset" means the key is absent rather than present and empty.
+
+  **Two models, one provider.** Groq documents `reasoning_effort` as supported by `openai/gpt-oss-20b` and `openai/gpt-oss-120b` only, so the model name is checked rather than trusted, and so is the provider: the OpenAI branch builds the same class against OpenAI's own API, where those two names do not exist. **The output token budget is untouched** — `max_tokens` is passed exactly as before, at every level and at none.
+
+  **What the four arms measured.** Eight questions were planned, each under the current chat mode and grounded mode, each with the effort unset and with `low`, one run per arm. Five completed under all four arms before the token cap stopped the run; a sixth (`flask-10`) got one arm and is left out of the summary, because an arm carrying an extra question nobody else answered has a median taken from a different sample.
+
+  | arm | runs | pass | first token, median | first token, range | total, median | calls | tokens | no answer |
+  |---|---|---|---|---|---|---|---|---|
+  | legacy, unset *(the default)* | 5 | 5/5 | 2.38s | 1.33 – **30.65s** | 2.39s | 10 | 17,492 | 0 |
+  | legacy, low | 5 | 5/5 | **1.31s** | 1.21 – 1.79s | 1.33s | 10 | 15,506 | 0 |
+  | grounded, unset | 5 | 5/5 | 0.72s | 0.37 – 1.73s | 1.06s | 5 | 8,597 | 0 |
+  | grounded, low | 5 | 5/5 | **0.35s** | 0.22 – 0.56s | 0.68s | 5 | 7,632 | 0 |
+
+  **The 30.65s is one run, and it is the first recorded one** — `itsdangerous-1` under legacy with the effort unset, after that arm had already been warmed. Every other legacy-unset run in the set is between 1.33s and 2.52s. It is reported rather than dropped, because dropping the one number that does not fit is how a measurement stops being one, but nothing should be read into the legacy-unset *range* beyond "one run took half a minute and nobody knows why". The medians are what the arms differ on.
+
+  **What the numbers do and do not support.** `low` was faster to the first token in both modes, on every question in the set but one (`itsdangerous-2` under legacy, 1.80s against 1.33s), and spent fewer tokens in both — 11% fewer in legacy, 11% fewer in grounded. That is the direction a lower reasoning effort should move both, and it is five questions. **The pass check saw nothing at all**: 5/5 under all four arms, which is what a weak check does on five easy questions and is not evidence that quality survived. **The check is weak and runs vary a lot** — two string tests per answer, no judge model, nothing that reads whether the explanation is correct; the same legacy path scored 8/15 on one day and 12/15 on another. Five questions at 5/5 cannot distinguish any of the four arms from any other.
+
+  **The default does not move.** Nothing here is a large enough sample to move it, and the point of `unset` sending nothing is that the configuration every recorded measurement describes stays reachable by doing nothing
+- Command: `python scripts/reasoning_effort_compare.py --limit 4 --max-session-tokens 60000 --out eval/results/experiments/reasoning-effort.json`. Then `python -m pytest tests/ -q` -> **1250 passed**, 1 skipped (`tests/test_reasoning_effort.py` is new and adds 39; `tests/test_reasoning_effort_compare.py` is new and adds 9); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (194 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (81 passed), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: the first four questions of each repository in `eval/answer_smoke_questions.json` — `itsdangerous-1..4` and `flask-9..12` — against https://github.com/pallets/itsdangerous 672971d66a2e and https://github.com/pallets/flask d73fa1cdcbd8, indexed once with the hash default. Five of the eight completed under all four arms
+- Model: groq / **openai/gpt-oss-20b**, `CODEATLAS_LLM_MAX_TOKENS=2048` unchanged
+- Date: 2026-10-14
+- Commit: 250f734 (the setting), 2dff8e6 (the measurement)
+- Notes: **the token cap was overshot, by me, and the script is fixed so it cannot happen again.** The cap is 60,000 for the session; **65,202 tokens went out**. The four warm-up calls ran *before* the script read the ledger position the cap is measured from, so about 12,000 tokens were spent outside the only thing that stops the run, and the run was stopped by hand once the day's ledger passed 60,000. The script now reads the ledger **before** the warm-ups. No daily-limit 429 was seen at any point; the provider never stated a daily position, so the stop was the local cap and nothing else.
+  **The per-arm answer files are missing, and that is the second half of the same mistake.** The script wrote the result file after every run and the answers only at the end, so stopping the run by hand kept all 21 rows and lost every answer text. It now writes both after every run. Reproducing the answers means running the arms again at roughly **53,000 more tokens**, which is over the cap for this session, so it was not done — the command above writes them to `.codeatlas/reasoning-effort-answers/` (gitignored) on any later run.
+  **What the comparison is not.** Five questions, one run per arm, one machine, one model, one afternoon. No repeats, so nothing here separates an arm from the variance between two runs of the same arm — and the 30.65s outlier is a direct demonstration that the variance is large. The timings are wall clock against a local server, so they include this machine's load. Both token figures are the ledger's own count of input plus output, which is a lower bound on what the account was billed.
+  **What the setting does not do.** It is ignored for every model except the two Groq names above, and on the OpenAI provider, silently rather than by failing — a server that sets it with another model gets the behaviour it had before, not an error. Nothing warns about that, which is a deliberate choice (the alternative is a warning on every boot of a perfectly normal configuration) and a real sharp edge
+### Feature: the chat stream names the files it found before the model has said anything
+- Value: the wait a visitor sits through on a repository question is mostly the model. Until now the only thing on screen during it was `"Retrieving context..."` — a sentence written **before** the search started, still showing while the search was long finished and the model was thinking. The stream now sends a status event the moment retrieval ends and before the model is asked anything:
+
+  ```
+  {"type": "status", "stage": "retrieved", "content": "Found 2 files", "count": 2,
+   "files": [{"path": "src/itsdangerous/signer.py", "start_line": 10, "end_line": 42},
+             {"path": "src/itsdangerous/timed.py",  "start_line": 1,  "end_line": 30}]}
+  ```
+
+  The page draws *Found 2 files*, the file names, and a spinner, and keeps them until the first answer token lands; from then on it renders exactly as it did before.
+
+  **The early list is sent only where it is guaranteed to equal the final one, and that is one mode of three.**
+
+  | path | what it sends early | why |
+  |---|---|---|
+  | **grounded** | stage, count and every location | `grounded_context` builds the snippets **once**; the event, the prompt and the `done` citations are all read from that one list. A test asserts the early files equal the `done` citations and appear in the prompt, rather than trusting the sentence above |
+  | legacy (the default) | the stage name alone | retrieval happens **inside** the agent graph, behind model calls of its own, so at the point this event would go out the citations do not exist yet |
+  | deep | the stage name alone | the same, plus a planner ahead of it |
+  | general (no repository) | the stage name alone | there is no retrieval to report |
+
+  **So on the shipped default the browser gets a stage name and no file list.** That is the rule working, not a gap in it: a file list the answer then contradicts is worse than a spinner, and the spec this was built to says as much. What it would take to change is in the notes below.
+
+  **Every status event now carries a stable `stage`** — `thinking`, `planning`, `retrieving`, `retrieved`, `answering` — beside its sentence, so the browser keys off a name and the prose stays free to be reworded. An older server that sends no stage still renders its sentence; a test covers that.
+
+  **`count` is distinct files, not locations.** The structured record format can put two windows of one module into the same answer, and counting locations would quietly turn one file into two under a heading that says *files*. The tooltip still carries every line range
+- Command: `python -m pytest tests/ -q` -> **1270 passed**, 1 skipped (`tests/test_early_status_event.py` is new and adds 20); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (195 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (**91 passed**, `lib/streamStatus.test.ts` is new and adds 10), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none — nothing here is a measurement. Every test uses a fake model over a real two-file index built in a temporary directory. **No provider was called**
+- Date: 2026-10-14
+- Commit: 36ae774
+- Notes: **no question text goes into the event, and a test enforces it.** A status event is written into a response body, which is something a proxy or an access log may keep, and the question is the visitor's. A marker planted in the question is asserted to reach no status event, and `retrieved_event` is asserted to emit nothing per file but `path`, `start_line` and `end_line`. Nothing in the logging changed, because nothing in it ever carried the question: the only two lines that mention one say *"Answering question for repo %s"* and name the exception type.
+  **What still works, tested after the early event has already gone out.** The quota refusal (both kinds), the truncation note, the empty-reply sentence and the semantic-fallback note all behave exactly as before; the fallback note is the same retrieval call the event is built from. The unknown-repository **404 still happens before the stream opens**, so it comes before any event at all — asserted as "the response carries no events", because the failure to guard against is a 200 with a status event and an error inside it.
+  **What it would take to give the default path its file list.** Legacy's citations come from `AnswerService.answer` inside `_retrieve`, and that call summarises the snippets through the model, so there is no point in that path that is both after retrieval and before a model call. Two ways out, neither taken here: hand the controller's model-free `AnswerService` the search first and pass the result into the orchestrator, which removes a model call from the default path and so changes `agents_used`, the token spend and the metrics; or search twice, once for the event and once in the graph, which is honest only while nothing can change the index between the two. Both are behaviour changes to the default and belong in their own entry with their own measurement.
+  **One thing found while reading that path and deliberately left alone.** In fast mode `handle_question_fast` uses `retrieved.snippets`, `retrieved.citations` and `retrieved.note` and **never reads `retrieved.answer`** — which is the text the retrieval agent spent a model call producing. On the fifteen-question comparison recorded at 2a66017 legacy made 30 model calls to grounded's 15, and this is one of the two. Removing it would cut roughly a third of the default path's tokens, and it would change the default, the metrics and `agents_used`, so it is recorded here rather than done
+### Fix: Prometheus is out of its own graphs, two axes read the right scale, semantic search is drawn
+- Value: three fixes to `ops/grafana/dashboards/`. **Grafana was not started**; the JSON was edited and the tests read it, which is also all the earlier dashboard work ever did.
+
+  **1. `/metrics` is out of the three panels it dominated.** Prometheus scrapes this app every 15 s whether anyone is using it or not — `scrape_interval: 15s` in `ops/prometheus.yml` — and the request middleware counts that scrape like any other request, under `path="/metrics"`. That is **0.067 req/s of requests nobody made**, running all day.
+
+  | panel | was | now |
+  |---|---|---|
+  | Requests per second by route | `sum by (path) (rate(codeatlas_request_total[5m]))` | the same with `{path!="/metrics"}` |
+  | Response start latency p95 by route | `histogram_quantile(0.95, sum by (le, path) (rate(codeatlas_request_latency_seconds_bucket[5m])))` | the same with `{path!="/metrics"}` |
+  | Responses by status | `sum by (status) (rate(codeatlas_request_total[5m]))` | the same with `{path!="/metrics"}` |
+
+  On a site with no visitors the first was a flat line at 0.067 labelled `/metrics` and nothing else, the third was *every* 200 on the dashboard, and the second drew a latency line for the one route whose behaviour tells a reader nothing. **The errors panel is deliberately not filtered**: a 5xx on `/metrics` is a real failure, and there is a test saying so, so that nobody tidies it later.
+
+  The filter is a **negative match**, not a list of the routes that count. A list would silently drop every route added after it was written, and a test asserts the expression names no route positively.
+
+  **2. Two panels read 60 times too small.** `rate()` is per second. *Agent runs per minute* and *Model calls per minute, by agent* computed a per-second rate, titled themselves *per minute*, and set the axis unit to `reqps`, which Grafana renders as **req/s**. So a reader saw `0.05 req/s` under a heading promising per-minute and had no way to know which of the three to believe. Both now multiply by 60 and use `cpm` (counts/min), so the title, the query and the axis agree. `reqps` was wrong twice over on these: an agent run is not a request.
+
+  **The other two panels on that dashboard with the same defect are untouched** — *Agent failures per minute, by reason* and *Planner routes per minute* both compute a per-second rate under a per-minute title with a `reqps` axis. They were not in the scope of this change and are recorded here rather than quietly fixed or quietly left; they are a one-line change each when someone wants them.
+
+  **3. A "Semantic search" row, from metrics that were already being recorded.** Three counters have been written by the app since the cloudflare provider landed and have never appeared on a dashboard: `codeatlas_semantic_index_total` (attempts by outcome), `codeatlas_semantic_index_estimated_neurons_total` (the running estimate the budget guard reads), and `codeatlas_retrieval_fallback_total` (questions the hash index answered instead, by reason). **No new metric was added**, and a test asserts each panel's metric is one the app defines.
+
+  All three are per minute with a `cpm` axis, matching fix 2 rather than repeating the mistake. **On a server running the hash default all three are empty**, which is not a bug: it is the answer to "is semantic search on here", and each panel's description says so
+- Command: `python -m pytest tests/ -q` -> **1282 passed**, 1 skipped (`tests/test_metrics.py` gains 11 and rewrites 1, `tests/test_agent_metrics.py` gains 1); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (195 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (91 passed), `npm run lint` (0 errors, 28 warnings, the same ones as before). Both files were re-parsed as JSON after editing
+- Dataset/repo: none. The 0.067 req/s is `1 / 15 s` from `ops/prometheus.yml`; the `path="/metrics"` label was confirmed by scraping a test client and reading the sample back, not assumed
+- Date: 2026-10-14
+- Commit: 76246ed
+- Notes: **nothing here was seen rendered.** Grafana was not started, which was the instruction, so every claim about how a panel *looks* is read off the JSON and off Grafana's unit names rather than off a screen. `cpm` is Grafana's "counts/min" and `reqps` its "requests/sec"; if a Grafana version renders either differently the panels will be wrong in a way no test here can catch.
+  **The dashboards are provisioned read-only** (`"editable": false` on `codementor.json`), so these files are the dashboard rather than a starting point someone has since edited in the browser — which is what makes a test over the JSON worth anything.
+  **The existing test now walks nested panels.** It read `dashboard["panels"]` flat, which was correct while there were no rows; a panel inside a collapsed row would have been skipped and its query never checked. `_panels` descends one level, which is as deep as Grafana nests.
+  **What is still not checked.** Nothing validates the PromQL — a query that names real metrics and is nonsense passes every test here. Nothing checks that a panel's `datasource` uid matches the provisioned one. And nothing asserts a panel is *reachable*: the semantic row is `"collapsed": false`, and if someone collapses it the panels keep their queries and simply stop being visible
+### Change: the evaluation page opens with five numbers, and everything else is behind one closed panel
+- Value: the Benchmarks section opened with the full retrieval tables for two providers across four splits, then the structural tables, then the system facts, then the stage timings, then a **twenty-row** Experiments table with three held-out comparisons and a chat-mode block inside it, then the limitations. Every number on it was true, carried its provenance, and nobody was ever going to read it.
+
+  **What is now at the top**, in a block called *At a glance*:
+
+  | | holdout2 (20 q) | | holdout3 (20 q) | |
+  |---|---|---|---|---|
+  | | **MRR@10** | **hit@5** | **MRR@10** | **hit@5** |
+  | **hash — the default** — structured records, BM25 fusion on | 0.576 | 0.750 | 0.690 | 0.800 |
+  | **cloudflare — opt-in** — whole records, no fusion | 0.587 | 0.800 | 0.804 | 0.950 |
+
+  plus **precision 1.000 / recall 0.967** over 49 questions against Python's `ast`, the model-free chat timing — **45 ms** warm on itsdangerous, 19 ms of it the rerank — labelled *"excludes the language model"*, and one line: *"Recorded results on small fixed question sets, not live accuracy."*
+
+  **Three choices in that block worth stating.**
+
+  1. **holdout2 and holdout3, not the original held-out split.** Those two were written after the configurations were chosen and scored once each; the first was reused run after run and flatters everything on it. It is still on the page, in the tables below, where the panel that draws it says what it is.
+  2. **Only the configuration each embedder actually runs.** The experiments table has twenty rows, four of them scored and rejected. A rejected row beside an adopted one with no verdict between them is how a summary misleads, so the block takes the row the builder marked `is_default` — which is *chosen* for hash and *baseline* for cloudflare, because cloudflare's candidate passed its rule and was not adopted.
+  3. **The wording matches the defaults as they are now**: hash *structured records, BM25 fusion on*; cloudflare *whole records, no fusion*. Both strings are in the builder beside the `DEFAULT` map they describe.
+
+  **Everything else is inside one `Details` disclosure, closed by default** — the retrieval tables, the structural tables, the system facts, the stage timings, the Experiments table with its held-out comparisons and chat-mode block, and the limitations. It is a **native `<details>` element**, not React state: it is closed on first paint with no hydration step, the browser's own find-in-page opens it to reach a number inside, and it needs no JavaScript at all. A test asserts there is no `open` attribute and no `useState` in it, because both would quietly undo all three.
+
+  **The headline cannot disagree with the tables it summarises.** `build()` builds the structural, timing and experiments blocks once and hands them to `headline()`, which reads no result file of its own. A test asserts that by reading the function's source for `_read(` and for each builder's name; six more compare every headline figure against the block of the same build it came from.
+
+  **The session telemetry above the section is untouched** — queries, latency, citations, agent utilisation, indexed repositories and recent queries are exactly as they were
+- Command: `python scripts/build_benchmarks.py` then `--check` -> up to date; `python -m pytest tests/ -q` -> **1290 passed**, 1 skipped (`tests/test_build_benchmarks.py` gains 8); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (195 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (**106 passed**, `lib/benchmarks.test.ts` gains 15), `npx tsc --noEmit`, `npm run lint` (0 errors, 28 warnings, the same ones as before), `npm run build`
+- Dataset/repo: no new measurement. Every figure is the committed `eval/benchmarks.json`, which is built from `eval/results/`; the holdout2 and holdout3 numbers are the ones scored once at ecf3744 and 16464d2 and re-drawn here, not re-run. **No provider was called**
+- Date: 2026-10-14
+- Commit: a1167bd
+- Notes: **the page was not opened in a browser.** `npm run build` succeeds and `npx tsc --noEmit` is clean, and the tests cover the view model and read the component's source, but nothing here has seen it rendered — so every claim about how it *looks*, including that it reads well on a phone, rests on the markup rather than on a screenshot. What is actually asserted about the phone case is structural: the block is a grid of figures rather than a table, so it has no `min-w-[640px]` and nothing to scroll sideways, and every long string is `break-words`. The tables inside `Details` keep their horizontal scrollers, which is what they had before.
+  **The headline duplicates numbers that are also in the tables below it**, by design, and the tests are what keep the two the same. If someone adds a figure to the headline by hand rather than deriving it, nothing in `test_build_benchmarks.py` will catch it — the guard is that `headline()` has no way to read a file, not that every field is cross-checked.
+  **One thing a reader of the headline can still get wrong.** Cloudflare's numbers are higher than hash's on both sets, and the block says cloudflare is *opt-in* without saying why it was not adopted. That reasoning — a 0.0071 margin on a twenty-question set, two metrics the rule did not name going backwards, and a paid re-index — is in the holdout3 block inside `Details`, which is closed. The headline names the default and marks it; it does not argue for it
+### Change: the chat timing line says what the question cost, not only how long it took
+- Value: chat latency rises as one session asks more questions, and the timing line could not say why. It carried stage durations and nothing else, so four different causes — the prompt growing with history, the follow-up rewrite making an extra model call, the provider making the request wait, and the model simply thinking for longer — all looked identical from outside: a larger `llm` number.
+
+  **Five fields, one per candidate.**
+
+  | field | what it is | which candidate it separates |
+  |---|---|---|
+  | `history_turns` | earlier turns put into the prompt | the prompt growing with history |
+  | `rewrite_ran` | 0 or 1: did the follow-up rewrite call the model | the extra model call |
+  | `in_tokens`, `in_tokens_each` | input tokens the provider reported, totalled and per call | a prompt that is growing, seen growing |
+  | `llm_each` | how long **each** model call took, not their sum | which of two calls was the slow one |
+  | `retry_wait` | the provider client's own 429 backoff, as a stage | a wait the provider imposed |
+
+  `out_tokens` is recorded as well. It comes out of the same already-parsed usage object as `in_tokens` at no extra cost, and without it a call that was slow cannot be told from a call that wrote a long answer — which is the one distinction the other five fields cannot make.
+
+  **`retry_wait` is the field that did not exist anywhere.** The OpenAI-compatible client retries a 429 itself and `time.sleep`s inside the call, so from the application's side the wait is invisible: it only makes the model call look slow. The client logs `Retrying request to %s in %f seconds` at INFO immediately before each sleep, and a `logging.Handler` on the `openai` logger reads the number of seconds out of that line and adds it to whichever request's timer is current. **Only the number**: not the URL logged beside it, not the request being retried. It is recorded as a stage, so it also reaches the existing `codeatlas_stage_duration_seconds` histogram with no new metric defined. It is *inside* the model call, so `llm` already contains it — both are reported and a reader subtracts.
+
+  **No metric was added and none changed.** `observe_stages` is still fed from the stage totals alone, so counts and facts cannot reach Prometheus as if they were seconds.
+
+  **`as_dict()` is no longer all durations**, which forced one correction: `server_timing()` now builds from a new `durations()` method rather than from `as_dict()`. A Server-Timing header's `dur` is milliseconds by definition, so `in_tokens;dur=1800` would have been read by the browser as 1.8 seconds.
+
+  **Grounded mode gained the `llm` stage it never had.** Its one model call is pulled on a worker thread, which had no timer in its context, so a grounded question's line had an embed, a search and a rerank and no model call at all. The stream is now pulled under `run_timed` — which is also what lets the usage callback and the retry handler find a timer — and the call is timed around the loop. Side effect, stated rather than hidden: the grounded path now always makes one executor hop for `_search_question` instead of only when a rewrite is needed. That function is a regular-expression test over the question when no rewrite is due.
+
+  **The rewrite decision moved into one function.** `needs_rewrite` plus `rewrite_question` appeared in three places — grounded, deep and the legacy fast path. `rewrite_ran` would have had to be recorded in all three, so instead `_search_question` does both and all three call it. The fact is written on **both** branches: a line with no `rewrite_ran` at all would be indistinguishable from a line written before the field existed
+
+  **Nothing new can carry text.** Every field added is a duration, a token count the provider reported, or a count of turns. The existing assertions that no question text reaches the timings or the log line are untouched and still pass
+- Command: `python -m pytest tests/ -q` -> **1296 passed**, 1 skipped (was 1290; `tests/test_timing.py` gains 5, `tests/test_grounded_chat.py` gains 1); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (195 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none. **No provider was called** — the retry handler is tested by logging the client's own line, args and all, through `openai._base_client` and reading the stage back
+- Date: 2026-10-14
+- Commit: 924b90e
+- Notes: **the retry handler depends on a log line in someone else's library.** `openai==1.109.1` logs that sentence at two places in `_base_client.py`; a future version that reworded it, logged it below INFO or moved it off a logger under `openai` would make `retry_wait` silently always absent, and no test here would fail — the test logs the line itself rather than provoking a real retry. Absence of the field is therefore weak evidence that no retry happened.
+  **`retry_wait` is attributed to whichever request's timer is current on the sleeping thread**, which is the right one for a chat question because the model call happens under `run_timed`. A provider call made outside any request would have its backoff counted nowhere, which is the intended behaviour and not a loss.
+  **`in_tokens` is absent, not zero, when the provider reports nothing.** The two are kept distinguishable deliberately, but it means the number of entries in `in_tokens_each` need not equal `llm_calls`.
+  **Nothing here measures anything yet.** This change only makes the measurement possible; what the fields actually say about a real session is the next entry
+### Fix: the last two per-minute panels on the agents dashboard count per minute
+- Value: `rate()` is per second. **Agent failures per minute, by reason** and **Planner routes per minute** each computed a per-second rate, titled themselves *per minute*, and set the axis unit to `reqps`, which Grafana renders as **req/s** — three claims about one number, with nothing to tell a reader which to believe.
+
+  | panel | was | now |
+  |---|---|---|
+  | Agent failures per minute, by reason | `sum by (agent, reason) (rate(codeatlas_agent_failures_total[5m]))`, unit `reqps` | the same `* 60`, unit `cpm` |
+  | Planner routes per minute | `sum by (route) (rate(codeatlas_planner_routes_total[5m]))`, unit `reqps` | the same `* 60`, unit `cpm` |
+
+  `cpm` is Grafana's counts/min. `reqps` was wrong twice over on both: an agent failure is not a request, and neither is a planner route.
+
+  **These are exactly the two panels 76246ed recorded as left with the same defect** and chose not to fix. *Agent runs per minute* was fixed there; it already multiplies by 60 and already reads `cpm`, and it is **untouched** here — it was named in the request for this change, but there was nothing left wrong with it, so the second panel of the pair is the one the earlier entry listed beside *Planner routes*.
+
+  **The test that named panels by hand is gone.** It asserted the rule for two titles, which is why two more panels could carry the same defect for as long as they did. In its place is one test over **every** panel whose title says *per minute*: all five must multiply by 60, and none may use a per-second axis unit (`reqps`, `pps`, `cps`, `wps`, `iops`, `rps`, `ops`). A panel added later with this mistake now fails a test rather than being found by somebody reading a graph.
+
+  A second test keeps the four **counting** panels on `cpm` specifically, and says in its own docstring why *Tokens per minute, by agent* is not one of them: tokens are counted per minute too, and that panel already multiplied by 60, but `cpm` would label its axis counts/min and a token is not a count of something that happened. `short` stays.
+
+  **The test that every panel names a metric the app defines is unchanged**, as is every other panel on either dashboard
+- Command: `python -m pytest tests/ -q` -> **1312 passed**, 1 skipped (`tests/test_agent_metrics.py` loses 1 test and gains 2); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (197 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before). The file was re-parsed as JSON after editing and every panel's unit and expression printed back
+- Dataset/repo: none. No provider was called
+- Date: 2026-10-14
+- Commit: 6feab58
+- Notes: **Grafana was not started**, which was the instruction. Every claim here about how a panel reads is taken from the JSON and from Grafana's unit names, not from a screen; if a Grafana version renders `cpm` differently these panels are wrong in a way no test here can catch.
+  **The new test's strength is its weakness.** It keys off the words "per minute" in a panel title, so a panel that computes a per-second rate and simply does not say "per minute" anywhere passes it. What it does guarantee is that the title cannot lie.
+  **The unit list is a denylist.** `PER_SECOND_UNITS` holds the seven Grafana per-second ids worth guarding against; a per-second unit outside that list would pass. An allowlist was the alternative and would have had to be revised for every new panel
+### Check: what a chat session actually spends, question by question, in both chat modes
+- Value: the first run of `scripts/chat_latency_probe.py`. One session per mode against a real local server, the same eight questions in the same order, model `openai/gpt-oss-20b` on Groq, hash embeddings, itsdangerous. **The session token cap stopped both runs before question 8**, so the measurement is five questions in the default mode and six in grounded.
+
+  **The committed default mode (legacy), five questions**
+
+  | q | turns | rewrite | model calls | in | out | llm ms | per call ms | total ms |
+  |---|---|---|---|---|---|---|---|---|
+  | 1 | 0 | no | 2 | 2,882 | 1,520 | 2,843 | 1,863 / 980 | 2,994 |
+  | 2 | 1 | no | 2 | 3,143 | 1,816 | 2,589 | 1,821 / 768 | 2,632 |
+  | 3 | 2 | **yes** | 2 | 2,869 | 2,442 | 3,286 | 1,473 / 1,813 | 4,212 |
+  | 4 | 3 | **yes** | 2 | 4,820 | 2,597 | 3,310 | 2,558 / 752 | 3,864 |
+  | 5 | 4 | no | 2 | 3,465 | 1,373 | 2,528 | 1,384 / 1,144 | 2,553 |
+
+  **Grounded mode, six questions**
+
+  | q | turns | rewrite | model calls | in | out | llm ms | first token ms | total ms |
+  |---|---|---|---|---|---|---|---|---|
+  | 1 | 0 | no | 1 | 1,420 | 226 | 626 | 805 | 878 |
+  | 2 | 1 | no | 1 | 1,553 | 130 | 568 | 555 | 613 |
+  | 3 | 2 | **yes** | 1 | 1,481 | 946 | 2,079 | 1,005 | 2,512 |
+  | 4 | 3 | **yes** | 1 | 2,895 | 1,158 | 1,606 | 1,526 | 2,334 |
+  | 5 | 2 | no | 1 | 2,608 | 589 | 1,224 | 936 | 1,273 |
+  | 6 | 2 | **yes** | 1 | 3,393 | 632 | 1,135 | 1,014 | 1,635 |
+
+  **The premise did not reproduce. Latency did not rise with position in the session.** Legacy went 2,994 -> 2,632 -> 4,212 -> 3,864 -> 2,553 ms; the *last* question was the fastest. Grounded rose from under a second to 1.2-2.5 s, but its two cheapest questions are also the two that wrote the shortest answers (226 and 130 output tokens against 589-1,158 later). In both modes `llm` tracks **output length**, which is a property of the question, not of how many came before it.
+
+  **Candidate 1, history growing the prompt: real, measured, and bounded.** The legacy path gives a controlled comparison for free, because each question makes two model calls over *the same snippets* - the retrieval summary, which is given no history, and the mentor, which is given all of it:
+
+  | turns | retrieval call in | mentor call in | difference |
+  |---|---|---|---|
+  | 0 | 1,385 | 1,497 | 112 |
+  | 1 | 1,465 | 1,678 | 213 |
+  | 2 | 1,115 | 1,427 | 312 |
+  | 3 | 1,439 | 2,399 | 960 |
+  | 4 | 1,203 | 2,262 | 1,059 |
+
+  The 112 at zero turns is the two prompt templates differing; above it the history costs about **950 tokens by the fourth turn**, close to the 1,500-token budget `chat_history_tokens` sets. It **cannot keep growing**: `chat_history_turns` is 4 and the store drops the oldest turns that do not fit, which the grounded run shows directly - `history_turns` went 0, 1, 2, 3, **2, 2**, falling as answers got longer. And the retrieval call's input is flat across the whole run (1,385 / 1,465 / 1,115 / 1,439 / 1,203) while the mentor's climbs, so the growth is history and not the snippets. The matching latency effect is **not visible**: the mentor call took 980, 768, 1,813, 752 and 1,144 ms as its prompt grew by a thousand tokens.
+
+  **Candidate 2, the rewrite call: real, and the only field that marks the slow questions.** It ran on exactly the questions written to lean on the one before them. In legacy it cost 859 ms and 520 ms and 1,632 tokens over the run (**6.1%** of the session); in grounded, 392, 673 and 443 ms. The two legacy questions it ran on are the two slowest. It does not explain all of the gap - take the rewrite stage off and q3 and q4 are still 3,353 and 3,344 ms against 2,553-2,994 for the rest - but it is the only one of the five fields that moves with them.
+
+  **Candidate 3, the per-minute limit: not seen, and this run cannot price it.** `retry_wait` is absent on all eleven questions and both server logs contain **zero** `Retrying request` lines. That is what the pacer was for: it held the trailing-60-second window under 8,000 tokens by waiting about 60 s between legacy questions. A visitor asking three questions in a minute would meet the limit this run was built to avoid, so **no retries happening here is not evidence that the limit does not cause them.**
+
+  **Candidate 4, memory pressure: no support, and weakly measured.** The local stages do not grow: `embed_query` 0.1-0.4 ms, `rerank` 8-23 ms, `search` 0.5-0.8 ms after the first question. The one place a later question is *faster* than an earlier one is `search`, 122 ms (legacy) and 207 ms (grounded) on question 1 and under a millisecond thereafter - the BM25 index being built once and then reused. That is the opposite of the reported effect. **Nothing here samples process memory**, so this is an argument from "the work that would get slower did not", not a measurement of RSS.
+
+  **The two modes, side by side.** Legacy spent **26,927 tokens over 12 model calls** for five questions; grounded spent **17,031 over 9 calls** for six. Per question that is 5,385 against 2,839, and a median total of 2,994 ms against 1,454 ms
+- Command: in one shell, `$env:CODEATLAS_CHAT_MODE = "legacy"; $env:CODEATLAS_EMBEDDING_PROVIDER = "hash"; $env:CODEATLAS_LLM_PROVIDER = "groq"; python -m uvicorn codeatlas.app.main:app --host 127.0.0.1 --port 8000`, then in another `python scripts/chat_latency_probe.py --base-url http://127.0.0.1:8000 -n 8 --token-cap 24000 --tpm-limit 8000`; the server restarted with `CODEATLAS_CHAT_MODE = "grounded"` and the probe re-run with `--token-cap 13073` (what was left of the 40,000). Mode in both tables is read off `agents_used`, not off the command line
+- Dataset/repo: pallets/itsdangerous, re-analysed by the probe at the start of each run; eight fixed questions, four of which lean on the turn before them. Model `openai/gpt-oss-20b` (Groq), `CODEATLAS_LLM_MAX_TOKENS` at its default 2048, hash embeddings with the committed defaults. **No Cloudflare call was made** - the embedding provider was pinned to hash for both servers
+- Date: 2026-10-14
+- Commit: 598bc15 (the probe); nothing in the repository changed to take this measurement
+- Notes: **the 40,000-token cap was exceeded, by 3,958 tokens (9.9%).** The ledger went from 65,202 to 109,160 across the two runs: **43,958 tokens over 21 model calls**. The guard is a pre-flight check - it asks whether the session has spent less than the cap and then asks a question whose cost is only known once it has been paid - so it bounds the spend *before* the last question, not after it. Legacy stopped at 26,927 against 24,000 and grounded at 17,031 against 13,073. This is a defect in the guard as committed, not a surprise from the provider, and it is fixed in the next entry.
+  **Five questions and six questions, not eight.** Both runs stopped cleanly on the cap, which is the guard working. It does mean the legacy table never gets past the fourth turn of history, which is exactly where `chat_history_turns` caps it anyway.
+  **`llm_calls` does not count the rewrite**, which has its own stage; so a legacy row reading 2 calls with `rewrite` present was three calls to the provider. `in_tokens_each` does show all three, which is why the retrieval-versus-mentor table above can be built at all.
+  **The attribution of the two legacy calls rests on their order**, retrieval before mentor in `handle_question_fast`, confirmed independently by prompt size: the retrieval prompt built offline for one of these questions is 5,622 characters and the mentor's 6,110, and the first and second `in_tokens_each` entries sit on the same side of that gap on every question.
+  **One run of one session per mode.** The model is non-deterministic and output length drives most of the variation, so none of these timings should be read to three figures; what is solid is the direction of `in_tokens` per call, the presence and cost of the rewrite, and the absence of retries
+### Fix: the probe's token cap reserves the next question, so it is a cap and not a tripwire
+- Value: the guard asked whether the session had spent less than the cap and then asked a question whose cost is only known once it has been paid. So it bounded the spend *before* the last question and not after it, and the first run overran: **43,958 tokens under a cap of 40,000**, by 3,958 (9.9%), as 26,927 against 24,000 in the legacy run and 17,031 against 13,073 in the grounded one.
+
+  `budget_guard` now takes a `reserve` -- what the next question is expected to cost -- and allows the run to continue only while `spent + reserve` still fits. The estimate is the pacer's own: **the most expensive question so far**, which is the only figure available that cannot be optimistic about what has already happened. Before the first question there is nothing to go on, so the pacer's standing figure of 5,000 stands in, which means a cap below 5,000 now refuses to start rather than overrunning it.
+
+  Being at the cap exactly still stops the run. The reserve is an **additional** condition, `spent < cap and spent + reserve <= cap`, not a replacement: without the first half a guard called with no reserve would let a session that had spent exactly its cap ask one more question.
+
+  The stop line now carries the reserve, so a run that stopped with budget left over says why it did
+- Command: `python -m pytest tests/ -q` -> **1313 passed**, 1 skipped (`tests/test_chat_latency_probe.py` gains 1); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (197 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none. **No provider was called** and the measurement in the previous entry was not re-run: the 43,958 figure there is what the old guard allowed, and re-running under the new one would cost another session's tokens to demonstrate arithmetic a test already covers
+- Date: 2026-10-14
+- Commit: adadcf2
+- Notes: **the cap is still not a hard ceiling in the strict sense**, and cannot be with this design. It now holds whenever a question costs no more than the most expensive one before it; a question that costs far more than any of its predecessors can still cross the line, by the amount it exceeds that estimate. A true ceiling would need the provider to price a request before running it, or a budget enforced provider-side.
+  **The reserve makes the run end earlier and spend less than the cap allows.** That is the intended trade: the previous entry's run would have stopped a question sooner in each mode and recorded four and five questions instead of five and six.
+  **The ledger is the only thing counted against**, so a model call this machine made outside the probe -- another server, a test that bypassed the temp-file fixture -- lands in the same day's file. The baseline subtraction handles spend from *before* the run; it cannot handle spend from *during* it
+### Check: the model call the default chat path spends on nothing, priced and traced (read-only)
+- Value: 36ae774 recorded in passing that `handle_question_fast` never reads `retrieved.answer` and guessed the cost at "roughly a third of the default path's tokens". **Measured, it is 48.5%.** Nothing in the repository was changed by this entry.
+
+  **Where the call is made.** `codeatlas/services/qa/answer_service.py:366-367` -- `chain.invoke({"question": ..., "context": render_snippets(snippets)})` inside `_format_answer`, reached from `AnswerService.answer` at `:341`. The model is there because `di.py:284` builds the orchestrator's `AnswerService` with `llm=get_llm_provider().get_chat_model()`; with `llm=None` the same method returns a list of file locations instead (`:361-362`), which is what grounded mode's service does.
+
+  **What it receives.** The template at `answer_service.py:152-161`: a one-line system prompt (*"You are a senior engineer. Use provided code snippets to answer. Cite file paths and line ranges from the snippets."*) and a human message of the question followed by every retrieved snippet. For *"How does Signer create a signature?"* against itsdangerous, built offline with no model call, that prompt is **5,622 characters**. It is given **no conversation history** -- which is what made the history measurement in the previous entry possible.
+
+  **Where its output goes.** Into `GroundedAnswer.answer` (`answer_service.py:346-352`), bound to `retrieved` at `orchestration.py:155`. The rest of `handle_question_fast` reads `retrieved.citations` (`:156`), `retrieved.snippets` (`:163`, `:170`) and `retrieved.note` (`:181`). **`retrieved.answer` is never read**, and the local goes out of scope when the function returns at `:172`.
+
+  **Does anything downstream read it?** No. Two places in the whole repository read `GroundedAnswer.answer`, and neither is on this path: `orchestration.py:335`, the deep-mode `_retrieval_node`, which renders it into the step transcript; and `retrieval_agent.py:32`, the text `Agent.run` contract used by the planned graph and by `handle_generation`. Checked at runtime as well as by reading: with a fake model answering the first call with a sentinel string, the sentinel appears in **neither** the streamed answer, nor anywhere in the `done` event, nor in the mentor's prompt, while the second call's sentinel is the answer verbatim.
+
+  **The prompts of the final answer call, with and without it.** Built offline from the real index for one question, no model call made:
+
+  | | with the retrieval summary call | without it |
+  |---|---|---|
+  | system | the mentor's, unchanged | identical |
+  | human | `Code snippets:` + five numbered snippets + `Question: ...` | identical |
+  | characters | 6,110 | 6,110 |
+
+  **They are byte-identical**, because `handle_question_fast` passes the mentor `retrieved.snippets` and never the summary. The summary is not an input to anything; removing the call removes a 5,622-character prompt and deletes its reply unread.
+
+  **What removing it would change**, from the eleven-question run in the entry before last:
+
+  | | now | without the call |
+  |---|---|---|
+  | model calls per question | 2 (3 with a rewrite) | 1 (2 with a rewrite) |
+  | tokens, 5-question session | 26,927 | 13,857 -- **48.5% less** |
+  | model time, same session | 14,556 ms | 5,457 ms -- **62.5% less** |
+  | share of total request time | -- | the call was **56%** of all time spent in those five requests |
+  | `agents_used` | `["retrieval", "mentor"]` | **unchanged** |
+  | citations | from the snippets | **unchanged** |
+  | the final prompt | 6,110 chars | **unchanged** |
+  | answer content | the mentor's | same prompt, so same distribution; not bit-identical, because the model is not deterministic |
+
+  Per-call figures, from `in_tokens_each`, `out_tokens_each` and `llm_each`:
+
+  | q | wasted in | wasted out | wasted ms | mentor in | mentor out | mentor ms |
+  |---|---|---|---|---|---|---|
+  | 1 | 1,385 | 1,190 | 1,863 | 1,497 | 330 | 980 |
+  | 2 | 1,465 | 1,485 | 1,821 | 1,678 | 331 | 768 |
+  | 3 | 1,115 | 953 | 1,473 | 1,427 | 1,369 | 1,813 |
+  | 4 | 1,439 | **2,048** | 2,558 | 2,399 | 346 | 752 |
+  | 5 | 1,203 | 787 | 1,384 | 2,262 | 586 | 1,144 |
+
+  On question 4 the discarded reply used **exactly 2,048 output tokens** -- the whole of `CODEATLAS_LLM_MAX_TOKENS` -- and was then thrown away.
+
+  **Metrics that would move**: `codeatlas_agent_model_calls_total{agent="retrieval"}` would fall to zero; `codeatlas_agent_tokens_total{agent="retrieval", ...}` likewise; `codeatlas_stage_duration_seconds{endpoint="ask_stream", stage="model"}` would roughly halve; `codeatlas_agent_failures_total{agent="retrieval", reason="fallback_to_location_list"}` and the quota reasons recorded at `answer_service.py:375-377` would stop being reachable from this path. The on-disk token ledger would count about half as much per question. In the timing line, `llm_calls` and `llm_each` would disappear from a question with no rewrite, because one call needs no per-call list.
+
+  **`agents_used` would not change**, which corrects the note at 36ae774. `agents_ran.append("retrieval")` happens at `orchestration.py:154`, before the call, and retrieval would still run -- it would still embed the query, search, fuse and rerank. It is the *summarising* that is spent on nothing, not the retrieval. The claim in that note belongs to the other option it describes, moving the search out of the graph into the controller, which would stop retrieval being an agent that ran.
+
+  **Tests that would need changing**, four assertions in two files: `tests/test_timing.py:170` and `:218` (`llm_calls == 2`), `tests/test_conversation_memory.py:231` (the same), and `tests/test_conversation_memory.py:225`, which checks that the rewritten question reached the search by looking for it in the retrieval summary's prompt -- with no such prompt it would need another anchor. `tests/test_agents_used.py:63` and `:126` assert `["retrieval", "mentor"]` and would still pass.
+
+  **The early file list would not change today**, and would become possible tomorrow. `retrieved_event` (`grounded_chat.py:135`) is sent only by the grounded path (`ask_controller.py:277` onward); the legacy path sends the bare stage name at `ask_controller.py:201`. Removing this call does not add the event. What it removes is the reason 36ae774 gave for legacy not having one -- "there is no point in that path that is both after retrieval and before a model call" -- because with the summary gone, that point is exactly where `_retrieve` returns, about 1.8 s earlier than the first token.
+
+  **One thing removal would improve that is not on the list**: it halves the tokens a question puts into the provider's per-minute window, which makes the 8,000-token-per-minute limit roughly half as likely to bite -- candidate 3 of the latency diagnosis
+- Command: read-only. The prompts were built with a scratch script that constructs `AnswerService(..., llm=None)` over the index already on disk and renders both templates with `format_messages`; the sentinel check ran the real `/ask/stream` against a two-file temporary index with `FakeListChatModel`. The per-call figures are the `in_tokens_each`, `out_tokens_each` and `llm_each` fields of the five `timing ask_stream` lines from the legacy run recorded two entries above. **Nothing in the repository was changed, and no provider was called**
+- Dataset/repo: pallets/itsdangerous for the prompts; the five-question legacy session of 2026-10-14 for the token and timing figures
+- Date: 2026-10-14
+- Commit: none -- this entry changes no code
+- Notes: **the 48.5% and 62.5% are one session of five questions**, and the discarded reply's length is the model's choice, so they will not hold to the decimal on another run. What does not depend on the sample is that the reply is read by nothing and that the final prompt does not contain it.
+  **"Same distribution, not identical answers."** The mentor's prompt is unchanged, so nothing about what it is asked changes; but the two calls share a per-minute budget, so removing the first one also changes *when* the second is served, and the model is sampled at the configured temperature either way.
+  **One behaviour would genuinely be lost.** `_format_answer` catches a provider refusal and turns it into the quota sentence with the locations beneath it (`answer_service.py:369-383`). On this path that handler is redundant -- the mentor has its own at `orchestration.py:164-170` -- but it is also the only thing that records `fallback_to_location_list` for the retrieval agent, so that metric would go quiet rather than go to zero for a good reason.
+  **This entry does not recommend the removal.** It prices it. The change touches the default chat path, four test assertions and five metric series, and belongs in its own entry with its own before-and-after measurement
+### Change: the default chat path no longer summarises a search nobody reads
+- Value: the entry two above priced this call at **48.5% of a session's tokens and 62.5% of its model time**, traced its output to a local that fell out of scope, and showed the mentor's prompt is byte-identical without it. It is now gone from the default path.
+
+  **What was removed.** `handle_question_fast` searched through `RetrievalAgent.retrieve`, which called `AnswerService.answer`, which asked the model to write a prose summary of the snippets it had found. The result went into `GroundedAnswer.answer`; the function then used `.citations`, `.snippets` and `.note` and returned. On one measured question the discarded reply used **the whole 2,048-token output budget**.
+
+  **How.** `AnswerService.locate()` is `answer()` without that call -- the same search, snippets, citations and fallback note. Both now run through one `_grounded(..., summarise: bool)`, so they cannot drift. `locate`'s `answer` field holds the locations, which is **exactly what `answer()` returns when no model is attached to the service at all**; a test asserts those two strings are equal. `RetrievalAgent` grows the matching `locate`, and `_retrieve` asks for it when the caller does not want prose.
+
+  **`handle_question_fast` split into `search()` and `answer_from()`**, with the old method calling both, so a streaming caller can send what the search found while the model is still writing. That is what the next entry uses.
+
+  **The three readers of the summary text, all unchanged:**
+
+  | reader | why it still wants the summary |
+  |---|---|
+  | `orchestration.py:_retrieval_node` (deep mode) | renders it into the step transcript a later agent reads |
+  | `retrieval_agent.py:run` (the text `Agent` contract) | used by `handle_generation` and by a planned retrieval step |
+  | `AnswerService.answer` itself | including the location-list fallback and the quota sentence it builds when the provider refuses |
+
+  **What did not change:** `agents_used` is still `["retrieval", "mentor"]` -- retrieval still runs, still searches, still gets its `agent_run` timing and its `codeatlas_agent_runs_total` increment. Citations, snippets, the semantic-fallback note, the quota behaviour and the answer's prompt are all identical. An agent with no `locate` falls back to `retrieve`, so a stand-in implementing only the older method keeps working rather than quietly returning nothing.
+
+  **The four assertions that had to move, and what each now means:**
+
+  | where | was | now means |
+  |---|---|---|
+  | `test_timing.py` chat stages | `llm_calls == 2` | `llm_calls` **absent** -- one call per question, so no stage ran twice and `llm` is that call |
+  | `test_timing.py` follow-up | `llm_calls == 2` | still absent: the rewrite is its own stage, so a follow-up is two calls under two names, not one name twice |
+  | `test_conversation_memory.py` | `llm_calls == 2` | the same, for the three-calls-to-two case recorded earlier |
+  | `test_conversation_memory.py` | the rewrite appears in the summary's prompt | that prompt no longer exists, so it reads the server's own reasoning step, **and** asserts no prompt carries the summary template at all |
+
+  **Metric expectations.** `codeatlas_agent_model_calls_total{agent="retrieval"}` and `codeatlas_agent_tokens_total{agent="retrieval", ...}` no longer move on this path. `codeatlas_stage_duration_seconds{endpoint="ask_stream", stage="model"}` falls to one call's worth. `codeatlas_agent_failures_total{agent="retrieval", reason="fallback_to_location_list"}` is no longer reachable from the default path -- it still is from deep mode and from `answer()`, and `tests/test_agent_metrics.py` still covers that through `AnswerService.answer` directly. `codeatlas_agent_runs_total{agent="retrieval"}` and `codeatlas_agent_duration_seconds{agent="retrieval"}` are **unchanged**, which is the point: the agent ran.
+
+  **Proved two ways.** `tests/test_retrieval_summary_removed.py` runs the default path twice with the same snippets and a different summary -- the second telling the model to ignore the snippets and look in a file that does not exist -- and asserts the mentor's prompt is byte-identical, then asserts that prompt in full. And a recording fake model counts the calls: **one per question, two with a rewrite, none carrying the summary template**
+- Command: `python -m pytest tests/ -q` -> **1323 passed**, 1 skipped (was 1313; `tests/test_retrieval_summary_removed.py` is new and adds 10); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (198 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none -- every test here uses a fake model over a real two-file index in a temporary directory. **No provider was called**
+- Date: 2026-10-14
+- Commit: 794fc3c
+- Notes: **the identical call is still made in one place off this path, and is left alone.** `CodingMentorAgent.run` calls `self._answer_service.answer(...)` and then reads only `retrieved.snippets` -- the same waste, the same shape. It is the mentor's text `Agent` contract, reached from `handle_generation` and from a planned step, not from the default chat path, and changing it would move an admin endpoint's model-call count that nothing here measures. Recorded rather than quietly fixed or quietly left.
+  **`locate`'s `answer` field is not empty, and that is a choice.** Filling it with the locations keeps every reader of `GroundedAnswer` working and makes the field mean the same thing it means with no model configured. An empty string would have been a second way for a reader to be surprised.
+  **The duck-typing fallback hides a mistake.** `_retrieve` falls back from `locate` to `retrieve`, so an agent that forgets `locate` silently goes on paying for the summary rather than failing. The alternative -- requiring `locate` -- would break any stand-in written against the older contract, and several tests use one. The real `RetrievalAgent` has both, and the call-counting test is what would catch a regression
+### Feature: the default chat mode names the files it found, before the model is asked
+- Value: 36ae774 gave the early file list to grounded mode and said plainly why the default mode could not have one: *"there is no point in that path that is both after retrieval and before a model call"*, because the path summarised its own search through the model first. The previous entry removed that call. The point now exists, and the event goes out there.
+
+  **The rule is unchanged, and is what decides this.** The early list is sent only where it is **guaranteed** to equal the final citation list. On this path it is, by construction rather than by argument: the controller holds the `GroundedAnswer` that `AgentOrchestrator.search` returned, sends `retrieved.snippets` as the event, and the `done` event's citations are `retrieved.citations` -- the same object, built from the same list, by the same search. A test asserts the two are equal.
+
+  | path | what it sends early | why |
+  |---|---|---|
+  | grounded | stage, count and every location | `grounded_context` builds the snippets once; event, prompt and citations all read from that list |
+  | **default (legacy)** | **the same** | `search` returns one `GroundedAnswer`; the controller sends its snippets and returns its citations |
+  | deep | the stage name alone | retrieval happens inside the graph, behind a planner and whatever steps it chooses; at this point the citations do not exist |
+  | general (no repository) | the stage name alone | there is no retrieval to report |
+
+  **`retrieved_event` now takes the snippet list, not a `GroundedContext`.** It only ever read `.snippets`, and taking the list puts the promise where it belongs: a caller may send this event only while holding the list the citations are built from. The docstring says which two callers are, and why.
+
+  **Order on the default path** is now `retrieving` -> `retrieved` -> `answering` -> tokens -> `done`, asserted as a list rather than as a set of pairwise comparisons.
+
+  **The 404 for an unknown repository still comes before any event.** The guard runs before the stream opens, so an unknown repository is a real 404 and not a 200 with an error inside it. Asserted on this path as *the response carries no events at all*, plus the model was never asked -- an event added earlier in the path is exactly the kind of change that could have moved it.
+
+  **No question text goes into the event**, asserted here as it was for grounded: a marker planted in the question reaches no status event, and each file entry carries `path`, `start_line` and `end_line` and nothing else.
+
+  **No frontend change.** `codementor-ui/lib/streamStatus.ts` already renders this event and already said it arrives "only on a path where the server can promise they are the citations" -- which is still true, now of two paths instead of one
+- Command: `python -m pytest tests/ -q` -> **1328 passed**, 1 skipped (was 1323; `tests/test_early_status_event.py` gains 6 and rewrites 1, and its `retrieved_event` unit tests take a list now); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (198 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none. Every test uses a fake model over the real two-file index the grounded tests build in a temporary directory. **No provider was called**
+- Date: 2026-10-14
+- Commit: 9690592
+- Notes: **the page was not opened in a browser.** The event is asserted at the endpoint and the renderer was already tested, but nothing here has seen the default mode draw a file list on a screen.
+  **A defect found on this path and deliberately left.** `_answer_from` rebuilds the result without `note`, so the semantic-fallback sentence has never reached the browser in the default mode -- it predates this split, which only moved the code around it. It is visible only under the cloudflare provider, which the default is not, and fixing it is a behaviour change with its own before-and-after. There is a comment at the drop saying so.
+  **Three orchestrator stand-ins in the tests had to learn `search` and `answer_from`**, because the controller now calls those. `handle_question_fast` remains the combined entry point and is still tested; it is no longer called from the controller, so a stand-in that implements only it would silently never be exercised by an endpoint test.
+  **What is still not checked**: that the early list equals the citations is asserted per path, not enforced by a type. A third path could send the event while holding a different list, and only a test of that path would catch it
+### Check: the default mode after the discarded call was removed, against the recorded figures
+- Value: four questions, one session, local server, committed defaults (legacy chat mode, hash embeddings, `openai/gpt-oss-20b` on Groq, `CODEATLAS_LLM_MAX_TOKENS` 2048), paced under the per-minute limit, hard cap 12,000 tokens. **All four completed with 2,282 of the cap left.** The *was* columns are the first four questions of the five-question run recorded earlier today, which asked the same questions in the same order in one session.
+
+  | q | calls | was | tokens | was | first token ms | was | total ms | was |
+  |---|---|---|---|---|---|---|---|---|
+  | 1 | 1 | 2 | 1,741 | 4,402 | 1,703 | 3,749 | 964 | 2,994 |
+  | 2 | 1 | 2 | 1,907 | 4,959 | 1,138 | 2,628 | 1,154 | 2,632 |
+  | 3 | **2** | 3 | 2,731 | 5,311 | 1,539 | 4,194 | 1,550 | 4,212 |
+  | 4 | **2** | 3 | 3,339 | 7,417 | 1,421 | 3,855 | 1,428 | 3,864 |
+  | **all** | **6** | **10** | **9,718** | **22,089** | | | **5,095** | **13,702** |
+
+  `calls` counts every call to the provider, so the rewrite on questions 3 and 4 is in it. **The ledger agrees**: 6 calls, not 10.
+
+  | | was | now | |
+  |---|---|---|---|
+  | provider calls | 10 | 6 | |
+  | tokens | 22,089 | 9,718 | **-56.0%** |
+  | input tokens | 13,714 | 7,703 | -43.8% |
+  | output tokens | 8,375 | 2,015 | -75.9% |
+  | time in the model | 12,028 ms | 3,609 ms | **-70.0%** |
+  | time in the request | 13,702 ms | 5,095 ms | -62.8% |
+
+  **The prediction was 11,009 tokens** -- the earlier run's per-call figures with the retrieval summary's share struck out. The actual is 9,718, **11.7% below it**, because answer length is the model's choice and it wrote shorter answers this time. The input side is the sounder half of the comparison: the removed call's prompt was the snippets, about 1,400 tokens every question, and input fell 43.8%.
+
+  **The early file list lands long before the first token**, computed from the stage durations as `rewrite + embed_query + search + rerank`:
+
+  | q | file list at | first token at |
+  |---|---|---|
+  | 1 | 210 ms | 953 ms |
+  | 2 | 13 ms | 1,133 ms |
+  | 3 | 440 ms | 1,530 ms |
+  | 4 | 731 ms | 1,413 ms |
+
+  Question 1's 210 ms is the BM25 index being built once; thereafter the search is under a millisecond and the wait is the follow-up rewrite where there is one. **The first token itself did not get earlier relative to the answer** -- this path still assembles the whole answer and then types it out four words at a time, so `first token ms` and `total ms` stay within about 20 ms of each other. What arrives early is the file list, not the answer.
+
+  **Every line carries one model call.** `llm_calls` is absent from all four timing lines, and `in_tokens_each` appears only on questions 3 and 4, with two entries - the rewrite and the mentor. **No retries**: `retry_wait` is absent on all four and the server log holds zero `Retrying request` lines
+- Command: in one shell `$env:CODEATLAS_CHAT_MODE = "legacy"; $env:CODEATLAS_EMBEDDING_PROVIDER = "hash"; $env:CODEATLAS_LLM_PROVIDER = "groq"; python -m uvicorn codeatlas.app.main:app --host 127.0.0.1 --port 8000`, in another `python scripts/chat_latency_probe.py --base-url http://127.0.0.1:8000 -n 4 --token-cap 12000 --tpm-limit 8000`. Mode read off `agents_used`, which said `legacy` on every row
+- Dataset/repo: pallets/itsdangerous, re-analysed by the probe; the first four of the probe's eight fixed questions, two of which lean on the turn before them. **No Cloudflare call** - the embedding provider was pinned to hash
+- Date: 2026-10-14
+- Commit: 9690592 (the state measured); nothing changed to take the measurement
+- Notes: **this is not a controlled comparison, and the output column is where that shows.** Output fell 75.9%, and only part of that is the removed call: its replies were about 4,800 of the earlier run's 8,375 output tokens, and the rest is the mentor writing shorter answers this time. Nothing here pins answer length, so the headline 56% is one run against one run.
+  **The two runs were not simultaneous.** Both were on 2026-10-14 against the same provider and model, but a quieter provider would read as a win and a busier one as a regression, and nothing separates that from the change.
+  **One session, four questions, no repeats and no error bars.** The earlier run reached five; the cap allowed four here because the cap was 12,000 rather than 24,000.
+  **History is not comparable turn for turn** with the earlier run: the answers differ, so what the history occupies in the prompt differs. `history_turns` ran 0, 1, 2, 3 in both.
+  **The per-minute limit is still unpriced.** Halving the tokens per question should make an 8,000-per-minute limit bite about half as often, and this run cannot show that, because the pacer again held the window under it - which is why there were no retries to count.
+  **Nothing here looked at a browser.** That the file list arrives at 13-731 ms is read off the server's own stage durations; whether a visitor notices it is not measured
+### Fix: the keyword-search note reaches the browser in the default chat mode
+- Value: **this retracts a caveat recorded at 9690592.** That entry noted that `_answer_from` rebuilds its result without `note`, called it a defect that predated the split, and left it. It is fixed here. The old entry is not edited; this one supersedes it.
+
+  **What was wrong.** `_answer_from` builds a new `AnswerResult` to add the conversation notes to `reasoning_steps`, and listed four of the five fields. `note` was the fifth, so `retrieval_note` in the `done` event was **always empty** in the default mode. Grounded mode and deep mode were never affected: neither rebuilds the result.
+
+  **Why it matters here and not in a test.** When the semantic index cannot answer - the day's allowance is gone, the provider is in a cooldown, the API did not respond, or this repository has no semantic index - the question is answered from the hash index instead and the answer looks exactly like any other. One sentence distinguishes them. **The live server runs the cloudflare provider**, which is the only provider that can fall back at all, so the default mode is precisely where the sentence was needed and precisely where it was lost.
+
+  **The fix is one field.** The comment describing the drop is gone.
+
+  **The test gap this sat in.** The note was already tested at `AnswerService.retrieve_with_note`, and the endpoint was already tested with an index that cannot fail. Nothing covered the stretch between them, which is where it went missing. `tests/test_fallback_note.py` covers it: a real dual index over a real file, fake embedders, the semantic half unavailable in each documented way, and the note read out of the JSON the browser receives.
+
+  | what | how many |
+  |---|---|
+  | every reason (`api`, `budget`, `cap`, `circuit`, `unindexed`) x three paths (default, grounded, deep) | 15 |
+  | no note when the semantic index answered, on each path | 3 |
+  | the reason's private detail and the provider's name reach neither | 5 |
+  | a follow-up whose rewrite call runs before the search, with and without a fallback | 2 |
+  | no question text in a fallback answer's event; default and deep agree | 2 |
+
+  **Confirmed to bite.** With the field removed again, **13 of the 27 fail**, and they are the default-mode ones; grounded and deep keep passing, which is the right shape for a defect only one path had.
+
+  **The exact `done` event, same question, same repository, two cases.** Fallback, with reason `budget`:
+
+  ```json
+  {"type": "done",
+   "agents_used": ["retrieval", "mentor"],
+   "citations": ["<tmp>/mod.py (lines 1-2) | def sign(value):     return value"],
+   "reasoning_steps": ["Fast mode: retrieval + mentor (skipped the planner).",
+                       "Retrieved 1 code snippet(s), cited as 1 citation(s).",
+                       "Agents that ran: retrieval -> mentor."],
+   "retrieval_note": "Today's semantic search allowance is used up, so this answer used keyword search.",
+   "timings_ms": {"embed_query": 0.4, "embed_query_calls": 2, "embed_query_each": [0.0, 0.4],
+                  "first_token_sent": 35.5, "history_turns": 0, "llm": 19.5, "rerank": 0.5,
+                  "rewrite_ran": 0, "search": 8.9, "total": 49.5}}
+  ```
+
+  And the ordinary case, where the semantic index answered:
+
+  ```json
+  {"type": "done",
+   "agents_used": ["retrieval", "mentor"],
+   "citations": ["<tmp>/mod.py (lines 1-2) | def sign(value):     return value"],
+   "reasoning_steps": ["Fast mode: retrieval + mentor (skipped the planner).",
+                       "Retrieved 1 code snippet(s), cited as 1 citation(s).",
+                       "Agents that ran: retrieval -> mentor."],
+   "retrieval_note": "",
+   "timings_ms": {"embed_query": 0.0, "first_token_sent": 8.6, "history_turns": 0,
+                  "llm": 2.8, "rerank": 0.9, "rewrite_ran": 0, "search": 0.4, "total": 30.5}}
+  ```
+
+  **The two differ in `retrieval_note` and in one timing**: `embed_query_calls: 2`. The fallback case embeds the question twice - once with the embedder that then declared itself unavailable, once with the hash embedder that answered - so the repeat count is independent evidence that the fallback really happened, recorded without anyone having added a field for it.
+
+  **No question text appears in either**, which is the reason they can be printed here at all
+- Command: `python -m pytest tests/ -q` -> **1355 passed**, 1 skipped (was 1328; `tests/test_fallback_note.py` is new and adds 27); `python -m pytest tests/test_fallback_note.py -q` with `note=result.note` removed again -> **13 failed, 14 passed**; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (199 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none. Both embedders are fakes, the model is a fake, and the index is one file in a temporary directory. **No provider was called** - no Groq, no Cloudflare
+- Date: 2026-10-14
+- Commit: 54dcea1
+- Notes: **`cap` is reachable in these tests but not from the search path today.** `REASONS` carries five keys; `retrieve_with_note` produces `budget`, `circuit` and `api` from an embedder that raises, and `unindexed` from there being no usable semantic index - including a repository over the document cap, which `_choose` reports as `unindexed` rather than as `cap`. The `cap` case here is driven by an embedder raising it, so what is proved is that *if* an embedder reports `cap`, its sentence reaches the browser. `cap` and `unindexed` share the same sentence, so a visitor could not tell them apart either way.
+  **The citations in the printed events carry an absolute temporary path.** `_clean_display_path` strips only a `.codeatlas/repos/<uuid>/` prefix, and the test index is not under one. That is a property of the fixture, not of the server.
+  **Nothing here was seen in a browser.** `codementor-ui` already renders `retrieval_note` and its tests are unchanged; what is asserted is that the field arrives populated, not that the page shows it.
+  **The deeper shape is still unguarded.** The defect was a field-by-field rebuild that forgot one field, and nothing stops the next one. `dataclasses.replace` would have been immune, and is the obvious follow-up; it is not done here because this entry is the fix and its test, and changing how the result is rebuilt is a separate change
+### Fix: the answer result is copied, so a field cannot be dropped by forgetting to name it
+- Value: **this closes the follow-up the entry at 54dcea1 left open.** That entry fixed the dropped `note` by naming the fifth field, and said so plainly: "the defect was a field-by-field rebuild that forgot one field, and nothing stops the next one. `dataclasses.replace` would have been immune, and is the obvious follow-up". This is that follow-up. The earlier entries are not edited.
+
+  **The change is one return statement.** `_answer_from` built a fresh result to add this conversation's notes to `reasoning_steps`:
+
+  ```python
+  return type(result)(
+      answer=result.answer,
+      citations=result.citations,
+      reasoning_steps=steps,
+      agents_used=result.agents_used,
+      note=result.note,
+  )
+  ```
+
+  and now copies it instead:
+
+  ```python
+  return replace(result, reasoning_steps=steps)
+  ```
+
+  `replace` is already this repository's idiom for the same job -- `app/di.py` and `services/eval/arrangements.py` both use it on `AppConfig` -- so nothing new is introduced. `AnswerResult` is a frozen dataclass, which is what makes the copy exact and what made the rebuild necessary in the first place.
+
+  **Where else this type is rebuilt: nowhere.** The grep, run after the change:
+
+  ```
+  > git grep -n "type(result)(\|type(res" -- "*.py"
+  (no matches)
+  > git grep -n "AnswerResult(" -- "*.py"
+  codeatlas/services/agents/orchestration.py:133:        return AnswerResult(
+  codeatlas/services/agents/orchestration.py:189:        return AnswerResult(
+  tests/test_result_fields_carried.py:59:    return AnswerResult(**MARKERS)
+  tests/test_unknown_repo.py:50:        return AnswerResult(answer="ok", citations=[], reasoning_steps=[])
+  tests/test_unknown_repo.py:54:        return AnswerResult(answer="ok", citations=[], reasoning_steps=[])
+  tests/test_unknown_repo.py:64:        return AnswerResult(answer="ok", citations=[], reasoning_steps=[])
+  ```
+
+  The two in `orchestration.py` are **original constructions, not rebuilds**: line 133 builds the result from the graph's final state (`_result_from`) and line 189 from the fast path's own retrieval and mentor output (`answer_from`). Neither is handed an existing result and asked to reproduce it, so neither can lose a field by omission -- the omission would be a missing value, not a dropped one, and the dataclass's defaults are the specification for that. The three in `test_unknown_repo.py` are stubs. `type(result)(` was the only rebuild in the repository, and it is gone.
+
+  **The test is about the shape, not about `note`.** `tests/test_result_fields_carried.py` names no field in its assertions. It enumerates `dataclasses.fields(AnswerResult)`, gives each a distinctive non-empty marker, drives the default path through `/ask/stream` with a fake orchestrator whose `search` and `answer_from` carry those markers, and checks each field arrived -- four of them in the `done` event, `answer` in the `token` events that preceded it. Every marker is non-empty on purpose: a field marked with its own default (`note=""`) is one a drop cannot be seen through, which is how the last one went missing.
+
+  **It also fails for a field that does not exist yet.** `test_every_field_of_the_result_type_is_accounted_for` asserts the declared fields, the markers and the done-event keys are the same set, so a sixth field added to `AnswerResult` with no decision made about where the browser receives it fails before any of the behavioural tests run.
+
+  **Confirmed to bite, both ways.**
+
+  | what was put back | result of `pytest tests/test_result_fields_carried.py -q` |
+  |---|---|
+  | the field-by-field rebuild, with `note=` left off | **4 failed, 3 passed** |
+  | a sixth field `sixth: str = ""` on `AnswerResult` | **1 failed** (the enumeration test, run alone) |
+
+  The four are `test_no_field_is_lost_between_the_search_and_the_done_event`, `test_the_done_event_carries_no_field_under_its_own_name_by_accident`, `test_the_controller_changes_reasoning_steps_and_copies_the_rest` and `test_every_other_field_is_identical_to_what_the_orchestrator_returned`. Both experiments were reverted before the commit.
+
+  **One test fake had to change with it.** `_Result` in `tests/test_grounded_chat.py` was a plain class with five attributes, which `replace` cannot copy. It is now a frozen dataclass with the same five fields in the same order, which is also what the controller's contract actually says the orchestrator returns -- the fake was looser than the thing it stood in for
+- Command: `python -m pytest tests/ -q` -> **1362 passed**, 1 skipped (was 1355; `tests/test_result_fields_carried.py` is new and adds 7); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (200 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none. The repository under test is three files written into a temporary directory by `tests/test_analyze_indexing.py`'s fake loader, the orchestrator is a stub and no model is built -- the provider handed to the app raises if asked for one. **No provider was called** - no Groq, no Cloudflare
+- Date: 2026-10-15
+- Commit: e201644
+- Notes: **this is a guard, not a measurement.** Nothing here was timed, nothing was spent, and no behaviour changed for any question that was already answered correctly: with every field present, `replace` and the five-field rebuild produce equal objects. The value is entirely in what the next change cannot do.
+  **The guard covers one path.** `_answer_from` is the default mode's; grounded mode and deep mode never rebuilt their results and are untouched, so the enumeration test exercises the default path only. A future rebuild introduced on either of the other two paths would not be caught by this file.
+  **`AnswerResult` is the only result type guarded.** `GroundedAnswer`, `GenerateResult` and the explain result have no equivalent test. `GroundedAnswer` is the nearer risk: it is constructed in four places in `codeatlas/`, and `codeatlas/services/agents/orchestration.py:396` builds an empty one on a retrieval failure without naming `note` -- which is correct there, since a search that failed has nothing to report, but it is the same construction shape.
+  **Nothing here was seen in a browser.** What is asserted is the content of the SSE events; `codementor-ui` is unchanged and its tests are unchanged
+### Canary: a real 429, from a local server, must still reach `retry_wait`
+- Value: **`retry_wait` is read out of another library's log line, and nothing was watching whether that line still exists.** `codeatlas/observability/timing.py` attaches a handler to the `openai` logger and reads the number of seconds out of `Retrying request to %s in %f seconds`, which the OpenAI-compatible client logs just before it sleeps through a 429. The sleep happens *inside* the model call, so without this there is nothing to see: the call is simply slow.
+
+  **That line is a log message in a dependency, not an API.** It can be reworded, moved to another logger or dropped in a patch release. If it is, `retry_wait` becomes zero on every request for ever, and the only symptom is a model call that looks slow for no reason -- which is the question `retry_wait` exists to answer.
+
+  **The two tests that already covered it could not catch this.** `tests/test_timing.py` logs the line *itself*:
+
+  ```python
+  sdk_logger.info("Retrying request to %s in %f seconds", "/chat/completions", 8.0)
+  ```
+
+  so what it proves is that the handler matches a string this repository wrote down. It would keep passing, unchanged and green, on a machine where the installed client had stopped emitting anything of the sort. The gap is not in the handler; it is that nothing compared the handler against the library.
+
+  **So the new test drives the real client.** `tests/test_retry_wait_canary.py` starts a `ThreadingHTTPServer` on 127.0.0.1 on a port the OS picks, answers the first `POST /v1/chat/completions` with `429` and `Retry-After: 1` and the second with an ordinary completion body, and points the app's own client at it by setting `OPENAI_API_BASE` -- the variable the installed `langchain-openai` reads, which `LlmProvider` leaves alone. The model is built by `LlmProvider(...).get_chat_model()`, so it is the shipped path with the endpoint moved, not a client assembled in the test with different arguments. The retry is a real socket, the sleep is a real second, and the line being matched is the line the installed version logged.
+
+  **The client honours `Retry-After` exactly** when it is between 0 and 60 -- `_calculate_retry_timeout` returns the header's value and skips its own jittered backoff -- so the figure is deterministic rather than approximate. Versions: `openai 1.109.1`, `langchain-openai 0.1.22`.
+
+  **What was recorded, for one call:**
+
+  | | |
+  |---|---|
+  | requests the local server received | `['/v1/chat/completions', '/v1/chat/completions']` |
+  | the line the client logged | `openai._base_client` INFO `Retrying request to /chat/completions in 1.000000 seconds` |
+  | `retry_wait` in the timings | `1000.0` |
+
+  `llm >= retry_wait` is asserted too: the wait is inside the model call, which is why it has to be recorded separately to be visible at all.
+
+  **Confirmed to bite, for each way the coupling can break.** Both experiments change the watcher's half of the coupling, which fails in exactly the way the library's half changing would:
+
+  | what was changed in `_RetryWaitHandler` / `watch_provider_retries` | result of `pytest tests/test_retry_wait_canary.py -q` |
+  |---|---|
+  | the matched phrase, to `Retrying the request` (a reword upstream) | **4 failed, 2 passed** |
+  | the watched logger, to `openai_client` (a moved logger upstream) | **5 failed, 1 passed** |
+
+  Both were reverted before the commit; `git diff` on `codeatlas/observability/timing.py` is empty and no file outside `tests/` changed in this commit.
+
+  The moved-logger case fails one test more than the reword, and the extra one is informative: `watch_provider_retries` is also what raises the provider logger to INFO. Point it at the wrong name and the record is never emitted at all, so the test that asserts on the client's real record has no record to assert on.
+
+  **Two of the six say what a failure would mean** rather than only detecting it. They take the line the client really logged -- `record.getMessage()`, never a string written here -- and break it the ways a dependency can: a different verb, one extra word, a shortened unit, the number removed, and the same text under `openai_client._base_client`, `httpx` and `langchain_openai.chat_models.base`. None records a wait. The same line under `openai._base_client` still does, so the loop proves the logger name and not something incidental about running the line a second time.
+
+  **No key, no network, nothing from the environment printed.** The key is the fixed string `canary-not-a-real-key`, present only because the client refuses to be constructed without one; the tests carry `@pytest.mark.builds_model_client`, the suite's existing opt-in for constructing a provider client. `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and their lowercase spellings are cleared and `NO_PROXY` is set to `127.0.0.1,localhost`, so nothing can be routed off the machine. The assertion on the timing line never holds a value: it splits the line into `name=value` fields and calls `float()` on each value, which rules out any text at all -- the client's line names the URL it is retrying, and that must not cross over
+- Command: `python -m pytest tests/ -q` -> **1368 passed**, 1 skipped (was 1362; `tests/test_retry_wait_canary.py` is new and adds 6); `python -m pytest tests/test_retry_wait_canary.py -q` -> 6 passed in 8.3s; the two experiments above; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (201 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none. The provider is a `ThreadingHTTPServer` in the test process answering two requests. **No provider was called** - no Groq, no Cloudflare, and nothing left 127.0.0.1
+- Date: 2026-10-15
+- Commit: 8416a02
+- Notes: **this costs about a second of wall clock on every run.** `Retry-After: 1` is the smallest value that is both a plausible header and honoured exactly, and three of the six tests make the call, so the file takes about 8 seconds. `retry-after-ms` would make it instant and is read by this client version, but it is a vendor header rather than the standard one, and a canary that stops exercising the standard path to run faster is worth less than the second it saves.
+  **It pins one client, on one machine.** What it proves is that *the installed* `openai` logs what the watcher reads. A different version in CI or in the image is a different answer, and this test is the thing that would say so -- which is the intent, but it does mean an upgrade can turn it red without anything in this repository having changed. That is a true report, not a flake.
+  **The groq branch is not what is exercised.** `LlmProvider._build` hard-codes Groq's base URL, so it cannot be pointed at a local server without changing shipped code. The test uses the `openai` branch, which reads `OPENAI_API_BASE`. Both branches construct the same `ChatOpenAI` over the same `openai` client, and the retry and its log line live in that client, so the coupling under test is shared -- but the literal branch exercised is the openai one.
+  **Nothing here measures how often retries actually happen.** Every recorded run of `chat_latency_probe.py` so far has had the pacer hold the window under the provider's limit, so `retry_wait` was 0 in all of them. This is the first time the field has been seen non-zero end to end, and it was made to happen rather than observed.
+  **`watch_provider_retries` leaves its handler on the global `openai` logger** for the rest of the session, as it already did for `tests/test_timing.py`. The tests here add and remove their own recording handler, but the watcher's own is not removed, so the order tests run in could in principle matter. It did not: the file passes alone and in the full suite
+### New: a blind comparison harness, so a person can score answers without knowing the arm
+- Value: **nothing in this repository measures whether an answer is correct, and this does not either -- it lets a person do it without being told which setting wrote what.** `scripts/answer_smoke.py` asks two string questions per answer, is the expected file cited and does one hand-written word appear, and says in its own docstring that it does not measure quality. Every recorded comparison since has carried the same caveat: *"a difference of one or two passes between arms is not a finding"*. A person can judge an explanation. A person who knows which arm produced it is not judging the explanation.
+
+  **Two modes with a person in between.**
+
+  ```
+  python scripts/blind_compare.py run --repo itsdangerous --limit 5
+  # read sheet.md, fill in sheet.csv
+  python scripts/blind_compare.py score --run-id default
+  ```
+
+  **An arm is a set of environment overrides**, the same variables a server would be started with. Only `CODEATLAS_CHAT_MODE` and `CODEATLAS_REASONING_EFFORT` are accepted, and anything else is refused by name rather than ignored -- *an override that is not applied is worse than one that is rejected*, because two arms that differ only in a setting nobody applies are one arm, and the run would report a dead heat it had never measured. The three default arms:
+
+  | arm | overrides |
+  |---|---|
+  | `legacy` | `CODEATLAS_CHAT_MODE=legacy` |
+  | `grounded` | `CODEATLAS_CHAT_MODE=grounded` |
+  | `grounded-low` | `CODEATLAS_CHAT_MODE=grounded CODEATLAS_REASONING_EFFORT=low` |
+
+  Each override is validated through the shipped validator -- `validate_chat_mode`, `validate_reasoning_effort` -- so an arm cannot describe a server that would refuse to start.
+
+  **One real local uvicorn server per distinct chat mode, asked over a real socket**, as `chat_latency_probe` does and for the same reason: an in-process client hides the event loop, the executor and the connection. Two arms differing only in reasoning effort share a server, because that setting is fixed when the model client is built, not per request; the model is swapped per question through `reasoning_effort_compare.swap_model`, imported rather than written again.
+
+  **The masking.** Per question, the arms are shuffled into A, B and C by `random.Random` seeded from `sha256(f"{seed}:{question_id}")` -- hashed with `hashlib` rather than by seeding `Random` with the string itself, so the order does not depend on how a Python version happens to hash one. **The seed is mixed with the question id**, so A is a different arm from one question to the next: a grader who worked out that A was always the same arm would have stopped being blind after the first look. Over 400 question ids the six orders of three arms came out 73/71/66/65/64/61, which is the flat distribution it should be.
+
+  **The key is a different file in a different folder**, and no arm name appears in anything the grader opens:
+
+  ```
+  .codeatlas/blind-compare/<run-id>/
+    raw/runs.json     every answer, with its arm, its cited files and its timings
+    raw/key.json      which arm each of A, B, C is, per question
+    sheet/sheet.md    the answers to read, under their labels
+    sheet/sheet.csv   question_id, question, label, cited_files, correctness, cited_support, note
+    summary.json      written by `score`
+  ```
+
+  **The scoring sheet is a CSV because a person fills it in.** Two columns of 0 to 2 -- correctness (*0 wrong or evasive, 1 partly right, 2 right*) and cited_support (*0 the cited files do not support it, 1 partly, 2 they do*) -- and a free-text note. The cited files are on the sheet itself, since one of the two scores is about them; the answers are in `sheet.md`, so scoring means reading the answer rather than a preview.
+
+  **`score` prints the averages, the wins and the warning.** A question is won by the arm with the highest total of the two scores; **a draw at the top is a tie and is counted as one, not shared out**. Only questions scored under every arm count at all. The real output, from a hand-filled sheet over two questions:
+
+  ```
+  arm                  n  correctness_mean cited_support_mean  total_mean  wins
+  legacy               2               1.5                1.5         3.0     1
+  grounded             2               1.5                2.0         3.5     0
+  grounded-low         2               1.0                1.5         2.5     0
+
+  ties (no single highest total): 1
+  ```
+
+  That example is worth keeping for what it shows: **the arm with the best average won nothing.** `grounded` leads on `total_mean` and has zero wins, because its one strong question was a tie. Two summaries of the same six scores disagree about which arm is ahead, which is the whole reason the note below is printed every time.
+
+  **The note is not optional and not a footnote.** `score` always prints, with the real n substituted:
+
+  > *N question(s) scored by one person. A sample this size cannot separate small differences between arms: a gap of a few tenths of a point, or one or two wins, is what the same arms would produce twice in a row by chance. Treat anything short of a clear, repeated gap as no result, and read the notes rather than the averages.*
+
+  It is also written into `summary.json`, so a figure copied out of that file carries it.
+
+  **Spending is bounded by the guard that already exists.** `budget_guard` is imported from `chat_latency_probe` rather than written again, so the cap carries **the reservation fix** recorded at 2280: the run stops while there is still room for the next question rather than discovering its cost after paying it. The reserve is the pacer's own estimate, the most expensive question so far. The pacer keeps a trailing minute under the provider's allowance.
+
+  **Any refusal ends the run**, which covers every way a 429 arrives: the app's own limiter answers with the status, and the provider's reaches the script as the sentence the app shows a visitor rather than as an exception. Carrying on would spend the cap on questions the provider is about to refuse too. A refused run is **not** kept as finished work -- it measured the provider's mood -- so a resume does it again rather than putting it on the sheet to be scored.
+
+  **Resuming is the default, not a flag.** The run folder is keyed by `--run-id`, `raw/runs.json` is rewritten **after every single question**, and a second invocation with the same id skips what is already answered. A different id starts fresh. The index and state directories live inside the run folder, so a resumed run finds a warm index.
+
+  **Nothing is written outside `.codeatlas/`.** `inside_writable_root` resolves the path first, so `--run-id ../../somewhere` is refused rather than taken literally. Nothing reads a credential: the key is checked for by name only and no value from the environment reaches a file, a log line or the terminal.
+
+  **The tests drive it against a fake server.** `tests/test_blind_compare.py` is 25 tests over a `ThreadingHTTPServer` on 127.0.0.1 that speaks the app's SSE and bumps a token ledger of its own, so the cap is exercised through the real `budget_guard` and the real ledger rather than through a stub. **No model, no provider, no credential, and nothing off 127.0.0.1.**
+
+  | what is proved | how |
+  |---|---|
+  | the shuffle is seeded and reproducible | two calls agree; a different seed gives a different set of orders; the order depends on the question as well as the seed |
+  | the key never appears in the sheet | every arm name absent from `sheet.md` and `sheet.csv`, present in `key.json`, and the two in different folders |
+  | resume skips finished runs | the fake server's call count does not move on a second `collect` |
+  | the cap stops it | 8,000 spent under a 10,000 cap stops the run, because a third 4,000 would not have fit |
+  | writing is after **every** run | the server records how many runs were on disk as each request arrived: `[0, 1, 2, 3, 4, 5]` |
+  | a 429 ends it cleanly | the run stops, the rows already paid for are on disk, and the refused one is redone on resume |
+  | a half-answered question is left off the sheet | an arm scored on a question the others never saw is not a comparison |
+  | a tie is a tie | two arms at the top score no win between them |
+  | a bad score is refused by name | `itsdangerous-1/B: correctness is 5; it must be 0, 1 or 2` |
+- Command: `python -m pytest tests/ -q` -> **1393 passed**, 1 skipped (was 1368; `tests/test_blind_compare.py` is new and adds 25); `python scripts/blind_compare.py score --run-id cli-check` against a hand-filled sheet, which produced the table above, after which that run folder was deleted; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (203 files); `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before)
+- Dataset/repo: none. **`scripts/blind_compare.py` has not been run against a provider.** Everything recorded here is from the fake server in the tests and from a hand-written sheet; no arm has been compared, no question has been asked of a model, and there is no result
+- Date: 2026-10-15
+- Commit: 717b1ca
+- Notes: **there is no finding here, only an instrument.** The table above is made up. Nothing has been measured, and the first real run will need its own entry.
+  **The cap is per invocation, not per run id.** `budget_guard` measures this process's spend as a delta on the ledger from the moment it started, which is what `chat_latency_probe` does. Resume three times with a 40,000 cap and 120,000 may be spent. The per-run-id total is in `raw/runs.json` to be read, but nothing enforces it.
+  **One grader, one pass, no second opinion.** There is no way to measure whether the scoring itself is consistent -- the same person scoring the same sheet twice is not compared, and a second grader has nowhere to put their scores. That is the obvious next thing and is not done.
+  **The blind is only as good as the answers.** If one arm's answers are recognisable by their shape -- much shorter, or always opening the same way -- the grader will learn which letter is which within a few questions and the masking will not stop them. Nothing detects that, and `grounded-low` is exactly the arm most likely to be recognisable.
+  **A question's labels are stable across runs with the same seed**, which is deliberate for resuming and is a weakness for anyone scoring two runs of the same seed: A is the same arm in both. A second run meant to be scored independently should use a different `--seed`.
+  **`raw/runs.json` is the key material**, not just the resume file: it carries every answer with its arm. Nothing stops a grader opening it. The separation is a folder and a sentence in `sheet.md`, not a lock.
+  **The two scores are summed to decide a win**, which weights correctness and citation support equally. That is a choice, not a measurement, and a different weighting would move the wins column
+### Fix: a wait of nothing is exactly 0.0, on a clock the pacer's tests own
+- Value: **two tests that pass on every machine here fail on CI, and the difference is the resolution of the clock, not the code being wrong anywhere a run would notice.** `tests/test_chat_latency_probe.py::test_the_pacer_waits_only_when_the_window_is_full` and `::test_the_pacer_forgets_spend_older_than_the_window` each assert `pacer.wait() == 0.0` with nothing spent. CI (Linux, Python 3.11) returned **5.07e-06** and **3.06e-06**.
+
+  **Where it was.** `Pacer` lives in `scripts/chat_latency_probe.py` and nowhere else; `scripts/blind_compare.py` imports it from there. It is a measurement script's spending guard. **Nothing under `codeatlas/` imports it** -- no live chat path, no app module, no server route -- so the tiny positive number was never a production bug, only a test that could not be true on both machines.
+
+  **What it was.**
+
+  ```python
+  def wait(self) -> float:
+      if self.limit <= 0:
+          return 0.0
+      started = time.monotonic()
+      while self.in_window() + self.estimate() > self.limit and self.spends:
+          time.sleep(1.0)
+      return time.monotonic() - started
+  ```
+
+  When the loop body never runs, the return value is still a subtraction of two clock readings a few instructions apart -- *the cost of reading the clock twice*. Windows backs `time.monotonic()` with a counter too coarse to resolve that, so the two readings are the same number and the subtraction lands on exactly 0.0. Linux resolves nanoseconds, so it does not. **The test was never passing for the right reason here; it was passing because this machine cannot measure that interval.**
+
+  **The fix is to stop measuring an interval that did not happen.** The fitting path returns the constant, and the subtraction is reached only after something has really been slept through:
+
+  ```python
+  def _over_the_limit(self) -> bool:
+      return bool(self.spends) and self.in_window() + self.estimate() > self.limit
+
+
+  def wait(self) -> float:
+      if self.limit <= 0 or not self._over_the_limit():
+          return 0.0
+      started = self.clock()
+      while self._over_the_limit():
+          self.sleeper(self.poll_seconds)
+      return self.clock() - started
+  ```
+
+  Deciding *whether* there is room still reads the clock -- a sliding window has to be dated against something -- but on the fitting path it never subtracts one reading from another, which is the only operation whose answer depended on the host.
+
+  **`clock` and `sleeper` are injectable**, defaulting to `time.monotonic` and `time.sleep`, matching the `clock=` convention already used by `ConversationStore`, `SlidingWindowLimiter` and the indexing timeout. Nothing at any call site changes: `chat_latency_probe` and `blind_compare` both construct `Pacer` by keyword and pass neither.
+
+  **Loosening the assertion to a tolerance was the obvious fix and is the wrong one.** `assert pacer.wait() < 0.001` would be green on both machines and would have stopped saying anything: the claim worth making is *the pacer did not wait*, not *the pacer waited very little*. A tolerance also hides the real failure it would next be asked to catch -- a pacer that waits a millisecond when it should wait a minute.
+
+  | test | what it now pins |
+  |---|---|
+  | `test_the_pacer_waits_only_when_the_window_is_full` | 0.0 with nothing spent, and 0.0 with 3,000 spent against a limit of 8,000 -- exact, not lucky |
+  | `test_the_pacer_forgets_spend_older_than_the_window` | the entry ages out by **the clock running**, not by reaching into `pacer.spends` and rewriting a timestamp |
+  | `test_the_pacer_sleeps_until_the_spend_that_filled_the_window_ages_out` | **new, and the waiting path had no test at all**: 7,000 in a 60-second window against a limit of 8,000 takes 61 one-second polls and reports exactly `61.0`, with nothing sleeping |
+  | `test_a_clock_fine_enough_to_time_its_own_readings_still_gives_exactly_zero` | **new**: a clock that advances 1us per *reading* is the smallest version of CI's, and `wait()` answers 0.0 across five consecutive calls while that clock keeps moving |
+
+  **The CI failure reproduces on this machine.** A throwaway file that gives the module a 1-microsecond clock and runs the two tests' bodies fails against the old `Pacer` with `assert 1.9999999949504854e-06 == 0.0` -- the same shape of number CI reported -- and passes against the new one.
+- Command: `python -m pytest -q` -> **1395 passed**, 1 skipped (was 1393; the two new pacer tests); `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (203 files), clean; `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before). Run with `OPENAI_API_KEY`, `GROQ_API_KEY`, `ANTHROPIC_API_KEY` and every `CLOUDFLARE_*` variable removed from the environment
+- Dataset/repo: none. No provider was called and no server was started; the pacer is driven entirely by a fake clock
+- Date: 2026-10-15
+- Commit: e2cd720
+- Notes: **this was a test bug, not a pacer bug.** No run of `chat_latency_probe` or `blind_compare` ever behaved differently because of the microseconds; the return value is printed as `f"{waited:.0f}s"` and used in a truthiness check, both of which a value of 5e-06 passes through harmlessly as a tiny nonzero. What it cost was a red CI.
+  **`poll_seconds` is new and is the old hard-coded `1.0`.** It exists so the waiting test can state the number it expects rather than hard-coding the pacer's constant; no caller sets it.
+  **`_over_the_limit` short-circuits on an empty window**, which the old loop condition did too -- `and self.spends` -- but *after* calling `in_window()`. Pruning an empty list is a no-op, so this is the same behaviour reached more cheaply, and the guard is still load-bearing: without it a `first_estimate` larger than `limit` would spin for ever rather than let through the one question that cannot fit.
+  **61 polls, not 60.** The window keeps a spend while `at >= clock() - window_seconds`, so a spend leaves only once it is strictly more than 60 seconds old. The waiting test pins 61 deliberately; if that boundary ever changes the test should change with it rather than be widened
+### Fix: the Cloudflare embedder times an attempt on the clock it was handed
+- Value: **found by sweeping the suite for the same fault as the pacer's**: `CloudflareEmbeddingService` takes a `clock` and dates its circuit breaker against it, but `_call_with_retries` read `time.monotonic` directly. The seconds it reported came from a different clock than the one a caller injected.
+
+  The cost was in the test. `test_the_provider_counts_its_own_calls_and_seconds` could not hand the service a fake, so it replaced `time.monotonic` **on the module** for the duration of the call and put it back in a `finally`, and then asserted only:
+
+  ```python
+  assert usage.seconds > 0
+  ```
+
+  `> 0` is the strongest claim a real clock supports, and it is **not true on every clock**: two fast local calls through a fake `post` can both land inside one tick of a counter that resolves 15 ms, and the answer is exactly 0.0. The patch was what kept that from happening, so the test depended on a global monkeypatch for its correctness and not just its convenience -- and the patch was invisible from the assertion.
+
+  Both reads go through `self._clock` now. The fake goes in through the constructor, the module-level patch and its `finally` are gone, and the assertion is exact:
+
+  ```python
+  # Two batches, and each one reads the clock twice: 0.5 of fake time apiece.
+  assert usage.seconds == 1.0
+  ```
+
+  **No default changes.** `self._clock` is `time.monotonic` unless a caller passes something else, and nothing in the app does.
+- Command: `python -m pytest -q` -> **1395 passed**, 1 skipped, unchanged; `python -m pytest tests/test_semantic_observability.py tests/test_cloudflare_provider.py tests/test_cloudflare_probe.py tests/test_dual_index.py -q` -> 162 passed; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (203 files), clean; `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before). Run with `OPENAI_API_KEY`, `GROQ_API_KEY`, `ANTHROPIC_API_KEY` and every `CLOUDFLARE_*` variable removed from the environment
+- Dataset/repo: none. No Cloudflare call was made; the embedder is driven by the fake `post` the tests already use
+- Date: 2026-10-15
+- Commit: f45bffc
+- Notes: **this one fails on a coarser clock, not a faster one** -- the opposite direction from the pacer, and worth saying because the sweep was looking for the pacer's shape. A measured duration compared against a constant is fragile at both ends: `== 0.0` breaks when the clock gets finer, `> 0` breaks when it gets coarser. Neither is a tolerance problem; both are a test measuring the host instead of the code
+  **It was never wrong in a run.** `usage.seconds` is reported in the observability line and nothing branches on it, so an attempt timed against the global clock produced the same number a real run would want. What it broke was the ability to test it without reaching into the module
+  **`time` is still imported** in `cloudflare_embedder.py`: it supplies the defaults for `clock` and `sleep`. The change is which clock the call path reads, not whether the module has one
+### Change: the other pacer gets the same injectable clock, and its waiting path a first test
+- Value: `scripts/answer_smoke.py` holds a second `Pacer`, the one `chat_mode_compare` and `reasoning_effort_compare` import. The sweep that followed the CI failure had to say whether it has the same fault. **It does not**, and the reason is worth writing down because it is the whole distinction:
+
+  ```python
+  def wait_for(self, estimate: int) -> float:
+      waited = 0.0
+      while self.window and self.spent_recently() + estimate > self.budget:
+          ...
+          waited += sleep_for
+      return waited
+  ```
+
+  `waited` starts at the constant 0.0 and accumulates **the sleeps it asked for**, not a difference of two clock readings. Nothing on the no-wait path is measured, so `wait_for(...) == 0.0` is exact on a clock of any resolution and its four tests were right for the right reason. The probe's `wait()` returned `monotonic() - started` and was right only on a clock too coarse to disagree.
+
+  **What the two did share was a waiting path no test reached.** For this one, reaching it meant sleeping for a real minute, so nothing did. With `clock` and `sleeper` injected -- defaults `time.monotonic` and `time.sleep`, and both callers construct `Pacer()` with no arguments -- it gets one: 6,000 in the window and 6,000 expected against a budget of 7,000 is a single sleep of 61 seconds, after which the window is empty and the question fits.
+
+  **That test found dead code.** The sleep is `max(0.5, 61 - (clock() - oldest))`, and the floor is **unreachable**: `spent_recently` prunes an entry once it is 60 seconds old, so while there is anything left in the window to wait for, `61 - elapsed` is still above 1.0. It is noted in place and left alone. Dead is not wrong, and removing it would be a change to the pacer rather than to a test -- the sort of change that belongs in its own entry with its own reason.
+- Command: `python -m pytest -q` -> **1396 passed**, 1 skipped (was 1395; one new test); `python -m pytest tests/test_answer_smoke.py tests/test_reasoning_effort_compare.py -q` -> 53 passed; `python -m ruff check .` and `python -m ruff format --check .` over the whole repository (203 files), clean; `python scripts/eval_retrieval.py --split test` -> overall hit@5 **0.850**, MRR@10 **0.778**, unchanged; in `codementor-ui`: `npm test` (106 passed), `npx tsc --noEmit` (clean), `npm run lint` (0 errors, 28 warnings, the same ones as before). Run with `OPENAI_API_KEY`, `GROQ_API_KEY`, `ANTHROPIC_API_KEY` and every `CLOUDFLARE_*` variable removed from the environment
+- Dataset/repo: none. No provider, no server; the pacer is driven entirely by a fake clock
+- Date: 2026-10-15
+- Commit: b0241ee
+- Notes: **nothing here was failing.** This is consistency and coverage, not a fix, and it is recorded separately from the two fixes for that reason
+  **Two tests stopped reaching into the object.** `pacer.window = [(time.monotonic() - 120, 6000)]` built the window by hand against the real clock; they call `record` and move the fake clock instead, which exercises `record` as well and states the ageing in seconds the test owns
+  **The two pacers are still two pacers.** They have different fields (`budget`/`window` against `limit`/`spends`), different estimate rules and different waiting strategies -- one sleeps out the oldest entry, the other polls once a second. This change makes them consistent about the clock and nothing else; merging them is a bigger change than either of these entries, and the two scripts that would have to agree on an estimate rule have not been shown to want the same one

@@ -17,6 +17,7 @@ import {
     BenchmarksView,
     ExperimentsView,
     Fact,
+    HeadlineView,
     LimitationsView,
     NOT_MEASURED,
     RetrievalView,
@@ -765,9 +766,147 @@ function ChatModes({ view }: { view: NonNullable<ExperimentsView["chatModes"]> }
     );
 }
 
+/* ---- Headline ---- */
+
+/** One figure, large, with what it is underneath. The unit of the headline block. */
+function Figure({ value, label, hint }: { value: string; label: string; hint?: string }) {
+    return (
+        <div className="min-w-0">
+            <div className="text-xl sm:text-2xl font-bold mono tracking-tight text-foreground tabular-nums">
+                {value}
+            </div>
+            <div className="text-[10px] font-bold uppercase tracking-widest text-muted/60 mt-0.5 break-words">
+                {label}
+            </div>
+            {hint && <div className="text-[10px] text-muted/50 mt-0.5 break-words">{hint}</div>}
+        </div>
+    );
+}
+
+/**
+ * The block a reader who scrolls no further should leave with: both embedders' shipped
+ * configuration on the two question sets that were scored once each, the structural
+ * comparison against ast, and the model-free timing. No tables, so it stacks into one
+ * readable column on a phone instead of scrolling sideways.
+ */
+function Headline({ view }: { view: HeadlineView }) {
+    return (
+        <section className="p-4 sm:p-5 bg-white/[0.03] border border-white/10 rounded-xl space-y-5">
+            <header className="space-y-1">
+                <h3 className="text-[11px] font-bold uppercase tracking-widest text-muted/70 flex items-center gap-2">
+                    <Target className="w-3.5 h-3.5 shrink-0" />
+                    <span className="break-words">{view.title}</span>
+                </h3>
+                {/* Required wording, on the block a reader actually stops at. */}
+                <p className="text-[11px] text-muted leading-relaxed">{view.note}</p>
+            </header>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {view.rows.map((row) => (
+                    <div
+                        key={row.key}
+                        className={
+                            row.isDefault
+                                ? "p-4 rounded-lg bg-accent/[0.07] border border-accent/25 space-y-3"
+                                : "p-4 rounded-lg bg-white/[0.02] border border-white/5 space-y-3"
+                        }
+                    >
+                        <div className="space-y-0.5">
+                            <div className="text-[12px] font-bold text-foreground break-words">{row.label}</div>
+                            <div className="text-[11px] text-muted break-words">{row.configuration}</div>
+                        </div>
+                        <div className="space-y-3">
+                            {row.splits.map((split) => (
+                                <div key={split.id} className="space-y-1.5">
+                                    <div className="text-[10px] mono text-muted/60 break-words">
+                                        {split.id} — {split.questions} questions
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {view.metrics.map((metric, i) => (
+                                            <Figure key={metric} value={split.cells[i]} label={metric} />
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                ))}
+            </div>
+            {view.splitsNote && <p className="text-[11px] text-muted leading-relaxed">{view.splitsNote}</p>}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-white/5">
+                {view.structural && (
+                    <div className="space-y-2">
+                        <div className="text-[11px] font-bold text-foreground break-words">
+                            {view.structural.title}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <Figure value={view.structural.precision} label="precision" />
+                            <Figure value={view.structural.recall} label="recall" />
+                        </div>
+                        <p className="text-[11px] text-muted leading-relaxed">
+                            {view.structural.questions} questions. {view.structural.note}
+                        </p>
+                    </div>
+                )}
+                {view.timing && (
+                    <div className="space-y-2">
+                        <div className="text-[11px] font-bold text-foreground break-words">{view.timing.title}</div>
+                        {/* Required wording. The figure beside it is meaningless without it. */}
+                        <p className="inline-block px-2 py-1 rounded-md bg-amber-400/10 text-amber-300 text-[11px] font-bold">
+                            {view.timing.label}
+                        </p>
+                        <div className="grid grid-cols-2 gap-3">
+                            <Figure value={view.timing.total} label="warm question" hint={view.timing.repo} />
+                            <Figure value={view.timing.rerank} label="of it, rerank" />
+                        </div>
+                        <p className="text-[11px] text-muted leading-relaxed">{view.timing.note}</p>
+                    </div>
+                )}
+            </div>
+        </section>
+    );
+}
+
+/* ---- Details ---- */
+
+/**
+ * Everything that is not the headline, behind one disclosure that is closed by default.
+ *
+ * A native `details` element rather than React state on purpose: it is closed on first paint
+ * with no hydration step, the browser's own find-in-page opens it to reach a number inside,
+ * and it needs no JavaScript at all.
+ */
+function Details({ count, children }: { count: number; children: React.ReactNode }) {
+    return (
+        <details className="group bg-white/[0.02] border border-white/5 rounded-xl">
+            <summary className="cursor-pointer list-none p-4 sm:p-5 flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-muted/70 hover:text-foreground">
+                <ChevronDown className="w-3.5 h-3.5 shrink-0 transition-transform group-open:rotate-180" />
+                <span className="break-words">Details</span>
+                <span className="ml-auto mono text-[10px] font-normal normal-case tracking-normal text-muted/50">
+                    {count} panel{count === 1 ? "" : "s"}
+                </span>
+            </summary>
+            <div className="px-4 sm:px-5 pb-4 sm:pb-5 space-y-4">{children}</div>
+        </details>
+    );
+}
+
 /* ---- The section ---- */
 
 export default function BenchmarksSection({ view }: { view: BenchmarksView }) {
+    // The full retrieval tables, the Experiments table with its held-out comparisons and the
+    // chat-mode block, the system facts, the stage timings and the limitations: all real, all
+    // far too much to open a page with, all behind the one closed disclosure below.
+    const details = [
+        view.retrieval && <Retrieval key="retrieval" view={view.retrieval} />,
+        view.structural && <Structural key="structural" view={view.structural} />,
+        view.system && <System key="system" view={view.system} />,
+        view.timing && <Timing key="timing" view={view.timing} />,
+        view.experiments && <Experiments key="experiments" view={view.experiments} />,
+        view.limitations && <Limitations key="limitations" view={view.limitations} />,
+    ].filter(Boolean);
+
     return (
         <section>
             <h2 className="text-[10px] font-bold uppercase tracking-widest text-muted/60 mb-1 flex items-center gap-2">
@@ -783,12 +922,8 @@ export default function BenchmarksSection({ view }: { view: BenchmarksView }) {
                 </div>
             ) : (
                 <div className="space-y-4">
-                    {view.retrieval && <Retrieval view={view.retrieval} />}
-                    {view.structural && <Structural view={view.structural} />}
-                    {view.system && <System view={view.system} />}
-                    {view.timing && <Timing view={view.timing} />}
-                    {view.experiments && <Experiments view={view.experiments} />}
-                    {view.limitations && <Limitations view={view.limitations} />}
+                    {view.headline && <Headline view={view.headline} />}
+                    {details.length > 0 && <Details count={details.length}>{details}</Details>}
                 </div>
             )}
         </section>

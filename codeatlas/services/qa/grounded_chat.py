@@ -49,6 +49,18 @@ LEGACY = "legacy"
 GROUNDED = "grounded"
 CHAT_MODES = (LEGACY, GROUNDED)
 
+# The stage names a status event carries. The browser keys off these rather than off the
+# sentence beside them, which is prose and may be reworded without anything noticing.
+#
+# RETRIEVED is the one that matters: it is sent the moment the search is done and before the
+# model is asked anything, so the visitor sees which files are about to be cited while the
+# model is still thinking, instead of a spinner that says nothing for several seconds.
+STAGE_RETRIEVING = "retrieving"
+STAGE_RETRIEVED = "retrieved"
+STAGE_THINKING = "thinking"
+STAGE_PLANNING = "planning"
+STAGE_ANSWERING = "answering"
+
 SYSTEM_PROMPT = (
     "You are a senior engineer explaining a codebase to a colleague. Answer only from the code "
     "snippets below. Each snippet is introduced by its file path and line range; cite those when "
@@ -109,6 +121,46 @@ def grounded_context(
         note=note,
         reasoning_steps=steps,
     )
+
+
+def stage_event(stage: str, content: str) -> dict:
+    """A status event that promises nothing about the citations: a stage name and a sentence.
+
+    Every path that cannot know the final citation list before the model has spoken sends this
+    one. Inventing a file list that the answer then contradicts is worse than a spinner.
+    """
+    return {"type": "status", "stage": stage, "content": content}
+
+
+def retrieved_event(snippets: list[Snippet]) -> dict:
+    """The status event sent the moment retrieval is done, before the model is asked to answer.
+
+    **The files are the citations**, and that is the caller's promise, not this function's: it
+    takes the snippet list itself, so a caller may send this event only where it is holding the
+    very list the final citations are built from. Two callers are, and for the same reason -
+    one search produced one list, seen as the prompt, as this event and as the citations:
+    `grounded_context` in grounded mode, and `AgentOrchestrator.search` in the default one. A
+    test asserts the early files equal the `done` citations on both, rather than trusting this
+    paragraph.
+
+    `count` is the number of distinct **files**, because "Found 3 files" is what the browser
+    says and it has to be true: one file can appear twice under different line ranges, and
+    counting locations would quietly turn three files into four.
+
+    **No question text goes in**, here or anywhere near it. This event is written into a
+    response body that a proxy may log, and the question is the visitor's.
+    """
+    files = [
+        {"path": snippet.path, "start_line": snippet.start_line, "end_line": snippet.end_line} for snippet in snippets
+    ]
+    count = len({snippet.path for snippet in snippets})
+    return {
+        "type": "status",
+        "stage": STAGE_RETRIEVED,
+        "content": f"Found {count} file{'' if count == 1 else 's'}",
+        "count": count,
+        "files": files,
+    }
 
 
 def build_messages(question: str, context: GroundedContext, history: list[Turn]) -> list:

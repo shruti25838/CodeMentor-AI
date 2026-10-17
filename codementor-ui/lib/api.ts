@@ -1,4 +1,8 @@
 import { responseError, serverFetch } from "./serverRequest";
+// The status event shape lives beside the code that renders it; see lib/streamStatus.ts.
+import type { StreamStatus } from "./streamStatus";
+
+export type { StreamStatus };
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -33,7 +37,7 @@ export async function askQuestionStream(
     sessionId: string | undefined,
     callbacks: {
         onToken: (token: string) => void;
-        onStatus: (status: string) => void;
+        onStatus: (status: StreamStatus) => void;
         onAgent?: (agent: { name: string; detail: string }) => void;
         onDone: (data: {
             citations: string[];
@@ -77,7 +81,12 @@ export async function askQuestionStream(
                             callbacks.onToken(data.content);
                             break;
                         case "status":
-                            callbacks.onStatus(data.content);
+                            callbacks.onStatus({
+                                stage: data.stage,
+                                content: data.content,
+                                count: data.count,
+                                files: data.files,
+                            });
                             break;
                         case "agent":
                             callbacks.onAgent?.({ name: data.name, detail: data.detail });

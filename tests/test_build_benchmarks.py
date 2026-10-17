@@ -533,3 +533,87 @@ def test_the_legacy_baseline_row_is_read_from_the_legacy_file(committed):
 
     assert row["held_out_source"] == "eval/results/legacy/test.json"
     assert row["held_out"] == legacy["overall"]["mrr@10"] == 0.645
+
+
+# ---------- the headline block ----------
+#
+# The block at the top of the evaluation page, and for most readers the only part of it they
+# will see. It is built from the blocks below it rather than from the result files a second
+# time, so the thing worth asserting is that it agrees with them: a summary that disagrees
+# with the table it summarises is worse than no summary.
+
+
+def test_the_headline_names_both_embedders_at_their_shipped_configuration(committed):
+    rows = committed["headline"]["retrieval"]
+
+    assert [r["embedder"] for r in rows] == ["hash", "cloudflare"]
+    assert rows[0]["configuration"] == "structured records, BM25 fusion on"
+    assert rows[1]["configuration"] == "whole records, no fusion"
+    assert [r["is_default"] for r in rows] == [True, False]
+
+
+def test_each_headline_row_is_the_experiments_row_the_server_runs(committed):
+    """Not the best row, not the first row: the one marked is_default by the builder."""
+    for row in committed["headline"]["retrieval"]:
+        source = next(
+            r for r in committed["experiments"]["rows"] if r["embedder"] == row["embedder"] and r["is_default"]
+        )
+        for split in ("holdout2", "holdout3"):
+            assert row[split]["mrr@10"] == source[split]["mrr@10"], (row["embedder"], split)
+            assert row[split]["hit@5"] == source[split]["hit@5"], (row["embedder"], split)
+            assert row[split]["questions"] == source[split]["questions"], (row["embedder"], split)
+
+
+def test_the_headline_shows_the_two_sets_that_were_scored_once(committed):
+    """Not the original held-out split, which was reused run after run and flatters everything."""
+    headline = committed["headline"]
+
+    assert set(headline["splits"]) == {"holdout2", "holdout3"}
+    for row in headline["retrieval"]:
+        assert "held_out" not in row and "dev" not in row
+        assert set(row["holdout2"]) == {"questions", "mrr@10", "hit@5"}
+    assert "scored once each" in headline["splits_note"]
+    assert "reused" in headline["splits_note"]
+
+
+def test_the_headline_reports_only_mrr_at_10_and_hit_at_5(committed):
+    assert committed["headline"]["metrics"] == ["mrr@10", "hit@5"]
+
+
+def test_the_headline_structural_figures_are_the_structural_blocks_own(committed):
+    headline = committed["headline"]["structural"]
+    overall = committed["structural"]["overall"]
+
+    assert headline["precision"] == overall["precision"]
+    assert headline["recall"] == overall["recall"]
+    assert headline["questions"] == overall["questions"]
+    assert "ast" in headline["title"]
+
+
+def test_the_headline_timing_says_the_model_is_not_in_it(committed):
+    """Required wording: the figure means something else entirely without it."""
+    headline = committed["headline"]["timing"]
+
+    assert headline["label"] == "excludes the language model"
+    assert headline["warm_total_ms"] == committed["timing"]["current"]["warm_total_ms"]
+    assert headline["rerank_ms"] == committed["timing"]["current"]["rerank_ms"]
+    assert "End-to-end latency is not shown" in headline["note"]
+
+
+def test_the_headline_repeats_that_these_are_recorded_results(committed):
+    assert committed["headline"]["note"] == committed["heading_note"]
+    assert "not live accuracy" in committed["headline"]["note"]
+
+
+def test_the_headline_is_derived_rather_than_read_a_second_time():
+    """`build()` reads each result file once and hands the blocks to `headline`.
+
+    If `headline` called `experiments()` itself, the two could be built from different reads
+    of the same folder and a headline figure could drift from its table without any test here
+    noticing - every check above compares the two halves of one build.
+    """
+    source = (ROOT / "scripts" / "build_benchmarks.py").read_text(encoding="utf-8")
+    body = source[source.index("def headline(") : source.index("def build()")]
+
+    for builder in ("experiments()", "structural()", "timing()", "_read("):
+        assert builder not in body, f"headline() must not call {builder}"

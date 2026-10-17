@@ -21,6 +21,14 @@ interface Message {
 }
 
 import { askQuestionStream, type AskMode } from "@/lib/api";
+import {
+    fileSummary,
+    hasFoundFiles,
+    isStatusVisible,
+    statusFromEvent,
+    type ChatStatus,
+    type StreamStatus,
+} from "@/lib/streamStatus";
 import { newChatSessionId } from "@/lib/chatSession";
 import { pushRetrievedContext } from "@/components/Panels/ContextPanel";
 import { readSuggestedQuestions, SUGGESTIONS_STORAGE_KEY } from "@/lib/example";
@@ -47,7 +55,9 @@ export default function ChatWindow() {
     const [isThinking, setIsThinking] = useState(false);
     // One id per conversation on screen; the server keeps its last few turns (lib/chatSession.ts).
     const [sessionId] = useState(() => newChatSessionId());
-    const [streamStatus, setStreamStatus] = useState<string | null>(null);
+    // What the server last said it was doing. From the "retrieved" stage onwards this
+    // carries the files that will be cited, so the wait names them instead of saying nothing.
+    const [streamStatus, setStreamStatus] = useState<ChatStatus | null>(null);
     // Fast is the default. Deep runs the planned five-agent pipeline and shows each step.
     const [deepMode, setDeepMode] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -134,11 +144,16 @@ export default function ChatWindow() {
                         return updated;
                     });
                 },
-                onStatus: (status: string) => {
-                    setStreamStatus(status);
+                onStatus: (status: StreamStatus) => {
+                    setStreamStatus(statusFromEvent(status));
                 },
                 onAgent: (agent) => {
-                    setStreamStatus(`${agent.name}: ${agent.detail}`);
+                    setStreamStatus({
+                        stage: "agent",
+                        label: `${agent.name}: ${agent.detail}`,
+                        files: [],
+                        locations: [],
+                    });
                     setMessages((prev) => {
                         const updated = [...prev];
                         const last = updated[updated.length - 1];
@@ -226,7 +241,7 @@ export default function ChatWindow() {
                     Agentic Chat
                     {streamStatus && (
                         <span className="ml-2 text-accent/80 animate-pulse normal-case tracking-normal font-medium">
-                            {streamStatus}
+                            {streamStatus.label}
                         </span>
                     )}
                 </div>
@@ -292,12 +307,30 @@ export default function ChatWindow() {
                     </div>
                 )}
 
+                {/* Shown while nothing of the answer is on screen yet, and gone the moment the
+                    first token lands — isStatusVisible is the same rule the tests assert. From
+                    the "retrieved" stage the server has sent the files it is about to cite, so
+                    the wait names them rather than spinning silently through the model call. */}
                 {isThinking && messages[messages.length - 1]?.content === "" && (
-                    <div className="max-w-3xl mx-auto flex items-center gap-2 text-muted animate-pulse">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span className="text-[10px] font-bold uppercase tracking-widest">
-                            {serverStatus === "waking" ? WAKING_MESSAGE : streamStatus || "Agent is thinking..."}
-                        </span>
+                    <div className="max-w-3xl mx-auto space-y-1.5 text-muted">
+                        <div className="flex items-center gap-2 animate-pulse">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span className="text-[10px] font-bold uppercase tracking-widest">
+                                {serverStatus === "waking"
+                                    ? WAKING_MESSAGE
+                                    : isStatusVisible(streamStatus, "")
+                                      ? streamStatus!.label
+                                      : "Agent is thinking..."}
+                            </span>
+                        </div>
+                        {hasFoundFiles(streamStatus) && (
+                            <div
+                                className="pl-[22px] text-[11px] mono text-muted/70 break-words"
+                                title={streamStatus!.locations.join("\n")}
+                            >
+                                {fileSummary(streamStatus)}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>

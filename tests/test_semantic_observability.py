@@ -237,6 +237,14 @@ def test_an_ordinary_question_counts_no_fallback(tmp_path) -> None:
 
 
 def test_the_provider_counts_its_own_calls_and_seconds(tmp_path) -> None:
+    """The seconds come from the clock the provider was given, so they are the test's number.
+
+    This used to replace `time.monotonic` on the module for the duration of the call, because
+    the attempt was timed against the global while the circuit breaker beside it used the
+    injected clock. Both read `self._clock` now, so the fake goes in the front door -- and the
+    count is an exact figure rather than `> 0`, which is all a real clock could have supported
+    and would have been false on a machine whose clock cannot resolve two fast local calls.
+    """
     from codeatlas.services.http.json_client import JsonResponse
 
     ticks = [0.0]
@@ -256,24 +264,17 @@ def test_the_provider_counts_its_own_calls_and_seconds(tmp_path) -> None:
         settings=replace(CloudflareSettings(), batch_size=1),
         ledger_path=tmp_path / "neurons.json",
         post=post,
+        clock=clock,
         sleep=lambda _s: None,
     )
     embedder._credentials = type("C", (), {"account_id": "acct-123", "api_token": "secret-token"})()
-    monkeypatched = embedder._call_with_retries
-    del monkeypatched
 
-    import codeatlas.services.retrieval.cloudflare_embedder as module
-
-    original = module.time.monotonic
-    module.time.monotonic = clock
-    try:
-        embedder.embed_texts(["one", "two"])
-    finally:
-        module.time.monotonic = original
+    embedder.embed_texts(["one", "two"])
 
     usage = embedder.take_usage()
     assert usage.calls == 2
-    assert usage.seconds > 0
+    # Two batches, and each one reads the clock twice: 0.5 of fake time apiece.
+    assert usage.seconds == 1.0
     assert usage.estimated_neurons > 0
     assert embedder.take_usage() == ApiUsage(), "taking usage must reset it"
 

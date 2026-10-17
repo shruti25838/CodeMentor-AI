@@ -2,6 +2,7 @@ import asyncio
 import json
 import queue
 import time
+from dataclasses import replace
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse
@@ -15,7 +16,7 @@ from codeatlas.app.di import (
 )
 from codeatlas.controllers.repo_guard import require_known_repo
 from codeatlas.observability.metrics import ERROR_COUNT
-from codeatlas.observability.timing import StageTimer, run_timed, stage, timed_request
+from codeatlas.observability.timing import StageTimer, record_fact, run_timed, stage, timed_request
 from codeatlas.observability.tracker import tracker
 from codeatlas.schemas.ask import AskRequest, AskResponse
 from codeatlas.services.agents.orchestration import ANSWER_ERROR_PREFIX, AgentOrchestrator
@@ -23,7 +24,18 @@ from codeatlas.services.llm.provider import LlmProvider
 from codeatlas.services.memory.conversation import ConversationStore, Turn, format_history
 from codeatlas.services.qa.answer_service import AnswerService
 from codeatlas.services.qa.followup import needs_rewrite, rewrite_question
-from codeatlas.services.qa.grounded_chat import GROUNDED, build_messages, grounded_context, stream_tokens
+from codeatlas.services.qa.grounded_chat import (
+    GROUNDED,
+    STAGE_ANSWERING,
+    STAGE_PLANNING,
+    STAGE_RETRIEVING,
+    STAGE_THINKING,
+    build_messages,
+    grounded_context,
+    retrieved_event,
+    stage_event,
+    stream_tokens,
+)
 from codeatlas.services.state.repo_state_store import RepoStateStore
 
 router = APIRouter(prefix="/ask", tags=["qa"])
@@ -118,10 +130,13 @@ async def ask_stream(
         timer = StageTimer()
         session_id = request.session_id
         history = conversations.history(session_id, request.repo_id) if session_id else []
+        # How much of this conversation goes into the prompt. The first candidate for a chat
+        # that slows down as it goes on, and the one number no stage duration can reveal.
+        timer.fact("history_turns", len(history))
         try:
             if not request.repo_id:
                 # ---- General mode: true LLM token streaming ----
-                yield _sse({"type": "status", "content": "Thinking..."})
+                yield _sse(stage_event(STAGE_THINKING, "Thinking..."))
                 llm = llm_provider.get_chat_model()
                 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
@@ -174,7 +189,7 @@ async def ask_stream(
                 if request.mode == "deep":
                     # The planned five-agent pipeline. Each agent's step is sent as it
                     # finishes, so the wait is visible rather than silent.
-                    yield _sse({"type": "status", "content": "Planning..."})
+                    yield _sse(stage_event(STAGE_PLANNING, "Planning..."))
                     result = None
                     async for event in _run_deep(orchestrator, llm_provider, request, history, timer):
                         if event["type"] == "result":
@@ -184,16 +199,36 @@ async def ask_stream(
                     if result is None:  # pragma: no cover - the generator always ends with one
                         raise RuntimeError("deep mode produced no answer")
                 else:
-                    yield _sse({"type": "status", "content": "Retrieving context..."})
+                    # ---- Repo mode, the default: one search, then one model call ----
+                    yield _sse(stage_event(STAGE_RETRIEVING, "Retrieving context..."))
                     loop = asyncio.get_event_loop()
+                    search_question = await loop.run_in_executor(
+                        None,
+                        run_timed,
+                        timer,
+                        lambda: _search_question(llm_provider, request.question, history),
+                    )
+                    retrieved = await loop.run_in_executor(
+                        None,
+                        run_timed,
+                        timer,
+                        lambda: orchestrator.search(search_question or request.question, request.repo_id),
+                    )
+                    # The search is finished and the model has not been asked anything yet. This
+                    # path could not send this event while it summarised its own search through
+                    # the model first; now that it does not, the one moment grounded mode has -
+                    # after retrieval, before any spending - exists here too. The files are
+                    # `retrieved.snippets`, and the citations below are `retrieved.citations`,
+                    # built from that same list by the same search, so the two cannot disagree.
+                    yield _sse(retrieved_event(retrieved.snippets))
                     result = await loop.run_in_executor(
                         None,
                         run_timed,
                         timer,
-                        lambda: _answer_with_history(orchestrator, llm_provider, request, history),
+                        lambda: _answer_from(orchestrator, request, retrieved, history, search_question),
                     )
 
-                yield _sse({"type": "status", "content": "Streaming answer..."})
+                yield _sse(stage_event(STAGE_ANSWERING, "Streaming answer..."))
 
                 # Stream answer in small chunks for natural feel
                 answer = result.answer
@@ -260,16 +295,15 @@ async def _run_grounded(answers, llm_provider, request: AskRequest, history, tim
     event, and a provider refusal becomes the same plain sentence with the files beneath it.
     """
     loop = asyncio.get_event_loop()
-    yield {"type": "status", "content": "Retrieving context..."}
+    yield stage_event(STAGE_RETRIEVING, "Retrieving context...")
 
-    search_question = request.question
-    if needs_rewrite(request.question, history):
-        search_question = await loop.run_in_executor(
-            None,
-            run_timed,
-            timer,
-            lambda: _rewrite(llm_provider, request.question, history),
-        )
+    rewritten = await loop.run_in_executor(
+        None,
+        run_timed,
+        timer,
+        lambda: _search_question(llm_provider, request.question, history),
+    )
+    search_question = rewritten or request.question
 
     context = await loop.run_in_executor(
         None,
@@ -278,16 +312,25 @@ async def _run_grounded(answers, llm_provider, request: AskRequest, history, tim
         lambda: grounded_context(answers, request.repo_id, search_question, top_k=5, total_max_chars=6000),
     )
 
-    # A reasoning model spends its first seconds on tokens nobody sees, so the visitor is told
-    # the wait has started rather than watching a retrieval message that is already finished.
-    yield {"type": "status", "content": "Reading the code..."}
+    # The search is finished and the model has not been asked anything yet, so this is the one
+    # moment at which the files that will be cited are known and nothing has been spent. A
+    # reasoning model then spends its first seconds on tokens nobody sees; rather than leaving
+    # the visitor with a retrieval message that is already stale, they get the file list they
+    # are about to be shown underneath the answer. It is the same list, by construction - see
+    # retrieved_event - and no question text goes into it.
+    yield retrieved_event(context.snippets)
 
     llm = llm_provider.get_chat_model()
     messages = build_messages(request.question, context, history)
     outcome = None
     stream = stream_tokens(llm, messages, context, on_first_token=lambda: timer.mark("first_model_token"))
+    # This mode's one model call, timed as the `llm` stage the other paths record, so a grounded
+    # question's line can be read beside a legacy one. `run_timed` reaches the worker thread the
+    # stream is pulled on: the usage callback and the retry watcher both report into the timer
+    # from in there, and without it neither had one to report into.
+    model_started = time.perf_counter()
     while True:
-        item = await loop.run_in_executor(None, lambda it=stream: next(it, None))
+        item = await loop.run_in_executor(None, run_timed, timer, lambda it=stream: next(it, None))
         if item is None:
             break
         token, finished = item
@@ -297,6 +340,7 @@ async def _run_grounded(answers, llm_provider, request: AskRequest, history, tim
         if token:
             timer.mark("first_token_sent")
             yield {"type": "token", "content": token}
+    timer.add("llm", (time.perf_counter() - model_started) * 1000)
 
     answer = outcome.answer if outcome else ""
     steps = list(context.reasoning_steps)
@@ -324,7 +368,18 @@ async def _run_grounded(answers, llm_provider, request: AskRequest, history, tim
     }
 
 
-def _rewrite(llm_provider, question: str, history):
+def _search_question(llm_provider, question: str, history: list[Turn]) -> str | None:
+    """The standalone rewrite of a follow-up, or None when the question stands on its own.
+
+    One place rather than three, so `rewrite_ran` - whether this question paid for an extra
+    model call - is recorded on every path that could make one, instead of on whichever paths
+    someone remembered. The fact is recorded either way: a line with no `rewrite_ran` at all
+    would be indistinguishable from an older line that never had the field.
+    """
+    if not needs_rewrite(question, history):
+        record_fact("rewrite_ran", 0)
+        return None
+    record_fact("rewrite_ran", 1)
     with stage("rewrite"):
         return rewrite_question(llm_provider.get_chat_model(), question, history)
 
@@ -344,10 +399,7 @@ async def _run_deep(orchestrator, llm_provider, request: AskRequest, history: li
             # A follow-up is rewritten into a standalone question for search, exactly as the
             # fast path does, so deep mode searches with the visitor's meaning rather than
             # with "why does it do that?".
-            search_question = None
-            if needs_rewrite(request.question, history):
-                with stage("rewrite"):
-                    search_question = rewrite_question(llm_provider.get_chat_model(), request.question, history)
+            search_question = _search_question(llm_provider, request.question, history)
             for event in orchestrator.stream_question(
                 request.question, request.repo_id, request.session_id, search_question=search_question
             ):
@@ -373,29 +425,31 @@ async def _run_deep(orchestrator, llm_provider, request: AskRequest, history: li
         await worker
 
 
-def _answer_with_history(orchestrator, llm_provider, request: AskRequest, history: list[Turn]):
-    """Repo-mode answer that sees earlier turns; a follow-up is rewritten for search first."""
-    search_question = None
-    if needs_rewrite(request.question, history):
-        with stage("rewrite"):
-            search_question = rewrite_question(llm_provider.get_chat_model(), request.question, history)
-    result = orchestrator.handle_question_fast(
+def _answer_from(orchestrator, request: AskRequest, retrieved, history: list[Turn], search_question: str | None):
+    """The default path's answer, over snippets the controller already holds.
+
+    The two halves are run separately so the file list can go out between them; this is the
+    second. It adds the same conversation notes the combined call used to add.
+
+    **The result is copied, not rebuilt.** `replace` carries every field whether or not anyone
+    here remembers the field exists; only `reasoning_steps` is given a new value. The
+    field-by-field rebuild this replaces named four of the five and dropped `note`, which is
+    the one sentence telling a visitor their answer came from keyword search rather than from
+    semantic search - and on the live server, which runs the cloudflare provider, that is
+    exactly the case it exists for. A field added to the result type later arrives carried.
+    """
+    result = orchestrator.answer_from(
         request.question,
+        retrieved,
         request.repo_id,
         history=format_history(history),
-        search_question=search_question,
     )
     steps = list(result.reasoning_steps)
     if history:
         steps.append(f"Used {len(history)} earlier turn(s) of this conversation.")
     if search_question is not None:
         steps.append(f"Searched with the follow-up rewritten as: {search_question}")
-    return type(result)(
-        answer=result.answer,
-        citations=result.citations,
-        reasoning_steps=steps,
-        agents_used=result.agents_used,
-    )
+    return replace(result, reasoning_steps=steps)
 
 
 def _as_messages(history: list[Turn]) -> list:

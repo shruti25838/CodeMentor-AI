@@ -161,6 +161,9 @@ export interface ExperimentRow {
     arrangement?: string;
     change?: string;
     verdict?: string;
+    /** Whether this is the row the server actually runs. Computed by the builder, never typed. */
+    is_default?: boolean;
+    is_previous_default?: boolean;
     dev?: ExperimentScores | null;
     held_out?: ExperimentScores | null;
     holdout2?: ExperimentScores | null;
@@ -259,10 +262,44 @@ export interface ExperimentsBlock {
     } | null;
 }
 
+export interface HeadlineScores {
+    questions?: number;
+    "mrr@10"?: number | null;
+    "hit@5"?: number | null;
+}
+
+export interface HeadlineRetrievalRow {
+    embedder?: string;
+    label?: string;
+    configuration?: string;
+    is_default?: boolean;
+    holdout2?: HeadlineScores | null;
+    holdout3?: HeadlineScores | null;
+}
+
+export interface HeadlineBlock {
+    title?: string;
+    note?: string;
+    splits?: Record<string, string>;
+    splits_note?: string;
+    metrics?: string[];
+    retrieval?: HeadlineRetrievalRow[];
+    structural?: { title?: string; questions?: number; precision?: number | null; recall?: number | null; note?: string };
+    timing?: {
+        title?: string;
+        label?: string;
+        warm_total_ms?: number | null;
+        rerank_ms?: number | null;
+        repo?: string;
+        note?: string;
+    };
+}
+
 export interface Summary {
     schema?: number;
     heading_note?: string;
     end_to_end_note?: string;
+    headline?: HeadlineBlock;
     retrieval?: RetrievalBlock;
     structural?: StructuralBlock;
     system?: SystemBlock;
@@ -864,6 +901,99 @@ function chatModesView(block: ExperimentsBlock["chat_modes"]): ChatModeView | nu
     };
 }
 
+/* ---- Headline ---- */
+
+export interface HeadlineSplit {
+    /** "holdout2" / "holdout3" — the key, for React. */
+    id: string;
+    /** "fresh - written later, scored once" — what the set is. */
+    label: string;
+    questions: string;
+    /** One cell per metric in `metrics`, in that order. */
+    cells: string[];
+}
+
+export interface HeadlineRow {
+    key: string;
+    label: string;
+    configuration: string;
+    isDefault: boolean;
+    splits: HeadlineSplit[];
+}
+
+export interface HeadlineView {
+    title: string;
+    note: string;
+    splitsNote: string;
+    metrics: string[];
+    rows: HeadlineRow[];
+    structural: { title: string; questions: number; precision: string; recall: string; note: string } | null;
+    timing: { title: string; label: string; total: string; rerank: string; repo: string; note: string } | null;
+}
+
+/** "45 ms", or a dash. The unit is in the string because the number is meaningless without it. */
+function millis(value: unknown): string {
+    return typeof value === "number" && Number.isFinite(value) ? `${value} ms` : NOT_MEASURED;
+}
+
+/**
+ * The block at the top of the section: the shipped configuration of each embedder on the two
+ * question sets that were only ever scored once, the structural comparison against `ast`, and
+ * the model-free timing. Everything else on the page is behind a closed Details panel.
+ *
+ * Every number comes from the server's summary. Nothing here computes a figure, picks a
+ * winner or rounds differently from the tables below - a headline that disagrees with the
+ * table it summarises is worse than no headline.
+ */
+export function headlineView(summary?: Summary): HeadlineView | null {
+    const block = summary?.headline;
+    if (!block?.retrieval?.length) return null;
+    const metrics = block.metrics ?? [];
+    const labels = block.splits ?? {};
+
+    return {
+        title: block.title ?? "At a glance",
+        // Required wording: recorded, on small fixed sets, not live accuracy.
+        note: block.note ?? FALLBACK_HEADING_NOTE,
+        splitsNote: block.splits_note ?? "",
+        metrics,
+        rows: block.retrieval.map((row) => ({
+            key: row.embedder ?? "",
+            label: row.label ?? row.embedder ?? "",
+            configuration: row.configuration ?? "",
+            isDefault: row.is_default === true,
+            splits: (["holdout2", "holdout3"] as const)
+                .filter((id) => row[id])
+                .map((id) => ({
+                    id,
+                    label: labels[id] ?? id,
+                    questions: formatCount(row[id]?.questions),
+                    cells: metrics.map((metric) => formatMetric((row[id] as Record<string, unknown>)?.[metric])),
+                })),
+        })),
+        structural: block.structural
+            ? {
+                  title: block.structural.title ?? "",
+                  questions: block.structural.questions ?? 0,
+                  precision: formatMetric(block.structural.precision),
+                  recall: formatMetric(block.structural.recall),
+                  note: block.structural.note ?? "",
+              }
+            : null,
+        timing: block.timing
+            ? {
+                  title: block.timing.title ?? "",
+                  // Required wording, and the reason the number is allowed on the page at all.
+                  label: block.timing.label ?? "excludes the language model",
+                  total: millis(block.timing.warm_total_ms),
+                  rerank: millis(block.timing.rerank_ms),
+                  repo: block.timing.repo ?? "",
+                  note: block.timing.note ?? "",
+              }
+            : null,
+    };
+}
+
 /* ---- The section as a whole ---- */
 
 export interface BenchmarksView {
@@ -872,6 +1002,8 @@ export interface BenchmarksView {
     headingNote: string;
     /** Why there is nothing to show, when there is nothing to show. */
     unavailableNote: string;
+    /** The only block open by default; everything after it is inside a closed Details panel. */
+    headline: HeadlineView | null;
     retrieval: RetrievalView | null;
     structural: StructuralView | null;
     system: SystemView | null;
@@ -895,6 +1027,7 @@ export function benchmarksView(response?: BenchmarksResponse | null): Benchmarks
         available: Boolean(summary),
         headingNote: response?.heading_note || FALLBACK_HEADING_NOTE,
         unavailableNote: summary ? "" : response?.note || FALLBACK_UNAVAILABLE,
+        headline: headlineView(summary),
         retrieval: retrievalView(summary),
         structural: structuralView(summary),
         system: summary ? systemView(summary, response?.live) : null,

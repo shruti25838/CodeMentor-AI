@@ -253,3 +253,58 @@ def test_the_grafana_dashboard_queries_the_metrics_that_exist() -> None:
         "codeatlas_planner_plans_total",
     ):
         assert metric in expressions, f"{metric} has no panel"
+
+
+# Grafana unit ids that render a per-second scale. A panel titled "per minute" may not use one.
+PER_SECOND_UNITS = {"reqps", "pps", "cps", "wps", "iops", "rps", "ops"}
+
+
+def test_every_panel_titled_per_minute_computes_a_per_minute_rate() -> None:
+    """`rate()` is per second. Four panels said "per minute" in the title, computed a per-second
+    rate, and labelled the axis req/s, so every value on them read 60 times too small.
+
+    Stated over every panel rather than over a list of names, so a panel added later with the
+    same mistake fails here instead of being found by somebody reading a graph.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    dashboard = json.loads((root / "ops" / "grafana" / "dashboards" / "codeatlas-agents.json").read_text("utf-8"))
+
+    titled = [p for p in _dashboard_panels(dashboard) if "per minute" in p["title"]]
+    # Four counting panels and the token panel; the token panel keeps its own unit, below.
+    assert len(titled) == 5, "every per-minute panel on this dashboard"
+    for panel in titled:
+        for target in panel["targets"]:
+            assert target["expr"].rstrip().endswith("* 60"), panel["title"]
+        assert panel["fieldConfig"]["defaults"]["unit"] not in PER_SECOND_UNITS, panel["title"]
+
+
+def test_the_counting_panels_count_in_counts_per_minute() -> None:
+    """cpm is Grafana's counts/min. An agent run is not a request, so reqps was wrong twice over.
+
+    Tokens are deliberately not in this list: they are counted per minute too, but `cpm` would
+    label the axis counts/min, and a token is not a count of anything that happened.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    dashboard = json.loads((root / "ops" / "grafana" / "dashboards" / "codeatlas-agents.json").read_text("utf-8"))
+
+    for title in (
+        "Agent runs per minute",
+        "Model calls per minute, by agent",
+        "Agent failures per minute, by reason",
+        "Planner routes per minute",
+    ):
+        panel = next(p for p in _dashboard_panels(dashboard) if p["title"] == title)
+        assert panel["fieldConfig"]["defaults"]["unit"] == "cpm", title
+
+
+def _dashboard_panels(dashboard: dict) -> list[dict]:
+    """Every panel, including the ones nested inside a row."""
+    out = []
+    for panel in dashboard["panels"]:
+        out.append(panel)
+        out.extend(panel.get("panels", []))
+    return out
